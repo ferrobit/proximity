@@ -1,0 +1,12 @@
+html, body, #app { height: 100%; }
+body { margin: 0; }
+.mono { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 12px; }
+.mono textarea, textarea.mono { font-family: inherit; font-size: 12px; white-space: pre; }
+.toolbar { display: flex; gap: 8px; align-items: center; margin-bottom: 16px; flex-wrap: wrap; }
+.toolbar .spacer { flex: 1; }
+.muted { opacity: .6; }
+.nowrap { white-space: nowrap; }
+.pane-title { display: flex; align-items: center; gap: 10px; margin: 0 0 16px; font-size: 20px; font-weight: 600; }
+.stack { display: flex; flex-direction: column; gap: 16px; }
+.chain { display: flex; align-items: center; flex-wrap: wrap; gap: 4px; }
+.log-view { max-height: 60vh; overflow: auto; white-space: pre-wrap; word-break: break-all; margin: 0; }

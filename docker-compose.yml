@@ -1,0 +1,38 @@
+name: proximity
+
+services:
+  proximity:
+    image: proximity
+    build:
+      context: .
+      args:
+        VERSION: ${PROXIMITY_VERSION:-1.0.0}
+    container_name: proximity
+    hostname: proximity
+    restart: unless-stopped
+    init: true
+    cap_add:
+      - NET_ADMIN
+    devices:
+      - /dev/net/tun
+    sysctls:
+      net.ipv4.conf.all.rp_filter: 2
+      net.ipv4.conf.default.rp_filter: 2
+      net.ipv4.conf.all.src_valid_mark: 1
+    environment:
+      PROXIMITY_ADMIN_USER: ${PROXIMITY_ADMIN_USER:-}
+      PROXIMITY_ADMIN_PASSWORD: ${PROXIMITY_ADMIN_PASSWORD:-}
+      TZ: ${TZ:-UTC}
+    ports:
+      - "${PROXIMITY_UI_BIND:-0.0.0.0}:8899:8899"
+      - "${PROXIMITY_PROXY_BIND:-127.0.0.1}:7890:7890"
+    volumes:
+      - ${PROXIMITY_CONFIG_DIR:-${HOME}/.config/proximity}:/config
+    networks:
+      - lan
+
+networks:
+  lan:
+    name: proximity_lan
+    driver_opts:
+      com.docker.network.bridge.name: proximity_lan

@@ -1,0 +1,469 @@
+package link
+
+import (
+	"context"
+	"encoding/json"
+	"net"
+	"os"
+	"os/exec"
+	"path/filepath"
+	"strconv"
+	"strings"
+	"sync/atomic"
+	"testing"
+	"time"
+
+	"github.com/stretchr/testify/require"
+
+	"proximity/internal/config"
+	"proximity/internal/wgconf"
+)
+
+const sampleKey = "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA="
+const sampleTunnel = "[Interface]\nPrivateKey = " + sampleKey + "\nAddress = 10.8.1.2/32\n" +
+	"DNS = 10.8.1.1\n[Peer]\nPublicKey = " + sampleKey + "\nEndpoint = 127.0.0.1:51820\n" +
+	"AllowedIPs = 0.0.0.0/0, 10.55.0.9, 10.66.0.0/16\n"
+const sampleOpenVPN = "client\ndev tun\nremote vpn.example.com 1194 udp\ndaemon\n"
+const fakeIP = `#!/bin/bash
+echo "$*" >> "$(dirname "$0")/ip.log"
+case "$*" in
+"-4 route show table "*" dev "*)
+	printf 'default dev x\n10.99.0.0/16 via 10.88.0.1 dev x\n10.77.1.5 dev x\n'
+	;;
+"-6 route show table "*" dev "*)
+	printf 'fd00::/64 dev x\nunreachable default\n'
+	;;
+"-4 rule show")
+	printf '5100:\tfrom all fwmark 0xc73d lookup 51005\n'
+	;;
+*"rule del"*)
+	exit 1
+	;;
+esac
+exit 0
+`
+const fakeOpenVPN = `#!/bin/bash
+hook=""
+while [ $# -gt 0 ]; do
+	if [ "$1" = "--up" ]; then hook="${2##* }"; fi
+	shift
+done
+exec 3<>/dev/tty
+printf 'Enter Auth Username:' >&3
+read -r user <&3
+printf 'Enter Auth Password:' >&3
+read -r pass <&3
+if [ "$user" = "denied" ]; then
+	echo "2026-01-01 00:00:00 AUTH: Received control message: AUTH_FAILED"
+	exec sleep 30
+fi
+printf 'CHALLENGE: Enter OTP ' >&3
+read -r otp <&3
+echo "$user|$pass|$otp" > "$(dirname "$hook")/../answers.txt"
+cat > "$hook" <<JSON
+{"route_vpn_gateway":"10.88.0.1","ifconfig_local":"10.88.0.2","route_network_1":"10.99.0.0",
+"route_netmask_1":"255.255.0.0","route_gateway_1":"10.88.0.1","route_network_2":"10.1.0.0",
+"route_netmask_2":"bad","route_ipv6_network_1":"fd00::/64",
+"foreign_option_1":"dhcp-option DNS 10.99.0.1",
+"foreign_option_2":"dhcp-option DOMAIN Corp.Test.",
+"foreign_option_3":"dhcp-option WINS 10.99.0.2","foreign_option_4":"something else"}
+JSON
+echo "2026-01-01 00:00:00 Initialization Sequence Completed"
+exec sleep 30
+`
+
+func writeScript(t *testing.T, directory string, name string, text string) string {
+	path := filepath.Join(directory, name)
+	require.NoError(t, os.WriteFile(path, []byte(text), 0o700))
+	return path
+}
+
+func makeTools(t *testing.T) (Tools, string) {
+	directory := t.TempDir()
+	return Tools{IP: writeScript(t, directory, "ip", fakeIP),
+		OpenVPN:   writeScript(t, directory, "openvpn", fakeOpenVPN),
+		Ping:      writeScript(t, directory, "ping", "#!/bin/bash\nexit 0\n"),
+		AmneziaGo: writeScript(t, directory, "amneziawg-go", "#!/bin/bash\necho boom\nexit 1\n"),
+		AmneziaWG: writeScript(t, directory, "awg", "#!/bin/bash\nexit 0\n"),
+		Oathtool:  filepath.Join(directory, "missing")}, directory
+}
+
+func makeListener(t *testing.T) string {
+	listener, err := net.Listen("tcp4", "127.0.0.1:0")
+	require.NoError(t, err)
+	t.Cleanup(func() {
+		_ = listener.Close()
+	})
+	go func() {
+		for {
+			connection, err := listener.Accept()
+			if err != nil {
+				return
+			}
+			_ = connection.Close()
+		}
+	}()
+	return listener.Addr().String()
+}
+
+func waitState(t *testing.T, manager *Manager, id string, state string) Status {
+	require.Eventually(t, func() bool {
+		return manager.Status()[id].State == state
+	}, 15*time.Second, 20*time.Millisecond, "endpoint '%v' state '%v'", id, state)
+	return manager.Status()[id]
+}
+
+func TestComputeOTP_Vectors(t *testing.T) {
+	key := "GEZDGNBVGY3TQOJQGEZDGNBVGY3TQOJQ"
+	code, err := computeOTP(key, time.Unix(59, 0))
+	require.NoError(t, err)
+	require.Equal(t, "287082", code)
+	code, err = computeOTP("gezdgnbvgy3tqojq", time.Unix(1111111109, 0))
+	require.NoError(t, err)
+	require.Len(t, code, 6)
+	{
+		_, err := computeOTP("not base32!", time.Unix(59, 0))
+		require.ErrorContains(t, err, "failed to decode OTP key")
+	}
+	{
+		code, err := GenerateOTP(Tools{Oathtool: "/nonexistent/oathtool"}, key, time.Unix(59, 0))
+		require.NoError(t, err)
+		require.Equal(t, "287082", code)
+	}
+	{
+		if _, err := exec.LookPath("oathtool"); err == nil {
+			code, err := GenerateOTP(Tools{Oathtool: "oathtool"}, key, time.Unix(1111111109, 0))
+			require.NoError(t, err)
+			require.Equal(t, "081804", code)
+		}
+	}
+}
+
+func TestDefaultTools_Environment(t *testing.T) {
+	t.Setenv("PROXIMITY_OPENVPN", "/opt/openvpn")
+	t.Setenv("PROXIMITY_IP", "")
+	tools := DefaultTools()
+	require.Equal(t, "/opt/openvpn", tools.OpenVPN)
+	require.Equal(t, "ip", tools.IP)
+	require.Equal(t, "amneziawg-go", tools.AmneziaGo)
+	require.Equal(t, "awg", tools.AmneziaWG)
+	require.Equal(t, "ping", tools.Ping)
+	require.Equal(t, "oathtool", tools.Oathtool)
+	require.Equal(t, 51007, Table(7))
+}
+
+func TestDialProbe_Targets(t *testing.T) {
+	target := makeListener(t)
+	latency, err := dialProbe(context.Background(), target, 0, "", time.Second)
+	require.NoError(t, err)
+	require.GreaterOrEqual(t, latency, time.Duration(0))
+	{
+		listener, err := net.Listen("tcp4", "127.0.0.1:0")
+		require.NoError(t, err)
+		closed := listener.Addr().String()
+		require.NoError(t, listener.Close())
+		_, err = dialProbe(context.Background(), closed, 0, "", time.Second)
+		require.ErrorContains(t, err, "failed to connect to '"+closed+"'")
+	}
+	{
+		_, err := dialProbe(context.Background(), target, 0, "missing0", time.Second)
+		require.ErrorContains(t, err, "failed to connect to")
+	}
+}
+
+func TestInterfaces_Loopback(t *testing.T) {
+	interfaces, err := Interfaces()
+	require.NoError(t, err)
+	for _, item := range interfaces {
+		require.NotEqual(t, "lo", item.Name)
+		require.NotEmpty(t, item.State)
+		require.NotNil(t, item.Addresses)
+	}
+	require.Equal(t, "up", linkState("lo"))
+	require.Equal(t, "absent", linkState("missing0"))
+	require.True(t, devicePattern.MatchString("proximity_o12"))
+	require.True(t, devicePattern.MatchString("proximity_a1"))
+	require.False(t, devicePattern.MatchString("proximity_lan"))
+	{
+		_, err := readCounter("lo", "rx_bytes")
+		require.NoError(t, err)
+		_, err = readCounter("missing0", "rx_bytes")
+		require.ErrorContains(t, err, "failed to read file")
+	}
+}
+
+func TestManager_AmneziaFailure(t *testing.T) {
+	tools, directory := makeTools(t)
+	manager, err := NewManager(Options{Directory: filepath.Join(directory, "run"), Tools: tools})
+	require.NoError(t, err)
+	defer manager.Close()
+	endpoint := config.Endpoint{ID: "AWG", Type: config.TypeAmneziaWG, Enabled: true, Slot: 4,
+		AmneziaWG: &config.AmneziaWGOptions{Config: sampleTunnel},
+		Monitoring: &config.Monitoring{Interval: 5, Timeout: 1, Retries: 1, ReconnectDelay: 1,
+			ReconnectAttempts: 1, Target: "127.0.0.1:1"}}
+	manager.Apply([]config.Endpoint{endpoint}, config.Settings{CheckInterval: 5})
+	status := waitState(t, manager, "AWG", StateReconnecting)
+	require.Contains(t, status.Message, "reconnect attempt 1 of 1")
+	status = waitState(t, manager, "AWG", StateFailed)
+	require.Contains(t, status.Message, "exited")
+	require.Equal(t, -1, status.Latency)
+	require.Contains(t, strings.Join(manager.Log("AWG"), "\n"), "boom")
+	require.Empty(t, manager.Counters())
+	{
+		endpoint.AmneziaWG = &config.AmneziaWGOptions{Config: "broken"}
+		manager.Apply([]config.Endpoint{endpoint}, config.Settings{CheckInterval: 5})
+		status := waitState(t, manager, "AWG", StateFailed)
+		require.Contains(t, status.Message, "wgconf.Parse failed")
+	}
+	{
+		parsed, err := wgconf.Parse(sampleTunnel)
+		require.NoError(t, err)
+		driver, status := &amneziaDriver{device: "proximity_a4", parsed: parsed}, Status{}
+		driver.describe(&status)
+		require.Equal(t, "proximity_a4", status.Device)
+		require.Equal(t, "10.8.1.2/32", status.Address)
+		require.Equal(t, []string{"10.8.1.1"}, status.DNS)
+		require.Equal(t, []string{"10.55.0.9/32", "10.66.0.0/16"}, status.Routes)
+	}
+}
+
+func TestManager_OpenVPN(t *testing.T) {
+	tools, directory := makeTools(t)
+	changes := atomic.Int32{}
+	manager, err := NewManager(Options{Directory: filepath.Join(directory, "run"),
+		Executable: "/usr/local/bin/proximity", Tools: tools, Changed: func() {
+			changes.Add(1)
+		}})
+	require.NoError(t, err)
+	defer manager.Close()
+	endpoint := config.Endpoint{ID: "VPN", Type: config.TypeOpenVPN, Enabled: true, Slot: 7,
+		OpenVPN: &config.OpenVPNOptions{Config: sampleOpenVPN, Username: "alice",
+			Password: "wonderland", OTPKey: "GEZDGNBVGY3TQOJQ", OTPMode: config.OTPAppend},
+		Monitoring: &config.Monitoring{Enabled: true, Interval: 5, Timeout: 1, Retries: 1,
+			ReconnectDelay: 1, ReconnectAttempts: 0, Target: "127.0.0.1:1"}}
+	manager.Apply([]config.Endpoint{endpoint}, config.Settings{CheckInterval: 5})
+	status := waitState(t, manager, "VPN", StateUp)
+	require.Equal(t, "proximity_o7", status.Device)
+	require.Equal(t, "10.88.0.1", status.Gateway)
+	require.Equal(t, "10.88.0.2", status.Address)
+	require.Equal(t, []string{"10.99.0.1"}, status.DNS)
+	require.Equal(t, []string{"corp.test"}, status.Domains)
+	require.Equal(t, []string{"10.99.0.0/16", "10.77.1.5/32", "fd00::/64"}, status.Routes)
+	require.Equal(t, "absent", status.Link)
+	require.Positive(t, changes.Load())
+	{
+		data, err := os.ReadFile(filepath.Join(directory, "run", "answers.txt"))
+		require.NoError(t, err)
+		parts := strings.Split(strings.TrimSpace(string(data)), "|")
+		require.Len(t, parts, 3)
+		require.Equal(t, "alice", parts[0])
+		require.Regexp(t, `^wonderland\d{6}$`, parts[1])
+		require.Regexp(t, `^\d{6}$`, parts[2])
+		text, err := os.ReadFile(filepath.Join(directory, "run", "openvpn-7", "client.ovpn"))
+		require.NoError(t, err)
+		require.Equal(t, "client\nremote vpn.example.com 1194 udp\n\nauth-user-pass\n", string(text))
+		log := strings.Join(manager.Log("VPN"), "\n")
+		require.Contains(t, log, "Enter Auth Username:")
+		require.Contains(t, log, "CHALLENGE: Enter OTP")
+		require.Contains(t, log, "Initialization Sequence Completed")
+		require.Contains(t, log, "skipped route '10.1.0.0'")
+		require.NotContains(t, log, "wonderland")
+		calls, err := os.ReadFile(filepath.Join(directory, "ip.log"))
+		require.NoError(t, err)
+		require.Contains(t, string(calls), "-4 route flush table 51005")
+		require.Contains(t, string(calls), "-4 rule add priority 5100 fwmark 51007 lookup 51007")
+		require.Contains(t, string(calls), "-4 route replace default dev proximity_o7 table 51007")
+		require.Contains(t, string(calls),
+			"-4 route replace 10.99.0.0/16 via 10.88.0.1 dev proximity_o7 table 51007")
+		require.Contains(t, string(calls), "-6 route replace fd00::/64 dev proximity_o7 table 51007")
+	}
+	{
+		require.Eventually(t, func() bool {
+			status := manager.Status()["VPN"]
+			return status.Checked != 0 && status.Latency >= 0
+		}, 10*time.Second, 50*time.Millisecond)
+		require.Empty(t, manager.Counters())
+	}
+	{
+		require.NoError(t, os.WriteFile(tools.Ping, []byte("#!/bin/bash\nexit 1\n"), 0o700))
+		status := waitState(t, manager, "VPN", StateFailed)
+		require.Contains(t, status.Message, "monitoring failed after 2 attempts")
+		require.Contains(t, status.Message, "failed to ping gateway '10.88.0.1'")
+		require.Empty(t, status.Address)
+	}
+	{
+		endpoint.OpenVPN = &config.OpenVPNOptions{Config: sampleOpenVPN, Username: "denied",
+			Password: "x", OTPMode: config.OTPChallenge}
+		manager.Apply([]config.Endpoint{endpoint}, config.Settings{CheckInterval: 5})
+		status := waitState(t, manager, "VPN", StateFailed)
+		require.Equal(t, "authentication failed", status.Message)
+	}
+	{
+		endpoint.OpenVPN = &config.OpenVPNOptions{Config: sampleOpenVPN, Username: "bob",
+			OTPMode: config.OTPChallenge}
+		manager.Apply([]config.Endpoint{endpoint}, config.Settings{CheckInterval: 5})
+		status := waitState(t, manager, "VPN", StateFailed)
+		require.Equal(t, "password is required by server", status.Message)
+	}
+}
+
+func TestManager_Proxies(t *testing.T) {
+	tools, directory := makeTools(t)
+	target := makeListener(t)
+	host, port, err := net.SplitHostPort(target)
+	require.NoError(t, err)
+	number, err := strconv.Atoi(port)
+	require.NoError(t, err)
+	manager, err := NewManager(Options{Directory: filepath.Join(directory, "run"), Tools: tools})
+	require.NoError(t, err)
+	settings := config.Settings{ProbeTarget: target, CheckInterval: 5}
+	endpoints := []config.Endpoint{
+		{ID: "S", Type: config.TypeSocks5, Enabled: true, Slot: 1,
+			Socks5: &config.Socks5Options{Server: host, Port: number}},
+		{ID: "H", Type: config.TypeHTTP, Enabled: true, Slot: 2,
+			HTTP: &config.HTTPOptions{Server: "127.0.0.1", Port: 1}},
+		{ID: "D", Type: config.TypeHost, Enabled: true, Slot: 3,
+			Host: &config.HostOptions{Mode: config.HostDefault}},
+		{ID: "M", Type: config.TypeHost, Enabled: true, Slot: 5,
+			Host: &config.HostOptions{Mode: config.HostInterface, Interface: "missing0"}},
+		{ID: "L", Type: config.TypeHost, Enabled: true, Slot: 6,
+			Host: &config.HostOptions{Mode: config.HostInterface, Interface: "lo",
+				Gateway: "127.0.0.1"}},
+		{ID: "X", Type: config.TypeHost, Slot: 4, Host: &config.HostOptions{}}}
+	manager.Apply(endpoints, settings)
+	status := waitState(t, manager, "S", StateUp)
+	require.Equal(t, target, status.Gateway)
+	require.Eventually(t, func() bool {
+		return manager.Status()["S"].Checked != 0 && manager.Status()["S"].Latency >= 0
+	}, 5*time.Second, 20*time.Millisecond)
+	waitState(t, manager, "D", StateUp)
+	status = waitState(t, manager, "H", StateDown)
+	require.Contains(t, status.Message, "failed to connect to '127.0.0.1:1'")
+	status = waitState(t, manager, "M", StateDown)
+	require.Equal(t, "interface 'missing0' does not exist", status.Message)
+	require.Eventually(t, func() bool {
+		return manager.Status()["L"].Device == "lo" && manager.Status()["L"].Link == "up"
+	}, 5*time.Second, 20*time.Millisecond)
+	require.NotContains(t, manager.Status(), "X")
+	require.Contains(t, strings.Join(manager.Log("H"), "\n"), "connectivity check 1 of 1 failed")
+	require.Empty(t, manager.Log("missing"))
+	require.Empty(t, manager.Counters())
+	{
+		require.NoError(t, manager.Restart("S"))
+		waitState(t, manager, "S", StateUp)
+		require.EqualError(t, manager.Restart("missing"), "endpoint 'missing' is not running")
+	}
+	{
+		endpoints[0].Enabled, endpoints[2].Name = false, "renamed"
+		manager.Apply(endpoints[:3], settings)
+		require.NotContains(t, manager.Status(), "S")
+		require.NotContains(t, manager.Status(), "M")
+		require.Contains(t, manager.Status(), "D")
+		calls, err := os.ReadFile(filepath.Join(directory, "ip.log"))
+		require.NoError(t, err)
+		require.Contains(t, string(calls),
+			"route replace default via 127.0.0.1 dev lo table 51006")
+		require.Contains(t, string(calls), "-4 route flush table 51006")
+	}
+	{
+		manager.Close()
+		require.Empty(t, manager.Status())
+	}
+}
+
+func TestMaskBits_Values(t *testing.T) {
+	bits, err := maskBits("255.255.255.0")
+	require.NoError(t, err)
+	require.Equal(t, 24, bits)
+	bits, err = maskBits("0.0.0.0")
+	require.NoError(t, err)
+	require.Equal(t, 0, bits)
+	{
+		_, err := maskBits("bad")
+		require.ErrorContains(t, err, `cannot parse "bad" as netmask`)
+		_, err = maskBits("255.0.255.0")
+		require.EqualError(t, err, "invalid netmask '255.0.255.0'")
+	}
+}
+
+func TestNewManager_Problems(t *testing.T) {
+	tools, directory := makeTools(t)
+	blocker := writeScript(t, directory, "file", "x")
+	{
+		_, err := NewManager(Options{Directory: filepath.Join(blocker, "run"), Tools: tools})
+		require.ErrorContains(t, err, "failed to create directory")
+	}
+	{
+		tools.IP = filepath.Join(directory, "missing")
+		_, err := NewManager(Options{Directory: filepath.Join(directory, "run"), Tools: tools})
+		require.ErrorContains(t, err, "ip tool does not exist")
+	}
+}
+
+func TestRunHook_Environment(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "environment.json")
+	require.NoError(t, RunHook(path, []string{"route_vpn_gateway=10.8.0.1", "dev=tun0",
+		"ifconfig_local=10.8.0.2", "foreign_option_1=dhcp-option DNS 10.8.0.1", "PATH=/bin",
+		"password=secret", "script_type=up", "broken"}))
+	data, err := os.ReadFile(path)
+	require.NoError(t, err)
+	values := map[string]string{}
+	require.NoError(t, json.Unmarshal(data, &values))
+	require.Equal(t, map[string]string{"route_vpn_gateway": "10.8.0.1", "dev": "tun0",
+		"ifconfig_local": "10.8.0.2", "foreign_option_1": "dhcp-option DNS 10.8.0.1",
+		"script_type": "up"}, values)
+	{
+		err := RunHook(filepath.Join(path, "nested"), nil)
+		require.ErrorContains(t, err, "failed to write file")
+	}
+}
+
+func TestSanitizeOpenVPN_Directives(t *testing.T) {
+	source := "client\r\ndev tap0\n  daemon\nauth-user-pass /etc/secret.txt\n--up /bin/evil\n" +
+		"script-security 3\nremote vpn.example.com 1194\n<ca>\ndev inside block\n</ca>\n" +
+		"log /var/log/vpn.log\ndev-type tap"
+	text, kind := sanitizeOpenVPN(source, false)
+	require.Equal(t, "tap", kind)
+	require.Equal(t, "client\nremote vpn.example.com 1194\n<ca>\ndev inside block\n</ca>\n"+
+		"auth-user-pass\n", text)
+	{
+		text, kind := sanitizeOpenVPN("client\ndev tun\nremote a 1\n", true)
+		require.Equal(t, "tun", kind)
+		require.Equal(t, "client\nremote a 1\n\nauth-user-pass\n", text)
+	}
+	{
+		text, kind := sanitizeOpenVPN("client\nremote a 1", false)
+		require.Equal(t, "tun", kind)
+		require.Equal(t, "client\nremote a 1\n", text)
+	}
+}
+
+func TestSignature_Changes(t *testing.T) {
+	settings := config.Settings{ProbeTarget: "1.1.1.1:443", CheckInterval: 30}
+	endpoint := config.Endpoint{ID: "S", Type: config.TypeSocks5, Enabled: true, Slot: 1,
+		Socks5: &config.Socks5Options{Server: "10.0.0.1", Port: 1080}}
+	signature := makeSignature(endpoint, settings)
+	renamed := endpoint
+	renamed.Name, renamed.Group, renamed.Statistics = "name", "group", true
+	require.Equal(t, signature, makeSignature(renamed, settings))
+	changed := endpoint.Clone()
+	changed.Socks5.Port = 1081
+	require.NotEqual(t, signature, makeSignature(changed, settings))
+	settings.CheckInterval = 60
+	require.NotEqual(t, signature, makeSignature(endpoint, settings))
+	{
+		first := Status{State: StateUp, DNS: []string{"1.1.1.1"}}
+		second := Status{State: StateUp, DNS: []string{"1.1.1.1"}, Latency: 5}
+		require.True(t, sameStatus(first, second))
+		second.Routes = []string{"10.0.0.0/8"}
+		require.False(t, sameStatus(first, second))
+		second = first
+		second.State = StateDown
+		require.False(t, sameStatus(first, second))
+	}
+	{
+		failure := &fatalError{cause: os.ErrNotExist}
+		require.Equal(t, "file does not exist", failure.Error())
+		require.ErrorIs(t, failure, os.ErrNotExist)
+	}
+}
