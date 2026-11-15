@@ -114,6 +114,20 @@ func waitState(t *testing.T, manager *Manager, id string, state string) Status {
 	return manager.Status()[id]
 }
 
+func TestAmneziaDriver_Ready(t *testing.T) {
+	socket := filepath.Join(t.TempDir(), "lo.sock")
+	{
+		driver := &amneziaDriver{device: "proximity_missing"}
+		require.False(t, driver.ready(socket))
+	}
+	{
+		driver := &amneziaDriver{device: "lo"}
+		require.False(t, driver.ready(socket))
+		require.NoError(t, os.WriteFile(socket, nil, 0o600))
+		require.True(t, driver.ready(socket))
+	}
+}
+
 func TestComputeOTP_Vectors(t *testing.T) {
 	key := "GEZDGNBVGY3TQOJQGEZDGNBVGY3TQOJQ"
 	code, err := computeOTP(key, time.Unix(59, 0))

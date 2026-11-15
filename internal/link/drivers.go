@@ -57,6 +57,7 @@ type amneziaDriver struct {
 
 const amneziaTimeout = 10 * time.Second
 const amneziaDefaultMTU = 1280
+const amneziaSockets = "/var/run/amneziawg"
 
 var amneziaPattern = regexp.MustCompile(`^(DEBUG: )?\(\S+\) \d{4}/\d\d/\d\d \d\d:\d\d:\d\d `)
 
@@ -199,7 +200,8 @@ func (driver *amneziaDriver) start(ctx context.Context) error {
 		close(finished)
 	}()
 	deadline := time.Now().Add(amneziaTimeout)
-	for linkState(driver.device) == "absent" {
+	socket := filepath.Join(amneziaSockets, driver.device+".sock")
+	for !driver.ready(socket) {
 		select {
 		case <-ctx.Done():
 			return ctx.Err()
@@ -208,10 +210,20 @@ func (driver *amneziaDriver) start(ctx context.Context) error {
 		case <-time.After(100 * time.Millisecond):
 		}
 		if time.Now().After(deadline) {
-			return fmt.Errorf("device '%v' does not exist", driver.device)
+			return fmt.Errorf("device '%v' is not ready", driver.device)
 		}
 	}
 	return driver.install(ctx, path)
+}
+
+func (driver *amneziaDriver) ready(socket string) bool {
+	// NOTE: Until amneziawg-go creates UAPI socket awg falls back to kernel module and fails.
+	if linkState(driver.device) == "absent" {
+		return false
+	} else if _, err := os.Stat(socket); err != nil {
+		return false
+	}
+	return true
 }
 
 func (driver *amneziaDriver) install(ctx context.Context, path string) error {

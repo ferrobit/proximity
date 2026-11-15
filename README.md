@@ -1,107 +1,242 @@
-# Proximity
+<p align="center">
+  <img src="docs/images/logo.svg" width="96" height="96" alt="Proximity logo">
+</p>
 
-Контейнер Docker, который раздаёт исходящие соединения хоста по разным «выходам»
-(прямой интернет, прокси, VPN) по правилам: домен, IP, IP:порт, страна (GeoIP) и т. д.
-Внутри работает маршрутизатор [mihomo](https://github.com/MetaCubeX/mihomo), а Proximity
-управляет им, туннелями и даёт веб-интерфейс.
+<h1 align="center">Proximity</h1>
 
-## Быстрый старт
+<p align="center">
+  <b>Policy-based outbound router for your computer, in a single Docker container.</b><br>
+  Send every outgoing connection through the right exit (home ISP, SOCKS5/HTTP proxy,
+  OpenVPN or AmneziaWG) by domain, IP, port, country and more. Managed from a clean web UI.
+</p>
+
+<p align="center">
+  <img alt="Version" src="https://img.shields.io/badge/version-1.1.0-19c2b8">
+  <img alt="Go" src="https://img.shields.io/badge/Go-1.24-00ADD8?logo=go&logoColor=white">
+  <img alt="Vue" src="https://img.shields.io/badge/Vue-3-42b883?logo=vuedotjs&logoColor=white">
+  <img alt="mihomo" src="https://img.shields.io/badge/mihomo-v1.19.34-0b1f2a">
+  <img alt="Docker" src="https://img.shields.io/badge/Docker-ready-2496ED?logo=docker&logoColor=white">
+  <a href="LICENSE"><img alt="License: MIT" src="https://img.shields.io/badge/license-MIT-blue"></a>
+</p>
+
+<p align="center">
+  <img src="docs/images/dashboard.png" alt="Proximity dashboard: endpoint status, live throughput chart and unreachable destinations" width="100%">
+</p>
+
+---
+
+## Contents
+
+- [Why Proximity](#why-proximity)
+- [Features](#features)
+- [Screenshots](#screenshots)
+- [Quick start](#quick-start)
+- [Network modes](#network-modes)
+- [How it works](#how-it-works)
+- [Concepts: endpoints, fallbacks, filters](#concepts-endpoints-fallbacks-filters)
+- [Filters at a glance](#filters-at-a-glance)
+- [Users and roles](#users-and-roles)
+- [Backup and restore](#backup-and-restore)
+- [Configuration folder](#configuration-folder)
+- [Building and testing](#building-and-testing)
+- [Project status](#project-status)
+- [Documentation](#documentation)
+- [License](#license)
+
+## Why Proximity
+
+You work through a corporate VPN, watch video through another tunnel, keep a couple of
+SOCKS5 proxies for specific sites, and want everything else to go straight to your ISP.
+Usually that means juggling VPN clients, browser extensions and proxy settings in every
+program.
+
+Proximity puts all of that into one container:
+
+- **One place for all exits.** Your host uplink, proxies and VPN tunnels become
+  *endpoints* that Proximity starts, monitors and reconnects.
+- **One set of rules.** *Filters* decide which endpoint handles a connection: by domain,
+  domain suffix or keyword, IP network, `IP:port`, country (GeoIP/GeoSite), process name
+  and more. The first match wins, the rest goes to a default target.
+- **Nothing to configure in programs (Linux).** In the default Linux mode Proximity
+  transparently captures *all* new outgoing connections of the host. On macOS and Windows
+  programs use one proxy port (HTTP and SOCKS5 on `127.0.0.1:7899`).
+- **No leaks.** Every tunnel has its own routing table with a `blackhole` fallback: if a
+  VPN drops, its traffic stops instead of silently going through your ISP.
+
+Under the hood the routing engine is [mihomo](https://github.com/MetaCubeX/mihomo).
+Proximity generates its configuration, manages the tunnels and gives you a web UI on
+port **8899**.
+
+## Features
+
+| Area | What you get |
+|---|---|
+| 🌐 **Endpoints** | HOST Internet (default route or a specific interface/gateway), SOCKS5 (auth, TLS, UDP relay), HTTP proxy (separate HTTPS/FTP servers, TLS), OpenVPN (login, password, TOTP one-time codes, private key password), AmneziaWG (`.conf` upload, `vpn://` key import, QR code from an image) |
+| 🔀 **Fallbacks** | Proxy groups of endpoints in priority order: either "first endpoint that Proximity sees as good" or a mihomo health check by URL |
+| 🧭 **Filters** | 15 mihomo directives, automatic normalization (URLs → domains, IDN → punycode, `IP:port` → `AND` rule, masks), `#` comments, overlap and duplicate warnings, up/down ordering |
+| 📡 **VPN routes** | Routes pushed by OpenVPN appear as a read-only *provided* filter you can enable with one switch |
+| 🩺 **Monitoring** | Link state, latency, configurable checks, retries and reconnects; states `good` / `connecting` / `reconnecting` / `failed`; per-endpoint connection log with auto-scroll |
+| 📈 **Statistics** | Upload/download totals and rates per endpoint, interactive throughput chart (5 min / 15 min / 1 h), list of unreachable destinations with reason and matched rule |
+| 🛡️ **Transparent mode** | Linux: captures all new outgoing host connections through a TUN device, hijacks DNS (fake-IP), sniffs TLS SNI / HTTP Host / QUIC, leaves LAN, Docker and inbound traffic alone |
+| 👥 **Access control** | Administrator, Operator, User and optional anonymous dashboard; secrets are hidden from read-only users |
+| 💾 **Backup** | One-click export/import of the whole configuration as a single JSON file |
+| 🎨 **UI** | Vue 3 + Ant Design Vue, light and dark themes, embedded into a single Go binary |
+
+## Screenshots
+
+| | |
+|---|---|
+| ![Endpoints](docs/images/endpoints.png) **Endpoints** — every exit with its state, latency and connection details | ![Filters](docs/images/filters.png) **Filters** — ordered rules with comments, overlap warnings and VPN-provided routes |
+| ![OpenVPN endpoint](docs/images/endpoint-openvpn.png) **OpenVPN endpoint** — upload or edit `.ovpn`, credentials, TOTP | ![Connection log](docs/images/endpoint-log.png) **Connection log** — live, auto-scrolling log of a tunnel |
+| ![Filter editor](docs/images/filter-dialog.png) **Filter editor** — normalized preview before saving | ![Fallbacks](docs/images/fallbacks.png) **Fallbacks** — proxy groups in priority order |
+| ![Settings](docs/images/settings.png) **Settings** — router, access, backup and restore | ![Dark theme](docs/images/dashboard-dark.png) **Dark theme** |
+
+More screenshots with explanations are in the [User guide](docs/user-guide.md).
+
+## Quick start
+
+Requirements: Docker with Compose v2. On Linux the container needs `NET_ADMIN` and
+`/dev/net/tun` (already set in the compose files).
 
 ```bash
-scripts/proximity.sh up -d --build      # Linux и macOS
+git clone https://github.com/rogreedin/proximity.git && cd proximity
+scripts/proximity.sh up -d --build      # Linux and macOS
+```
+
+```powershell
 .\scripts\proximity.ps1 up -d --build   # Windows (PowerShell)
 ```
 
-| Что | Где |
+The script picks the right compose file and configuration folder for your OS.
+
+| What | Where |
 |---|---|
-| Веб-интерфейс | http://localhost:8899 |
-| Прокси (HTTP и SOCKS5 на одном порту) | `127.0.0.1:7899` |
-| Настройки, Linux | `~/.config/proximity` |
-| Настройки, macOS | `~/Library/Application Support/Proximity` |
-| Настройки, Windows | `%APPDATA%\Proximity` |
+| Web UI | <http://localhost:8899> |
+| Proxy (HTTP and SOCKS5 on one port) | `127.0.0.1:7899` |
+| Settings folder, Linux | `~/.config/proximity` |
+| Settings folder, macOS | `~/Library/Application Support/Proximity` |
+| Settings folder, Windows | `%APPDATA%\Proximity` |
 
-### Первый вход
+### First sign-in
 
-При первом открытии интерфейс показывает диалог «Create Administrator Account»:
-имя, пароль и повтор пароля (роль — всегда Administrator). Пароль нигде не генерируется.
-Для автоматической установки можно заранее задать `PROXIMITY_ADMIN_USER`
-и `PROXIMITY_ADMIN_PASSWORD` — тогда диалог не появится.
+On the first visit the UI asks you to create the administrator account (user name,
+password and password confirmation; the role is fixed to Administrator). No password is
+generated or printed to the log.
 
-## Режимы сети
+<p align="center"><img src="docs/images/setup.png" alt="Create Administrator Account dialog" width="720"></p>
 
-| Режим | Файл | Что делает |
+For unattended installs set `PROXIMITY_ADMIN_USER` and `PROXIMITY_ADMIN_PASSWORD`
+before the first start; the dialog is then skipped.
+
+Then: add endpoints → (optionally) group them into fallbacks → write filters → pick the
+default target for everything else. A step-by-step walkthrough is in
+[Getting started](docs/getting-started.md).
+
+## Network modes
+
+| Mode | Compose file | Behaviour |
 |---|---|---|
-| Linux (по умолчанию) | `docker-compose.yml` | контейнер в сети хоста; **весь исходящий трафик хоста** идёт через Proximity, программам не нужны настройки прокси |
-| macOS, Windows | `docker-compose.bridge.yml` | отдельная сеть `proximity_lan`; программы указывают прокси `127.0.0.1:7899` |
+| **Linux, transparent** (default) | `docker-compose.yml` | Container shares the host network. **All new outgoing connections of the host** go through Proximity; programs need no proxy settings |
+| **macOS, Windows, or Linux without capture** | `docker-compose.bridge.yml` | Container gets its own network `proximity_lan`; programs use the proxy `127.0.0.1:7899` |
 
-Скрипт `scripts/proximity.sh` выбирает файл сам. На Linux без захвата трафика:
-`PROXIMITY_NETWORK=bridge scripts/proximity.sh up -d --build`.
+`scripts/proximity.sh` chooses the file automatically. To run Linux without capture:
 
-### Как устроен захват трафика на Linux
+```bash
+PROXIMITY_NETWORK=bridge scripts/proximity.sh up -d --build
+```
 
-* mihomo создаёт интерфейс `proximity_tun`. Proximity добавляет правила `ip rule`
-  (приоритеты 5150–5170) и таблицу 51000 с маршрутом в этот интерфейс.
-* Захватываются только новые исходящие соединения. Локальная сеть, сети Docker и входящие
-  соединения (SSH, сам интерфейс Proximity) идут как раньше.
-* Домен для фильтров DOMAIN берётся из DNS (fake-ip) и самого соединения (TLS SNI,
-  заголовок HTTP Host, QUIC).
-* DNS-запросы хоста перехватываются: имя разрешает цель правила — SOCKS5/HTTP-прокси
-  удалённо, туннель через DNS туннеля, DIRECT через системный DNS. Поэтому имена,
-  известные только внутри прокси или VPN, работают и без настройки прокси в программе.
-* В режиме без захвата (macOS/Windows) программы указывают прокси `127.0.0.1:7899`;
-  тогда имя разрешает Proximity через DNS цели правила.
-* Собственный трафик mihomo и туннелей помечен меткой 51000 и в захват не попадает.
-* При остановке контейнера правила удаляются. Если процесс убит — интерфейс исчезает
-  вместе с маршрутом, и трафик идёт обычным путём.
-* Выключается в Settings → [Router] → «Route all outgoing connections…».
-* IPv6 захватывается только при включённом флажке IPv6 в Settings.
+### Transparent capture on Linux
 
-## Роли
+- mihomo creates the `proximity_tun` interface. Proximity adds `ip rule` entries with
+  priorities 5150–5170 and routing table 51000 that points into this interface.
+- Only **new outgoing** connections are captured. Local networks, Docker networks and
+  inbound connections (SSH, the Proximity UI itself) keep working as before.
+- The domain used by DOMAIN filters comes from DNS (fake-IP) and from the connection
+  itself (TLS SNI, HTTP `Host` header, QUIC).
+- Host DNS queries are intercepted, and the name is resolved by the rule's target:
+  remotely for SOCKS5/HTTP proxies, through the tunnel's DNS for VPNs (when enabled),
+  through the system DNS for DIRECT. Names that exist only inside a VPN or behind a proxy
+  therefore work without any proxy settings in programs.
+- Traffic of mihomo itself and of tunnel transports is marked with `fwmark 51000` and is
+  never captured (no loops).
+- When the container stops, the rules are removed. If the process is killed, the TUN
+  interface disappears together with its route, and traffic returns to the normal path.
+- Turn it off in **Settings → [Router] → Route all outgoing connections of the host
+  through Proximity**.
+- IPv6 is captured only when **IPv6** is enabled in Settings.
 
-| Роль | Права |
+Details: [Architecture](docs/architecture.md#transparent-capture).
+
+## How it works
+
+```mermaid
+flowchart LR
+    subgraph Host["Your computer"]
+        Apps["Programs<br/>(browser, git, IDE, …)"]
+    end
+    subgraph Container["Docker container: proximity"]
+        UI["Web UI + HTTP API<br/>:8899"]
+        Core["Proximity (Go)<br/>config · monitoring · statistics"]
+        Mihomo["mihomo router<br/>rules + proxy groups"]
+        OVPN["openvpn<br/>proximity_o&lt;N&gt;"]
+        AWG["amneziawg-go<br/>proximity_a&lt;N&gt;"]
+    end
+    Apps -- "transparent capture (Linux)<br/>or proxy 127.0.0.1:7899" --> Mihomo
+    UI --- Core
+    Core -- "generates config,<br/>reads /connections and /logs" --> Mihomo
+    Core -- "starts, answers prompts,<br/>monitors" --> OVPN
+    Core -- "starts, configures,<br/>monitors" --> AWG
+    Mihomo -- "HOST Internet" --> ISP(("ISP"))
+    Mihomo -- "SOCKS5 / HTTP" --> Proxy(("Proxy servers"))
+    Mihomo -- "routing-mark" --> OVPN --> VPN1(("OpenVPN server"))
+    Mihomo -- "routing-mark" --> AWG --> VPN2(("AmneziaWG server"))
+```
+
+How each endpoint type is connected to mihomo:
+
+| Endpoint | mihomo side |
 |---|---|
-| Administrator | всё, включая пользователей и настройки |
-| Operator | правка Endpoints, Fallbacks, Filters; экспорт и импорт конфигурации |
-| User | только просмотр (секреты скрыты) |
-| Anonymous | только Dashboard (отключается в Settings) |
+| HOST Internet | proxy `direct`; for a specific interface — `interface-name`, with a gateway — `routing-mark` |
+| SOCKS5 Proxy | proxy `socks5` |
+| HTTP Proxy | proxy `http` (CONNECT tunnel); separate HTTPS/FTP servers become extra proxies selected by port 443/21 |
+| OpenVPN | `openvpn` process on interface `proximity_o<N>` + `direct` with `routing-mark` |
+| AmneziaWG | `amneziawg-go` on interface `proximity_a<N>` + `direct` with `routing-mark` |
 
-## Как устроено
+- Each tunnel has its own routing table (`51000 + N`), a rule by mark and a rule by the
+  tunnel address. The main routing table is never changed.
+- If a tunnel goes down, a `blackhole` route stays in its table: traffic does not leak
+  around the VPN.
+- OpenVPN runs in a pseudo-terminal; Proximity answers the user name, password and
+  one-time code prompts itself (TOTP, same as `oathtool --totp -b`).
+- HOST endpoint: after *Connection attempts* failures in a row (pause — *Reconnection
+  timeout*) it goes to `failed`, but checks continue, and it returns to `good` on its own
+  when connectivity is back.
 
-| Endpoint | Как подключён к mihomo |
-|---|---|
-| HOST Internet | прокси `direct`; для интерфейса — `interface-name`, со шлюзом — метка `routing-mark` |
-| SOCKS5 Proxy | прокси `socks5` |
-| HTTP Proxy | прокси `http` (туннель CONNECT); отдельные серверы HTTPS/FTP — по порту 443/21 |
-| OpenVPN | процесс `openvpn` на интерфейсе `proximity_o<N>` + `direct` с `routing-mark` |
-| AmneziaWG | `amneziawg-go` на интерфейсе `proximity_a<N>` + `direct` с `routing-mark` |
+## Concepts: endpoints, fallbacks, filters
 
-* У каждого туннеля своя таблица маршрутов (`51000 + N`), правило по метке и правило
-  по адресу туннеля. Основная таблица не меняется.
-* Если туннель упал, в его таблице остаётся `blackhole` — трафик не утекает мимо VPN.
-* OpenVPN запускается в псевдотерминале; Proximity сам отвечает на запросы логина,
-  пароля и одноразового кода (TOTP, как `oathtool --totp -b`).
-* Маршруты, которые выдал VPN, появляются в Filters как фильтр «provided»
-  (только чтение, выключен). Его можно включить и двигать.
-* HOST endpoint: после «Connection attempts» неудач подряд (пауза — «Reconnection timeout»)
-  переходит в `failed`, но проверки продолжаются — при появлении связи он сам вернётся в `good`.
-* Fallback без «Enable health check» берёт первый endpoint в состоянии `good`
-  (по данным Proximity). С флажком — mihomo сам опрашивает URL через каждый endpoint.
+| Concept | Meaning | Example |
+|---|---|---|
+| **Endpoint** | One outgoing connection | `OpenVPN 1` — corporate VPN |
+| **Fallback** | A group of endpoints used in priority order | `Proxies` = `SOCKS5 1`, then `SOCKS5 2` |
+| **Filter** | A list of conditions with one directive and one target | `DOMAIN-SUFFIX corp.example → OpenVPN 1` |
+| **Default target** | Where everything that matched no filter goes | `HOST 1` or `DIRECT` |
 
-## Идентификаторы
+Identifiers:
 
-* ID endpoint'ов, fallback'ов и фильтров можно менять. При переименовании ссылки
-  (состав fallback'ов, цели фильтров, цель по умолчанию) обновляются сами, туннель не рвётся.
-* ID уникален внутри раздела. Endpoint и fallback дополнительно не могут называться
-  одинаково: оба — цели фильтров.
-* Пустой ID фильтра заменяется на `Filter <N>`.
+- IDs of endpoints, fallbacks and filters can be changed at any time. On rename all
+  references (fallback members, filter targets, default target) are updated, and a running
+  tunnel is not interrupted.
+- An ID is unique within its section. An endpoint and a fallback can't share a name either,
+  because both can be filter targets.
+- Empty IDs are generated: `<Type> <N>` for endpoints, `Fallback <N>`, `Filter <N>`.
 
-## Фильтры
+## Filters at a glance
 
-Каждая строка параметров — одно правило mihomo `<Directive>,<параметр>,<Target>`.
-Строка, у которой первый непробельный символ `#`, — комментарий: в mihomo не попадает,
-сохраняется на своём месте. Фильтр из одних комментариев не принимается.
+Each line of a filter's parameters becomes one mihomo rule `<Directive>,<parameter>,<Target>`.
+A line whose first non-blank character is `#` is a comment: it is kept in place but is not
+sent to mihomo. A filter that has only comments is rejected.
 
-| Ввод | Результат |
+| Input | Result |
 |---|---|
 | `https://Example.com/path` (DOMAIN) | `example.com` |
 | `*.example.com` (DOMAIN-SUFFIX) | `example.com` |
@@ -110,38 +245,84 @@ scripts/proximity.sh up -d --build      # Linux и macOS
 | `10.1.2.3/8` | `10.0.0.0/8` |
 | `1.2.3.4:443` | `AND,((IP-CIDR,1.2.3.4/32),(DST-PORT,443)),Target` |
 | `5.5.5.5,no-resolve` | `IP-CIDR,5.5.5.5/32,Target,no-resolve` |
-| `  # офис` | `# офис` (комментарий, правила нет) |
+| `  # office` | `# office` (comment, no rule) |
 
-Предупреждение появляется, только когда верхнее правило полностью перекрывает нижнее
-(нижнее никогда не сработает) или правила совпадают. Порядок «частное выше общего» —
-норма: `im-squadus.elvees.com → DIRECT`, ниже `elvees.com → OpenVPN 1`.
+A warning is shown only when an upper rule fully covers a lower one (the lower rule can
+never match) or when rules are identical. "Specific above general" is normal and produces
+no warning, for example `www.corp.example → DIRECT` above `corp.example → OpenVPN 1`.
 
-## Резервная копия
+Full reference: [Filters](docs/filters.md).
 
-Settings → [Backup & Restore]: «Export configuration» сохраняет один файл JSON
-(endpoints с паролями и ключами VPN, fallbacks, filters, settings), «Import configuration»
-заменяет текущие. Учётные записи в файл не входят. При импорте оператором настройки
-(Settings) остаются прежними.
+## Users and roles
 
-## Сборка и тесты
+| Role | Rights |
+|---|---|
+| Administrator | everything, including users and settings |
+| Operator | edit Endpoints, Fallbacks and Filters; export and import the configuration |
+| User | view only (passwords and keys are hidden) |
+| Anonymous | Dashboard only (can be disabled in Settings) |
+
+## Backup and restore
+
+**Settings → [Backup & Restore]**: *Export configuration* saves one JSON file (endpoints
+with passwords and VPN keys, fallbacks, filters, settings); *Import configuration*
+replaces the current ones. User accounts are not included. When an Operator imports a file,
+Settings stay unchanged.
+
+## Configuration folder
+
+| File | Contents |
+|---|---|
+| `proximity.json` | users, endpoints, fallbacks, filters, settings |
+| `state.json` | traffic counters and the list of unreachable destinations |
+| `mihomo/config.yaml` | generated mihomo configuration (JSON, which is valid YAML) |
+
+> [!WARNING]
+> Endpoint passwords and VPN configurations are stored in `proximity.json` as plain text.
+> Protect the settings folder (and exported backup files) accordingly.
+
+## Building and testing
 
 ```bash
-make web      # собрать интерфейс (Node.js 22)
-make build    # собрать bin/proximity
-make cover    # тесты с покрытием
-make up       # собрать образ и запустить контейнер
+make web      # build the UI (Node.js 22)
+make build    # build bin/proximity
+make cover    # run tests with coverage
+make up       # build the image and start the container
 ```
 
-Версии компонентов задаются аргументами сборки в `Dockerfile`: `MIHOMO_IMAGE`,
-`AWG_GO_VERSION`, `AWG_TOOLS_VERSION`.
+Component versions are Docker build arguments in `Dockerfile`: `MIHOMO_IMAGE`,
+`AWG_GO_VERSION`, `AWG_TOOLS_VERSION`. More in [Development](docs/development.md).
 
-## Файлы в папке настроек
+## Project status
 
-| Файл | Содержимое |
+Version **1.1.0**. 87 Go tests pass, total statement coverage 92.9% (80.5–99.1% per
+package). Transparent capture has been verified in isolated network namespaces and in a
+real Docker image: DIRECT, REJECT, domain → OpenVPN / AmneziaWG, LAN and inbound
+connections untouched, `rp_filter=1`, container stop and kill.
+
+Not verified yet:
+
+- `docker-compose.yml` with a real `network_mode: host` on a physical machine; `PROCESS-NAME` filters.
+- Interaction of capture with systemd-resolved, NetworkManager, firewalld and other VPN clients on the host.
+- macOS and Windows (Docker Desktop), the `proximity.ps1` script.
+- IPv6 capture, dynamic OTP challenge (CRV1), `tap` devices.
+- Importing a real Amnezia `vpn://` key and QR code.
+
+Bug reports and test results from these environments are very welcome.
+
+## Documentation
+
+| Document | What's inside |
 |---|---|
-| `proximity.json` | пользователи, endpoints, fallbacks, filters, settings |
-| `state.json` | счётчики трафика и список недоступных адресов |
-| `mihomo/config.yaml` | сгенерированная конфигурация mihomo (JSON — это допустимый YAML) |
+| [Getting started](docs/getting-started.md) | Installation, first configuration, environment variables, upgrade and removal |
+| [User guide](docs/user-guide.md) | Every page of the web UI with screenshots |
+| [Filters](docs/filters.md) | Directives, normalization, comments, warnings, provided routes, recipes |
+| [Architecture](docs/architecture.md) | Components, routing tables, transparent capture, DNS, monitoring, statistics |
+| [HTTP API](docs/api.md) | REST endpoints used by the UI, roles, examples with `curl` |
+| [Troubleshooting](docs/troubleshooting.md) | Common problems and how to diagnose them |
+| [Development](docs/development.md) | Project layout, build, tests, release checklist |
 
-Пароли endpoint'ов и конфигурации VPN лежат в `proximity.json` открытым текстом:
-папку настроек нужно беречь.
+## License
+
+Proximity is released under the [MIT License](LICENSE). Bundled third-party components
+(mihomo, OpenVPN, amneziawg-go, amneziawg-tools, GeoIP/GeoSite data) keep their own licenses.

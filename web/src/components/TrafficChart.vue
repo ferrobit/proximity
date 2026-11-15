@@ -61,14 +61,15 @@
 <script setup>
 import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
 import { LineChartOutlined } from '@ant-design/icons-vue'
+import { theme } from 'ant-design-vue'
 import { api } from '../api'
 import { rate } from '../format'
 
 const props = defineProps({ overview: { type: Object, required: true } })
+const { token } = theme.useToken()
 
 const palette = ['#2a78d6', '#eb6834', '#1baf7a', '#eda100', '#e87ba4', '#008300', '#6250d6', '#e34948']
 const otherColor = '#8a8984'
-const totalColor = '#52514e'
 const maxHistory = 3600
 const ranges = [{ value: 300, label: '5m' }, { value: 900, label: '15m' }, { value: 3600, label: '1h' }]
 const margin = { top: 12, right: 112, bottom: 24, left: 72 }
@@ -86,6 +87,9 @@ const width = ref(0)
 let observer = null
 let loading = false
 
+const colors = computed(() => ({ text: token.value.colorTextSecondary, muted: token.value.colorTextTertiary,
+  grid: token.value.colorBorderSecondary, hover: token.value.colorFillTertiary, surface: token.value.colorBgElevated,
+  shadow: token.value.boxShadowSecondary }))
 const rangeLabel = computed(() => ranges.find((item) => item.value === range.value).label)
 const plotWidth = computed(() => width.value - margin.left - margin.right)
 const plotHeight = computed(() => height - margin.top - margin.bottom)
@@ -98,7 +102,7 @@ const series = computed(() => {
   if (rest.length) {
     result.push({ key: 'other', name: `Other (${rest.length})`, ids: rest, color: otherColor, dash: '' })
   }
-  result.push({ key: 'total', name: 'Total', ids: null, color: totalColor, dash: '6 4' })
+  result.push({ key: 'total', name: 'Total', ids: null, color: colors.value.text, dash: '6 4' })
   return result
 })
 
@@ -262,19 +266,19 @@ onUnmounted(() => {
 .chart-controls { display: flex; gap: 8px; flex-wrap: wrap; }
 .chart-legend { display: flex; flex-wrap: wrap; gap: 4px 12px; margin-bottom: 8px; }
 .legend-item { display: inline-flex; align-items: center; gap: 6px; padding: 2px 6px; border: 0; border-radius: 4px; background: none; cursor: pointer; font: inherit; color: inherit; }
-.legend-item:hover, .legend-item:focus-visible { background: rgba(0, 0, 0, .04); }
+.legend-item:hover, .legend-item:focus-visible { background: v-bind('colors.hover'); }
 .legend-item.off { opacity: .4; }
 .legend-item.off .legend-name { text-decoration: line-through; }
-.legend-value { color: rgba(0, 0, 0, .45); font-variant-numeric: tabular-nums; }
+.legend-value { color: v-bind('colors.muted'); font-variant-numeric: tabular-nums; }
 .chart-box { position: relative; width: 100%; }
-.chart-grid line { stroke: #e1e0d9; stroke-width: 1; }
-.chart-grid text, .chart-labels text { fill: #52514e; font-size: 11px; font-variant-numeric: tabular-nums; }
+.chart-grid line { stroke: v-bind('colors.grid'); stroke-width: 1; }
+.chart-grid text, .chart-labels text { fill: v-bind('colors.text'); font-size: 11px; font-variant-numeric: tabular-nums; }
 .chart-labels text { font-size: 12px; }
 .faded { opacity: .2; }
 .chart-crosshair { stroke: #8a8984; stroke-width: 1; }
-.chart-dot { stroke: #fff; stroke-width: 2; }
+.chart-dot { stroke: v-bind('colors.surface'); stroke-width: 2; }
 .chart-empty { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; pointer-events: none; }
-.chart-tooltip { position: absolute; pointer-events: none; background: #fff; border-radius: 6px; padding: 6px 10px; box-shadow: 0 3px 12px rgba(0, 0, 0, .15); font-size: 12px; white-space: nowrap; z-index: 2; }
-.tooltip-time { color: rgba(0, 0, 0, .45); margin-bottom: 2px; }
+.chart-tooltip { position: absolute; pointer-events: none; background: v-bind('colors.surface'); border-radius: 6px; padding: 6px 10px; box-shadow: v-bind('colors.shadow'); font-size: 12px; white-space: nowrap; z-index: 2; }
+.tooltip-time { color: v-bind('colors.muted'); margin-bottom: 2px; }
 .tooltip-row { display: flex; align-items: center; gap: 6px; font-variant-numeric: tabular-nums; }
 </style>

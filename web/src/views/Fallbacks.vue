@@ -29,7 +29,7 @@
           </div>
         </template>
         <template v-else-if="column.key === 'check'">
-          <template v-if="record.health_check"><span class="mono">{{ record.url }}</span> <span class="muted">every {{ record.interval }}s</span></template>
+          <template v-if="record.health_check"><span class="mono">{{ record.url }}</span><span class="muted" style="margin-left: 8px">every {{ record.interval }}s</span></template>
           <span v-else class="muted">off · follows endpoint state</span>
         </template>
         <template v-else-if="column.key === 'actions'">
