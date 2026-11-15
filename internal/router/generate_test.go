@@ -146,13 +146,33 @@ func TestGenerate_Capture(t *testing.T) {
 	require.Equal(t, "127.0.0.1", result.BindAddress)
 	require.True(t, result.AllowLan)
 	require.Equal(t, 51000, result.RoutingMark)
-	require.Equal(t, &tunSection{Enable: true, Device: "proximity_tun", Stack: "gvisor"},
-		result.Tun)
+	require.Equal(t, &tunSection{Enable: true, Device: "proximity_tun", Stack: "gvisor",
+		DNSHijack: []string{"any:53"}}, result.Tun)
 	require.True(t, result.Sniffer.Enable)
 	require.False(t, result.Sniffer.OverrideDest)
 	require.Equal(t, sniffPorts{Ports: []string{"443", "8443"}}, result.Sniffer.Sniff["TLS"])
 	require.Equal(t, sniffPorts{Ports: []string{"80", "8080-8880"}}, result.Sniffer.Sniff["HTTP"])
 	require.Contains(t, result.Sniffer.Sniff, "QUIC")
+	require.Equal(t, &dnsSection{Enable: true, EnhancedMode: "fake-ip",
+		FakeIPRange: link.CaptureFakeIPRange, Nameserver: []string{"system"},
+		Policy: map[string][]string{}}, result.DNS)
+}
+
+func TestGenerate_CaptureProxyDNS(t *testing.T) {
+	snapshot := config.Default()
+	_, err := snapshot.AddEndpoint(config.Endpoint{Type: config.TypeSocks5, Enabled: true,
+		Socks5: &config.Socks5Options{Server: "127.0.0.1", Port: 12007}})
+	require.NoError(t, err)
+	_, err = snapshot.AddFilter(config.Filter{Directive: "DOMAIN-SUFFIX", Target: "SOCKS5 1",
+		Enabled: true, Params: []string{"pki.elvees.com"}})
+	require.NoError(t, err)
+	data, _, err := Generate(snapshot, nil, Options{Socket: "socket", Capture: true})
+	require.NoError(t, err)
+	result := document{}
+	require.NoError(t, json.Unmarshal(data, &result))
+	require.Contains(t, result.Rules, "DOMAIN-SUFFIX,pki.elvees.com,SOCKS5 1")
+	require.Equal(t, "fake-ip", result.DNS.EnhancedMode)
+	require.Empty(t, result.DNS.Policy)
 }
 
 func TestGenerate_SelectGroups(t *testing.T) {

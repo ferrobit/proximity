@@ -14,11 +14,17 @@ type captureState struct {
 
 const CaptureDevice = devicePrefix + "tun"
 const CaptureMark = tableBase
+const CaptureFakeIPRange = "198.18.0.1/16"
 const captureSource = "198.18.0.0/30"
 const captureSource6 = "fdfe:dcba:9876::/126"
 const bypassPriority = "5150"
+const dnsPriority = "5155"
 const localPriority = "5160"
 const capturePriority = "5170"
+
+// iproute2 6.1 (the container image) accepts only numeric protocols in `ip rule`.
+const dnsUDP = "17"
+const dnsTCP = "6"
 
 func (manager *Manager) Capture(enabled bool, ipv6 bool) bool {
 	manager.mutex.Lock()
@@ -64,6 +70,10 @@ func (capture *captureState) install(tools Tools, ipv6 bool) {
 	for family, sources := range families {
 		_, _ = tools.ip(family, "rule", "add", "priority", bypassPriority, "fwmark", table, "lookup",
 			"main")
+		for _, protocol := range []string{dnsUDP, dnsTCP} {
+			_, _ = tools.ip(family, "rule", "add", "priority", dnsPriority, "iif", "lo", "ipproto",
+				protocol, "dport", "53", "lookup", table)
+		}
 		_, _ = tools.ip(family, "rule", "add", "priority", localPriority, "lookup", "main",
 			"suppress_prefixlength", "0")
 		for _, source := range sources {
@@ -76,7 +86,7 @@ func (capture *captureState) install(tools Tools, ipv6 bool) {
 
 func (capture *captureState) remove(tools Tools) {
 	for _, family := range []string{"-4", "-6"} {
-		for _, priority := range []string{bypassPriority, localPriority, capturePriority} {
+		for _, priority := range []string{bypassPriority, dnsPriority, localPriority, capturePriority} {
 			for range 8 {
 				if _, err := tools.ip(family, "rule", "del", "priority", priority); err != nil {
 					break

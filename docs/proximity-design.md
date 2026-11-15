@@ -33,8 +33,10 @@
    macOS/Windows: `docker-compose.bridge.yml` (прокси-порт). Скрипт выбирает файл сам.
 3. Захват: mihomo `tun` (устройство `proximity_tun`, стек gvisor, `auto-route` выключен),
    правила ставит Proximity: 5150 `fwmark 51000 → main` (обход для mihomo и транспорта туннелей),
-   5160 `main suppress_prefixlength 0` (локальная сеть напрямую), 5170 `from 0.0.0.0 iif lo → 51000`.
-   Домены — из сниффера (TLS SNI, HTTP Host, QUIC). DNS хоста не перехватывается.
+   5155 DNS хоста (`iif lo`, UDP/TCP 53 → таблица 51000), 5160 `main suppress_prefixlength 0`
+   (локальная сеть напрямую), 5170 `from 0.0.0.0 iif lo → 51000`.
+   Домены — из fake-ip DNS (запросы хоста к DNS перехватываются) и сниффера (TLS SNI,
+   HTTP Host, QUIC).
 4. Папки настроек: Linux `~/.config/proximity`, macOS `~/Library/Application Support/Proximity`,
    Windows `%APPDATA%\Proximity`.
 5. Первый вход: диалог «Create Administrator Account» (`POST /api/setup`), пароль не генерируется.

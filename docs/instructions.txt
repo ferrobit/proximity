@@ -263,3 +263,14 @@ Fix known issues:
 * Add "Backup & Restore" group to the bottom of the Settings page. Export
   and import configuration from single file. Only for Administrator and
   Operator.
+
+===========================================================================
+
+## PASS 3
+
+* Change the font in filters rule parameters to modern monospace font.
+
+* Add support for comment prefix # in rule parameters.
+
+* Support for fake-IP and DNS-hijack under mihomo configuration.
+

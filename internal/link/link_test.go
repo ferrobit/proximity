@@ -327,9 +327,13 @@ func TestManager_Capture(t *testing.T) {
 	calls, err := os.ReadFile(filepath.Join(directory, "ip.log"))
 	require.NoError(t, err)
 	for _, line := range []string{"-4 rule add priority 5150 fwmark 51000 lookup main",
+		"-4 rule add priority 5155 iif lo ipproto 17 dport 53 lookup 51000",
+		"-4 rule add priority 5155 iif lo ipproto 6 dport 53 lookup 51000",
 		"-4 rule add priority 5160 lookup main suppress_prefixlength 0",
 		"-4 rule add priority 5170 from 0.0.0.0/32 iif lo lookup 51000",
 		"-4 rule add priority 5170 from 198.18.0.0/30 iif lo lookup 51000",
+		"-6 rule add priority 5155 iif lo ipproto 17 dport 53 lookup 51000",
+		"-6 rule add priority 5155 iif lo ipproto 6 dport 53 lookup 51000",
 		"-6 rule add priority 5170 from ::/128 iif lo lookup 51000",
 		"-6 rule add priority 5170 from fdfe:dcba:9876::/126 iif lo lookup 51000"} {
 		require.Contains(t, string(calls), line+"\n")
@@ -383,6 +387,7 @@ func TestManager_Capture(t *testing.T) {
 		require.False(t, manager.Capture(false, false))
 		calls, err := os.ReadFile(filepath.Join(directory, "ip.log"))
 		require.NoError(t, err)
+		require.Contains(t, string(calls), "-4 rule del priority 5155\n")
 		require.Contains(t, string(calls), "-4 rule del priority 5170\n")
 		require.Contains(t, string(calls), "-6 route flush table 51000\n")
 	}

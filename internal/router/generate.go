@@ -21,11 +21,12 @@ type proxyGroup struct {
 }
 
 type tunSection struct {
-	Enable     bool   `json:"enable"`
-	Device     string `json:"device"`
-	Stack      string `json:"stack"`
-	AutoRoute  bool   `json:"auto-route"`
-	AutoDetect bool   `json:"auto-detect-interface"`
+	Enable     bool     `json:"enable"`
+	Device     string   `json:"device"`
+	Stack      string   `json:"stack"`
+	AutoRoute  bool     `json:"auto-route"`
+	AutoDetect bool     `json:"auto-detect-interface"`
+	DNSHijack  []string `json:"dns-hijack,omitempty"`
 }
 
 type sniffPorts struct {
@@ -45,10 +46,12 @@ type Options struct {
 }
 
 type dnsSection struct {
-	Enable     bool                `json:"enable"`
-	IPv6       bool                `json:"ipv6"`
-	Nameserver []string            `json:"nameserver"`
-	Policy     map[string][]string `json:"nameserver-policy"`
+	Enable       bool                `json:"enable"`
+	IPv6         bool                `json:"ipv6"`
+	EnhancedMode string              `json:"enhanced-mode,omitempty"`
+	FakeIPRange  string              `json:"fake-ip-range,omitempty"`
+	Nameserver   []string            `json:"nameserver"`
+	Policy       map[string][]string `json:"nameserver-policy"`
 }
 
 type document struct {
@@ -102,7 +105,8 @@ func Generate(snapshot config.Config, links map[string]link.Status, options Opti
 	}
 	if options.Capture {
 		state.document.RoutingMark = link.CaptureMark
-		state.document.Tun = &tunSection{Enable: true, Device: link.CaptureDevice, Stack: "gvisor"}
+		state.document.Tun = &tunSection{Enable: true, Device: link.CaptureDevice, Stack: "gvisor",
+			DNSHijack: []string{"any:53"}}
 		state.document.Sniffer = &snifferSection{Enable: true, Sniff: map[string]sniffPorts{
 			"HTTP": {Ports: []string{"80", "8080-8880"}}, "TLS": {Ports: []string{"443", "8443"}},
 			"QUIC": {Ports: []string{"443", "8443"}}}}
@@ -342,9 +346,14 @@ func (state *buildState) buildRules() {
 		target = config.TargetDirect
 	}
 	state.document.Rules = append(state.document.Rules, "MATCH,"+target)
-	if len(policy) != 0 {
-		state.document.DNS = &dnsSection{Enable: true, IPv6: state.config.Settings.IPv6,
+	if state.document.Tun != nil || len(policy) != 0 {
+		dns := &dnsSection{Enable: true, IPv6: state.config.Settings.IPv6,
 			Nameserver: []string{"system"}, Policy: policy}
+		if state.document.Tun != nil {
+			dns.EnhancedMode = "fake-ip"
+			dns.FakeIPRange = link.CaptureFakeIPRange
+		}
+		state.document.DNS = dns
 	}
 }
 
