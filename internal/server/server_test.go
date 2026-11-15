@@ -311,7 +311,7 @@ func TestServer_Endpoints(t *testing.T) {
 		require.Equal(t, map[string]any{"endpoints": 5.0, "endpoints_enabled": 2.0,
 			"endpoints_up": 1.0, "fallbacks": 0.0, "filters": 0.0, "rules": 0.0}, body["counts"])
 		require.Contains(t, body["failure"], "failed to check router configuration")
-		require.Equal(t, 7890.0, body["proxy_port"])
+		require.Equal(t, 7899.0, body["proxy_port"])
 	}
 	{
 		code, _, _ := call(t, server, admin, http.MethodPut, "/api/endpoints/SOCKS5%201",

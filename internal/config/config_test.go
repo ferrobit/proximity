@@ -270,7 +270,7 @@ func TestOpen_CreatesAndReloads(t *testing.T) {
 		}), "invalid proxy port (0)")
 		require.Equal(t, 1, calls)
 		require.Len(t, store.Snapshot().Endpoints, 1)
-		require.Equal(t, 7890, store.Snapshot().Settings.MixedPort)
+		require.Equal(t, 7899, store.Snapshot().Settings.MixedPort)
 	}
 	{
 		reloaded, err := Open(directory)

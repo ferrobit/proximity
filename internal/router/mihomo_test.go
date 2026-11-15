@@ -126,7 +126,7 @@ func TestApply_Lifecycle(t *testing.T) {
 	require.False(t, mihomo.State().Running)
 	_, err = mihomo.Connections()
 	require.ErrorContains(t, err, "failed to get router connections")
-	data := makeDocument(t, socket, "warning", 7890)
+	data := makeDocument(t, socket, "warning", 7899)
 	require.NoError(t, mihomo.Apply(data))
 	state := mihomo.State()
 	require.True(t, state.Running)
@@ -145,11 +145,11 @@ func TestApply_Lifecycle(t *testing.T) {
 		require.Equal(t, changed, mihomo.Current())
 	}
 	{
-		err := mihomo.Apply(makeDocument(t, socket, "rejected", 7890))
+		err := mihomo.Apply(makeDocument(t, socket, "rejected", 7899))
 		require.ErrorContains(t, err, "failed to reload router configuration")
 		require.ErrorContains(t, err, "unexpected response status (400)")
 		require.Contains(t, mihomo.State().Message, "failed to reload router configuration")
-		err = mihomo.Apply(makeDocument(t, socket, "broken", 7890))
+		err = mihomo.Apply(makeDocument(t, socket, "broken", 7899))
 		require.ErrorContains(t, err, "failed to check router configuration")
 		require.ErrorContains(t, err, "invalid configuration")
 	}
@@ -188,7 +188,7 @@ func TestApply_Restart(t *testing.T) {
 	mihomo, err := NewMihomo(os.Args[0], directory, socket, func(string) {})
 	require.NoError(t, err)
 	defer mihomo.Close()
-	require.NoError(t, mihomo.Apply(makeDocument(t, socket, "warning", 7890)))
+	require.NoError(t, mihomo.Apply(makeDocument(t, socket, "warning", 7899)))
 	require.Error(t, mihomo.request(http.MethodPost, "/exit", nil, nil))
 	require.Eventually(t, func() bool {
 		state := mihomo.State()

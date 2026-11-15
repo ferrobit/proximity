@@ -37,7 +37,7 @@ import { api, isAdmin, loadSession } from '../api'
 
 const formRef = ref()
 const busy = ref(false)
-const form = reactive({ mixed_port: 7890, bind_address: '*', default_target: 'DIRECT', log_level: 'warning', ipv6: false, anonymous_dashboard: true, probe_target: '1.1.1.1:443', check_interval: 30 })
+const form = reactive({ mixed_port: 7899, bind_address: '*', default_target: 'DIRECT', log_level: 'warning', ipv6: false, anonymous_dashboard: true, probe_target: '1.1.1.1:443', check_interval: 30 })
 
 async function load() {
   try {

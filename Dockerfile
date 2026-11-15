@@ -55,7 +55,7 @@ ENV PROXIMITY_CONFIG=/config \
     PROXIMITY_RUN=/run/proximity \
     PROXIMITY_LISTEN=:8899
 VOLUME ["/config"]
-EXPOSE 8899 7890
+EXPOSE 8899 7899
 HEALTHCHECK --interval=30s --timeout=5s --start-period=20s --retries=3 \
     CMD ["/usr/local/bin/proximity", "health"]
 ENTRYPOINT ["/usr/local/bin/proximity"]

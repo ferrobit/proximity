@@ -176,7 +176,7 @@ var hostPattern = regexp.MustCompile(`^[A-Za-z0-9]([A-Za-z0-9.-]{0,251}[A-Za-z0-
 var interfacePattern = regexp.MustCompile(`^[A-Za-z0-9_.@-]{1,15}$`)
 
 func Default() Config {
-	return Config{Version: currentVersion, Settings: Settings{MixedPort: 7890, BindAddress: "*",
+	return Config{Version: currentVersion, Settings: Settings{MixedPort: 7899, BindAddress: "*",
 		DefaultTarget: TargetDirect, LogLevel: "warning", AnonymousDashboard: true,
 		ProbeTarget: defaultProbeTarget, CheckInterval: 30}, Users: []User{},
 		Endpoints: []Endpoint{}, Fallbacks: []Fallback{}, Filters: []Filter{}}

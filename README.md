@@ -15,10 +15,10 @@ scripts/proximity.sh up -d --build      # Linux и macOS
 | Что | Где |
 |---|---|
 | Веб-интерфейс | http://localhost:8899 |
-| Прокси для программ хоста (HTTP и SOCKS5 на одном порту) | `127.0.0.1:7890` |
+| Прокси для программ хоста (HTTP и SOCKS5 на одном порту) | `127.0.0.1:7899` |
 | Настройки (том `/config`) | Linux: `~/.config/proximity`, macOS: `~/Library/Application Support/proximity`, Windows: `%APPDATA%\proximity` |
 
-Проверка: `curl -x http://127.0.0.1:7890 https://example.com`.
+Проверка: `curl -x http://127.0.0.1:7899 https://example.com`.
 
 ### Первый вход
 

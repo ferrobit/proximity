@@ -67,7 +67,7 @@ func TestGenerate_Document(t *testing.T) {
 	require.NoError(t, err)
 	result := document{}
 	require.NoError(t, json.Unmarshal(data, &result))
-	require.Equal(t, 7890, result.MixedPort)
+	require.Equal(t, 7899, result.MixedPort)
 	require.True(t, result.AllowLan)
 	require.Equal(t, "*", result.BindAddress)
 	require.Equal(t, "rule", result.Mode)
