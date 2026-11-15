@@ -22,8 +22,8 @@ const dialPlain = `[UDP] dial OpenVPN 1 10.0.0.5:5000(curl, uid=1000) --> [2001:
 const dialLogic = `[TCP] dial Fallback 1 (match AND/((DOMAIN,a.test),(DST-PORT,443))) ` +
 	`10.0.0.5:5000 --> a.test error: unexpected failure`
 
-func makeCollected() []config.Endpoint {
-	return []config.Endpoint{{ID: "A", Enabled: true, Statistics: true},
+func makeCollected() []config.Outbound {
+	return []config.Outbound{{ID: "A", Enabled: true, Statistics: true},
 		{ID: "B", Enabled: true, Statistics: true}, {ID: "C", Enabled: true},
 		{ID: "T", Enabled: true, Statistics: true}}
 }
@@ -61,19 +61,20 @@ func TestHistory_Samples(t *testing.T) {
 	tracker.Update(Connections{Items: items, Upload: 110, Download: 1020}, nil)
 	result := tracker.History(0)
 	require.Len(t, result, 1)
-	require.InDelta(t, 20, result[0].Endpoints["A"][0], 1)
-	require.InDelta(t, 200, result[0].Endpoints["A"][1], 1)
-	require.Equal(t, [2]int64{0, 0}, result[0].Endpoints["B"])
-	require.NotContains(t, result[0].Endpoints, "C")
+	require.InDelta(t, 20, result[0].Outbounds["A"][0], 1)
+	require.InDelta(t, 200, result[0].Outbounds["A"][1], 1)
+	require.Equal(t, [2]int64{0, 0}, result[0].Outbounds["B"])
+	require.NotContains(t, result[0].Outbounds, "C")
 	require.InDelta(t, 22, result[0].Total[0], 1)
 	require.InDelta(t, 204, result[0].Total[1], 1)
+	require.Equal(t, 2, result[0].Connections)
 	require.Empty(t, tracker.History(result[0].Time))
 	{
 		tracker.Rename("A", "Z")
 		renamed := tracker.History(0)
-		require.Contains(t, renamed[0].Endpoints, "Z")
-		require.NotContains(t, renamed[0].Endpoints, "A")
-		require.Contains(t, result[0].Endpoints, "A")
+		require.Contains(t, renamed[0].Outbounds, "Z")
+		require.NotContains(t, renamed[0].Outbounds, "A")
+		require.Contains(t, result[0].Outbounds, "A")
 	}
 	{
 		for range maxHistory + 5 {

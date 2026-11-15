@@ -18,110 +18,27 @@ const sampleOpenVPN = "client\ndev tun\nremote vpn.example.com 1194 udp\n"
 
 func makeConfig(t *testing.T) *Config {
 	result := Default()
-	for _, endpoint := range []Endpoint{{Type: TypeHost, Enabled: true},
+	for _, outbound := range []Outbound{{Type: TypeHost, Enabled: true},
 		{Type: TypeSocks5, Enabled: true, Socks5: &Socks5Options{Server: "10.0.0.1", Port: 1080}},
 		{Type: TypeHTTP, Enabled: true, HTTP: &HTTPOptions{Server: "proxy.example.com", Port: 3128,
 			HTTPSServer: "secure.example.com", HTTPSPort: 3129}},
 		{Type: TypeOpenVPN, Enabled: true, OpenVPN: &OpenVPNOptions{Config: sampleOpenVPN}},
 		{Type: TypeAmneziaWG, AmneziaWG: &AmneziaWGOptions{Config: sampleTunnel}}} {
-		_, err := result.AddEndpoint(endpoint)
+		_, err := result.AddOutbound(outbound)
 		require.NoError(t, err)
 	}
 	require.NoError(t, result.Validate())
 	return &result
 }
 
-func TestAddEndpoint_Defaults(t *testing.T) {
-	config := makeConfig(t)
-	ids, slots := []string{}, []int{}
-	for _, endpoint := range config.Endpoints {
-		ids, slots = append(ids, endpoint.ID), append(slots, endpoint.Slot)
-	}
-	require.Equal(t, []string{"HOST 1", "SOCKS5 1", "HTTP 1", "OpenVPN 1", "AmneziaWG 1"}, ids)
-	require.Equal(t, []int{1, 2, 3, 4, 5}, slots)
-	require.Equal(t, HostDefault, config.Endpoints[0].Host.Mode)
-	require.Nil(t, config.Endpoints[0].Monitoring)
-	require.Equal(t, Monitoring{Interval: 30, Timeout: 5, Retries: 3, ReconnectDelay: 10,
-		ReconnectAttempts: 3, Target: defaultProbeTarget}, *config.Endpoints[3].Monitoring)
-	require.Equal(t, OTPChallenge, config.Endpoints[3].OpenVPN.OTPMode)
-	require.True(t, config.Endpoints[2].IsSplit())
-	require.False(t, config.Endpoints[1].IsSplit())
-	require.True(t, config.Endpoints[4].IsTunnel())
-	{
-		require.NoError(t, config.RemoveEndpoint("SOCKS5 1"))
-		endpoint, err := config.AddEndpoint(Endpoint{Type: TypeHost, ID: " Office uplink ",
-			Name: " main ", Socks5: &Socks5Options{}})
-		require.NoError(t, err)
-		require.Equal(t, "Office uplink", endpoint.ID)
-		require.Equal(t, "main", endpoint.Name)
-		require.Equal(t, 2, endpoint.Slot)
-		require.Nil(t, endpoint.Socks5)
-		require.Equal(t, "HOST 2", config.NextID(TypeLabel(TypeHost)))
-	}
-}
-
-func TestAddEndpoint_Invalid(t *testing.T) {
-	config := makeConfig(t)
-	for _, item := range []struct {
-		endpoint Endpoint
-		message  string
-	}{
-		{Endpoint{Type: "wireguard"}, "unexpected endpoint type 'wireguard'"},
-		{Endpoint{Type: TypeHost, ID: "HOST 1"}, "ID 'HOST 1' already exists"},
-		{Endpoint{Type: TypeHost, ID: "a,b"}, "invalid ID 'a,b'"},
-		{Endpoint{Type: TypeHost, ID: "direct"}, "reserved ID 'direct'"},
-		{Endpoint{Type: TypeHost, Group: string(make([]byte, 49))}, "name or group is too long"},
-		{Endpoint{Type: TypeHost, Host: &HostOptions{Mode: "auto"}}, "unexpected host mode 'auto'"},
-		{Endpoint{Type: TypeHost, Host: &HostOptions{Mode: HostInterface, Interface: "bad name"}},
-			"invalid interface name 'bad name'"},
-		{Endpoint{Type: TypeHost, Host: &HostOptions{Mode: HostInterface, Interface: "eth0",
-			Gateway: "gw"}}, "cannot parse \"gw\" as gateway"},
-		{Endpoint{Type: TypeSocks5, Socks5: &Socks5Options{Server: "bad host", Port: 1}},
-			"invalid server address 'bad host'"},
-		{Endpoint{Type: TypeSocks5, Socks5: &Socks5Options{Server: "::1", Port: 0}},
-			"invalid port (0)"},
-		{Endpoint{Type: TypeHTTP, HTTP: &HTTPOptions{Server: "a", Port: 70000}},
-			"invalid port (70000)"},
-		{Endpoint{Type: TypeHTTP, HTTP: &HTTPOptions{Server: "a", Port: 1, HTTPSServer: "b"}},
-			"failed to check HTTPS proxy"},
-		{Endpoint{Type: TypeHTTP, HTTP: &HTTPOptions{Server: "a", Port: 1, FTPServer: "b"}},
-			"failed to check FTP proxy"},
-		{Endpoint{Type: TypeOpenVPN, OpenVPN: &OpenVPNOptions{Config: "client\n"}},
-			"OpenVPN configuration has no 'remote' directive"},
-		{Endpoint{Type: TypeOpenVPN, OpenVPN: &OpenVPNOptions{Config: sampleOpenVPN,
-			OTPMode: "sms"}}, "unexpected OTP mode 'sms'"},
-		{Endpoint{Type: TypeOpenVPN, OpenVPN: &OpenVPNOptions{Config: sampleOpenVPN,
-			OTPKey: "not base32 1"}}, "failed to decode OTP key"},
-		{Endpoint{Type: TypeOpenVPN, OpenVPN: &OpenVPNOptions{Config: sampleOpenVPN},
-			Monitoring: &Monitoring{Interval: 1}}, "invalid monitoring interval (1), expected 5..3600"},
-		{Endpoint{Type: TypeOpenVPN, OpenVPN: &OpenVPNOptions{Config: sampleOpenVPN},
-			Monitoring: &Monitoring{Interval: 5}}, "invalid monitoring timeout (0)"},
-		{Endpoint{Type: TypeOpenVPN, OpenVPN: &OpenVPNOptions{Config: sampleOpenVPN},
-			Monitoring: &Monitoring{Interval: 5, Timeout: 1}}, "invalid monitoring retries (0)"},
-		{Endpoint{Type: TypeOpenVPN, OpenVPN: &OpenVPNOptions{Config: sampleOpenVPN},
-			Monitoring: &Monitoring{Interval: 5, Timeout: 1, Retries: 1}}, "invalid reconnect delay"},
-		{Endpoint{Type: TypeOpenVPN, OpenVPN: &OpenVPNOptions{Config: sampleOpenVPN},
-			Monitoring: &Monitoring{Interval: 5, Timeout: 1, Retries: 1, ReconnectDelay: 1,
-				ReconnectAttempts: 101}}, "invalid reconnect attempts (101)"},
-		{Endpoint{Type: TypeAmneziaWG, AmneziaWG: &AmneziaWGOptions{Config: sampleTunnel},
-			Monitoring: &Monitoring{Interval: 5, Timeout: 1, Retries: 1, ReconnectDelay: 1,
-				Target: "nohost"}}, "failed to check monitoring target"},
-		{Endpoint{Type: TypeAmneziaWG}, "failed to check AmneziaWG configuration"},
-	} {
-		_, err := config.AddEndpoint(item.endpoint)
-		require.ErrorContains(t, err, item.message)
-	}
-	require.Len(t, config.Endpoints, 5)
-}
-
 func TestAddFallback_Members(t *testing.T) {
 	config := makeConfig(t)
 	{
 		fallback, err := config.AddFallback(Fallback{Enabled: true,
-			Endpoints: []string{"SOCKS5 1", "HOST 1"}})
+			Outbounds: []string{"SOCKS5 1", "HOST 1"}})
 		require.NoError(t, err)
 		require.Equal(t, Fallback{ID: "Fallback 1", Enabled: true, URL: defaultHealthURL,
-			Interval: 60, Endpoints: []string{"SOCKS5 1", "HOST 1"}}, fallback)
+			Interval: 60, Outbounds: []string{"SOCKS5 1", "HOST 1"}}, fallback)
 		require.True(t, config.TargetExists("Fallback 1"))
 	}
 	for _, item := range []struct {
@@ -131,8 +48,8 @@ func TestAddFallback_Members(t *testing.T) {
 		{Fallback{ID: "Fallback 1"}, "ID 'Fallback 1' already exists"},
 		{Fallback{ID: "HOST 1"}, "ID 'HOST 1' already exists"},
 		{Fallback{ID: "REJECT"}, "ID 'REJECT' already exists"},
-		{Fallback{ID: "x", Endpoints: []string{"missing"}}, "endpoint 'missing' does not exist"},
-		{Fallback{ID: "x", Endpoints: []string{"HOST 1", "HOST 1"}}, "duplicate endpoint 'HOST 1'"},
+		{Fallback{ID: "x", Outbounds: []string{"missing"}}, "outbound 'missing' does not exist"},
+		{Fallback{ID: "x", Outbounds: []string{"HOST 1", "HOST 1"}}, "duplicate outbound 'HOST 1'"},
 		{Fallback{ID: "x", Interval: 5}, "invalid check interval (5)"},
 		{Fallback{ID: "x", URL: "ftp://example.com"}, "invalid check URL 'ftp://example.com'"},
 		{Fallback{ID: "x", URL: "http://%zz"}, "as URL"},
@@ -142,7 +59,7 @@ func TestAddFallback_Members(t *testing.T) {
 	}
 	{
 		require.NoError(t, config.UpdateFallback("Fallback 1", Fallback{
-			Endpoints: []string{"HOST 1"}}))
+			Outbounds: []string{"HOST 1"}}))
 		require.Equal(t, "Fallback 1", config.Fallbacks[0].ID)
 		require.False(t, config.Fallbacks[0].Enabled)
 		require.False(t, config.Fallbacks[0].HealthCheck)
@@ -167,141 +84,224 @@ func TestAddFallback_Members(t *testing.T) {
 	}
 }
 
-func TestAddFilter_Identifiers(t *testing.T) {
+func TestAddOutbound_Defaults(t *testing.T) {
 	config := makeConfig(t)
-	first, err := config.AddFilter(Filter{Directive: "DOMAIN", Target: "DIRECT",
-		Params: []string{"a.test"}})
-	require.NoError(t, err)
-	require.Equal(t, "Filter 1", first.ID)
-	second, err := config.AddFilter(Filter{ID: " Filter 3 ", Directive: "DOMAIN", Target: "DIRECT",
-		Params: []string{"b.test"}})
-	require.NoError(t, err)
-	require.Equal(t, "Filter 3", second.ID)
-	third, err := config.AddFilter(Filter{Directive: "DOMAIN", Target: "DIRECT",
-		Params: []string{"c.test"}})
-	require.NoError(t, err)
-	require.Equal(t, "Filter 2", third.ID)
-	require.Equal(t, "Filter 4", config.NextFilterID())
-	_, err = config.AddFilter(Filter{ID: "Filter 1", Directive: "DOMAIN", Target: "DIRECT",
-		Params: []string{"d.test"}})
-	require.EqualError(t, err, "filter ID 'Filter 1' already exists")
-	{
-		second.ID = "Filter 1"
-		require.EqualError(t, config.UpdateFilter(second.Key, second),
-			"filter ID 'Filter 1' already exists")
-		second.ID = ""
-		require.NoError(t, config.UpdateFilter(second.Key, second))
-		require.Equal(t, "Filter 3", config.Filters[1].ID)
-		second.ID = "Work sites"
-		require.NoError(t, config.UpdateFilter(second.Key, second))
-		require.Equal(t, "Work sites", config.Filters[1].ID)
-		require.NoError(t, config.Validate())
+	ids, slots := []string{}, []int{}
+	for _, outbound := range config.Outbounds {
+		ids, slots = append(ids, outbound.ID), append(slots, outbound.Slot)
 	}
+	require.Equal(t, []string{"HOST 1", "SOCKS5 1", "HTTP 1", "OpenVPN 1", "AmneziaWG 1"}, ids)
+	require.Equal(t, []int{1, 2, 3, 4, 5}, slots)
+	require.Equal(t, HostDefault, config.Outbounds[0].Host.Mode)
+	require.Nil(t, config.Outbounds[0].Monitoring)
+	require.Equal(t, Monitoring{Interval: 30, Timeout: 5, Retries: 3, ReconnectDelay: 10,
+		ReconnectAttempts: 3, Target: defaultProbeTarget}, *config.Outbounds[3].Monitoring)
+	require.Equal(t, OTPChallenge, config.Outbounds[3].OpenVPN.OTPMode)
+	require.True(t, config.Outbounds[2].IsSplit())
+	require.False(t, config.Outbounds[1].IsSplit())
+	require.True(t, config.Outbounds[4].IsTunnel())
 	{
-		config.Filters[2].ID = "Work sites"
-		require.EqualError(t, config.Validate(), "duplicate filter ID 'Work sites'")
-		config.Filters[2].ID = ""
-		require.ErrorContains(t, config.Validate(), "invalid filter ID length (0)")
-		_, err := config.SetRoutes("OpenVPN 1", []string{"10.0.0.0/8"})
+		require.NoError(t, config.RemoveOutbound("SOCKS5 1"))
+		outbound, err := config.AddOutbound(Outbound{Type: TypeHost, ID: " Office uplink ",
+			Name: " main ", Socks5: &Socks5Options{}})
 		require.NoError(t, err)
-		config.Filters[2].ID = "Routes of AmneziaWG 1"
-		_, err = config.SetRoutes("AmneziaWG 1", []string{"10.1.0.0/16"})
-		require.NoError(t, err)
-		require.Equal(t, "Routes of OpenVPN 1", config.Filters[3].ID)
-		require.Equal(t, "Filter 2", config.Filters[4].ID)
-		require.Equal(t, "AmneziaWG 1", config.Filters[4].Provided)
+		require.Equal(t, "Office uplink", outbound.ID)
+		require.Equal(t, "main", outbound.Name)
+		require.Equal(t, 2, outbound.Slot)
+		require.Nil(t, outbound.Socks5)
+		require.Equal(t, "HOST 2", config.NextID(TypeLabel(TypeHost)))
 	}
 }
 
-func TestAddFilter_Normalizes(t *testing.T) {
+func TestAddOutbound_Invalid(t *testing.T) {
+	config := makeConfig(t)
+	for _, item := range []struct {
+		outbound Outbound
+		message  string
+	}{
+		{Outbound{Type: "wireguard"}, "unexpected outbound type 'wireguard'"},
+		{Outbound{Type: TypeHost, ID: "HOST 1"}, "ID 'HOST 1' already exists"},
+		{Outbound{Type: TypeHost, ID: "a,b"}, "invalid ID 'a,b'"},
+		{Outbound{Type: TypeHost, ID: "direct"}, "reserved ID 'direct'"},
+		{Outbound{Type: TypeHost, Group: string(make([]byte, 49))}, "name or group is too long"},
+		{Outbound{Type: TypeHost, Host: &HostOptions{Mode: "auto"}}, "unexpected host mode 'auto'"},
+		{Outbound{Type: TypeHost, Host: &HostOptions{Mode: HostInterface, Interface: "bad name"}},
+			"invalid interface name 'bad name'"},
+		{Outbound{Type: TypeHost, Host: &HostOptions{Mode: HostInterface, Interface: "eth0",
+			Gateway: "gw"}}, "cannot parse \"gw\" as gateway"},
+		{Outbound{Type: TypeSocks5, Socks5: &Socks5Options{Server: "bad host", Port: 1}},
+			"invalid server address 'bad host'"},
+		{Outbound{Type: TypeSocks5, Socks5: &Socks5Options{Server: "::1", Port: 0}},
+			"invalid port (0)"},
+		{Outbound{Type: TypeHTTP, HTTP: &HTTPOptions{Server: "a", Port: 70000}},
+			"invalid port (70000)"},
+		{Outbound{Type: TypeHTTP, HTTP: &HTTPOptions{Server: "a", Port: 1, HTTPSServer: "b"}},
+			"failed to check HTTPS proxy"},
+		{Outbound{Type: TypeHTTP, HTTP: &HTTPOptions{Server: "a", Port: 1, FTPServer: "b"}},
+			"failed to check FTP proxy"},
+		{Outbound{Type: TypeOpenVPN, OpenVPN: &OpenVPNOptions{Config: "client\n"}},
+			"OpenVPN configuration has no 'remote' directive"},
+		{Outbound{Type: TypeOpenVPN, OpenVPN: &OpenVPNOptions{Config: sampleOpenVPN,
+			OTPMode: "sms"}}, "unexpected OTP mode 'sms'"},
+		{Outbound{Type: TypeOpenVPN, OpenVPN: &OpenVPNOptions{Config: sampleOpenVPN,
+			OTPKey: "not base32 1"}}, "failed to decode OTP key"},
+		{Outbound{Type: TypeOpenVPN, OpenVPN: &OpenVPNOptions{Config: sampleOpenVPN},
+			Monitoring: &Monitoring{Interval: 1}}, "invalid monitoring interval (1), expected 5..3600"},
+		{Outbound{Type: TypeOpenVPN, OpenVPN: &OpenVPNOptions{Config: sampleOpenVPN},
+			Monitoring: &Monitoring{Interval: 5}}, "invalid monitoring timeout (0)"},
+		{Outbound{Type: TypeOpenVPN, OpenVPN: &OpenVPNOptions{Config: sampleOpenVPN},
+			Monitoring: &Monitoring{Interval: 5, Timeout: 1}}, "invalid monitoring retries (0)"},
+		{Outbound{Type: TypeOpenVPN, OpenVPN: &OpenVPNOptions{Config: sampleOpenVPN},
+			Monitoring: &Monitoring{Interval: 5, Timeout: 1, Retries: 1}}, "invalid reconnect delay"},
+		{Outbound{Type: TypeOpenVPN, OpenVPN: &OpenVPNOptions{Config: sampleOpenVPN},
+			Monitoring: &Monitoring{Interval: 5, Timeout: 1, Retries: 1, ReconnectDelay: 1,
+				ReconnectAttempts: 101}}, "invalid reconnect attempts (101)"},
+		{Outbound{Type: TypeAmneziaWG, AmneziaWG: &AmneziaWGOptions{Config: sampleTunnel},
+			Monitoring: &Monitoring{Interval: 5, Timeout: 1, Retries: 1, ReconnectDelay: 1,
+				Target: "nohost"}}, "failed to check monitoring target"},
+		{Outbound{Type: TypeAmneziaWG}, "failed to check AmneziaWG configuration"},
+	} {
+		_, err := config.AddOutbound(item.outbound)
+		require.ErrorContains(t, err, item.message)
+	}
+	require.Len(t, config.Outbounds, 5)
+}
+
+func TestAddRoute_Identifiers(t *testing.T) {
+	config := makeConfig(t)
+	first, err := config.AddRoute(Route{Directive: "DOMAIN", Target: "DIRECT",
+		Params: []string{"a.test"}})
+	require.NoError(t, err)
+	require.Equal(t, "Route 1", first.ID)
+	second, err := config.AddRoute(Route{ID: " Route 3 ", Directive: "DOMAIN", Target: "DIRECT",
+		Params: []string{"b.test"}})
+	require.NoError(t, err)
+	require.Equal(t, "Route 3", second.ID)
+	third, err := config.AddRoute(Route{Directive: "DOMAIN", Target: "DIRECT",
+		Params: []string{"c.test"}})
+	require.NoError(t, err)
+	require.Equal(t, "Route 2", third.ID)
+	require.Equal(t, "Route 4", config.NextRouteID())
+	_, err = config.AddRoute(Route{ID: "Route 1", Directive: "DOMAIN", Target: "DIRECT",
+		Params: []string{"d.test"}})
+	require.EqualError(t, err, "route ID 'Route 1' already exists")
+	{
+		second.ID = "Route 1"
+		require.EqualError(t, config.UpdateRoute(second.Key, second),
+			"route ID 'Route 1' already exists")
+		second.ID = ""
+		require.NoError(t, config.UpdateRoute(second.Key, second))
+		require.Equal(t, "Route 3", config.Routes[1].ID)
+		second.ID = "Work sites"
+		require.NoError(t, config.UpdateRoute(second.Key, second))
+		require.Equal(t, "Work sites", config.Routes[1].ID)
+		require.NoError(t, config.Validate())
+	}
+	{
+		config.Routes[2].ID = "Work sites"
+		require.EqualError(t, config.Validate(), "duplicate route ID 'Work sites'")
+		config.Routes[2].ID = ""
+		require.ErrorContains(t, config.Validate(), "invalid route ID length (0)")
+		_, err := config.SetRoutes("OpenVPN 1", []string{"10.0.0.0/8"})
+		require.NoError(t, err)
+		config.Routes[2].ID = "Routes of AmneziaWG 1"
+		_, err = config.SetRoutes("AmneziaWG 1", []string{"10.1.0.0/16"})
+		require.NoError(t, err)
+		require.Equal(t, "Routes of OpenVPN 1", config.Routes[3].ID)
+		require.Equal(t, "Route 2", config.Routes[4].ID)
+		require.Equal(t, "AmneziaWG 1", config.Routes[4].Provided)
+	}
+}
+
+func TestAddRoute_Normalizes(t *testing.T) {
 	config := makeConfig(t)
 	{
-		filter, err := config.AddFilter(Filter{Key: "ignored", ID: " corp ", Provided: "x",
+		route, err := config.AddRoute(Route{Key: "ignored", ID: " corp ", Provided: "x",
 			Directive: "IP-CIDR", Target: "SOCKS5 1", Enabled: true,
 			Params: []string{" 10.1.2.3 ", "", "8.8.8.8:53"}})
 		require.NoError(t, err)
-		require.Len(t, filter.Key, 12)
-		require.Equal(t, Filter{Key: filter.Key, ID: "corp", Directive: "IP-CIDR",
+		require.Len(t, route.Key, 12)
+		require.Equal(t, Route{Key: route.Key, ID: "corp", Directive: "IP-CIDR",
 			Target: "SOCKS5 1", Enabled: true, Params: []string{"10.1.2.3/32", "8.8.8.8/32:53"}},
-			filter)
+			route)
 	}
 	{
-		filter, err := config.AddFilter(Filter{Directive: "IP-CIDR", Target: "SOCKS5 1",
+		route, err := config.AddRoute(Route{Directive: "IP-CIDR", Target: "SOCKS5 1",
 			Params: []string{"  # office ", " 10.1.2.3 ", "", "\t#dns", "8.8.8.8:53"}})
 		require.NoError(t, err)
-		require.Equal(t, []string{"# office", "10.1.2.3/32", "#dns", "8.8.8.8/32:53"}, filter.Params)
+		require.Equal(t, []string{"# office", "10.1.2.3/32", "#dns", "8.8.8.8/32:53"}, route.Params)
 		require.NoError(t, config.Validate())
-		require.NoError(t, config.RemoveFilter(filter.Key))
-		_, err = config.AddFilter(Filter{Directive: "DOMAIN", Target: "DIRECT",
+		require.NoError(t, config.RemoveRoute(route.Key))
+		_, err = config.AddRoute(Route{Directive: "DOMAIN", Target: "DIRECT",
 			Params: []string{"# only comment"}})
 		require.ErrorContains(t, err, "rule parameters do not exist")
 	}
 	for _, item := range []struct {
-		filter  Filter
+		route   Route
 		message string
 	}{
-		{Filter{Directive: "DOMAIN", Target: "missing", Params: []string{"a.test"}},
+		{Route{Directive: "DOMAIN", Target: "missing", Params: []string{"a.test"}},
 			"target 'missing' does not exist"},
-		{Filter{Directive: "DOMAIN", Target: "DIRECT", Params: []string{"a b"}},
+		{Route{Directive: "DOMAIN", Target: "DIRECT", Params: []string{"a b"}},
 			"failed to check rule parameters"},
-		{Filter{Directive: "DOMAIN", Target: "DIRECT"}, "rule parameters do not exist"},
-		{Filter{Directive: "NOPE", Target: "DIRECT", Params: []string{"x"}}, "unexpected directive"},
-		{Filter{Directive: "DOMAIN", Target: "DIRECT", Params: []string{"a.test"},
-			ID: string(make([]byte, 65))}, "filter ID is too long"},
+		{Route{Directive: "DOMAIN", Target: "DIRECT"}, "rule parameters do not exist"},
+		{Route{Directive: "NOPE", Target: "DIRECT", Params: []string{"x"}}, "unexpected directive"},
+		{Route{Directive: "DOMAIN", Target: "DIRECT", Params: []string{"a.test"},
+			ID: string(make([]byte, 65))}, "route ID is too long"},
 	} {
-		_, err := config.AddFilter(item.filter)
+		_, err := config.AddRoute(item.route)
 		require.ErrorContains(t, err, item.message)
 	}
 	{
-		key := config.Filters[0].Key
-		require.NoError(t, config.UpdateFilter(key, Filter{Directive: "DOMAIN-SUFFIX",
+		key := config.Routes[0].Key
+		require.NoError(t, config.UpdateRoute(key, Route{Directive: "DOMAIN-SUFFIX",
 			Target: "REJECT", Params: []string{"*.Example.com"}}))
-		require.Equal(t, []string{"example.com"}, config.Filters[0].Params)
-		require.Equal(t, key, config.Filters[0].Key)
-		require.ErrorContains(t, config.UpdateFilter(key, Filter{}), "target '' does not exist")
-		require.ErrorContains(t, config.UpdateFilter("missing", Filter{}), "does not exist")
-		_, err := config.AddFilter(Filter{Directive: "GEOIP", Target: "DIRECT", Params: []string{"ru"}})
+		require.Equal(t, []string{"example.com"}, config.Routes[0].Params)
+		require.Equal(t, key, config.Routes[0].Key)
+		require.ErrorContains(t, config.UpdateRoute(key, Route{}), "target '' does not exist")
+		require.ErrorContains(t, config.UpdateRoute("missing", Route{}), "does not exist")
+		_, err := config.AddRoute(Route{Directive: "GEOIP", Target: "DIRECT", Params: []string{"ru"}})
 		require.NoError(t, err)
-		require.NoError(t, config.MoveFilter(key, 1))
-		require.Equal(t, key, config.Filters[1].Key)
-		require.NoError(t, config.MoveFilter(key, 1))
-		require.Equal(t, key, config.Filters[1].Key)
-		require.ErrorContains(t, config.MoveFilter(key, 2), "invalid move direction (2)")
-		require.ErrorContains(t, config.MoveFilter("missing", 1), "item does not exist")
-		require.NoError(t, config.RemoveFilter(key))
-		require.ErrorContains(t, config.RemoveFilter(key), "does not exist")
+		require.NoError(t, config.MoveRoute(key, 1))
+		require.Equal(t, key, config.Routes[1].Key)
+		require.NoError(t, config.MoveRoute(key, 1))
+		require.Equal(t, key, config.Routes[1].Key)
+		require.ErrorContains(t, config.MoveRoute(key, 2), "invalid move direction (2)")
+		require.ErrorContains(t, config.MoveRoute("missing", 1), "item does not exist")
+		require.NoError(t, config.RemoveRoute(key))
+		require.ErrorContains(t, config.RemoveRoute(key), "does not exist")
 		require.NoError(t, config.Validate())
 	}
 }
 
 func TestClone_Independent(t *testing.T) {
 	config := makeConfig(t)
-	_, err := config.AddFallback(Fallback{Endpoints: []string{"HOST 1"}})
+	_, err := config.AddFallback(Fallback{Outbounds: []string{"HOST 1"}})
 	require.NoError(t, err)
-	_, err = config.AddFilter(Filter{Directive: "DOMAIN", Target: "DIRECT",
+	_, err = config.AddRoute(Route{Directive: "DOMAIN", Target: "DIRECT",
 		Params: []string{"a.test"}})
 	require.NoError(t, err)
 	clone := config.Clone()
 	require.Equal(t, *config, clone)
-	clone.Endpoints[1].Socks5.Port, clone.Endpoints[2].HTTP.Port = 1, 1
-	clone.Endpoints[0].Host.Mode, clone.Endpoints[3].OpenVPN.Config = "x", "x"
-	clone.Endpoints[4].AmneziaWG.Config, clone.Endpoints[4].Monitoring.Interval = "x", 1
-	clone.Fallbacks[0].Endpoints[0], clone.Filters[0].Params[0] = "x", "x"
-	require.Equal(t, 1080, config.Endpoints[1].Socks5.Port)
-	require.Equal(t, 3128, config.Endpoints[2].HTTP.Port)
-	require.Equal(t, HostDefault, config.Endpoints[0].Host.Mode)
-	require.Equal(t, sampleOpenVPN, config.Endpoints[3].OpenVPN.Config)
-	require.Equal(t, sampleTunnel, config.Endpoints[4].AmneziaWG.Config)
-	require.Equal(t, 30, config.Endpoints[4].Monitoring.Interval)
-	require.Equal(t, "HOST 1", config.Fallbacks[0].Endpoints[0])
-	require.Equal(t, "a.test", config.Filters[0].Params[0])
+	clone.Outbounds[1].Socks5.Port, clone.Outbounds[2].HTTP.Port = 1, 1
+	clone.Outbounds[0].Host.Mode, clone.Outbounds[3].OpenVPN.Config = "x", "x"
+	clone.Outbounds[4].AmneziaWG.Config, clone.Outbounds[4].Monitoring.Interval = "x", 1
+	clone.Fallbacks[0].Outbounds[0], clone.Routes[0].Params[0] = "x", "x"
+	require.Equal(t, 1080, config.Outbounds[1].Socks5.Port)
+	require.Equal(t, 3128, config.Outbounds[2].HTTP.Port)
+	require.Equal(t, HostDefault, config.Outbounds[0].Host.Mode)
+	require.Equal(t, sampleOpenVPN, config.Outbounds[3].OpenVPN.Config)
+	require.Equal(t, sampleTunnel, config.Outbounds[4].AmneziaWG.Config)
+	require.Equal(t, 30, config.Outbounds[4].Monitoring.Interval)
+	require.Equal(t, "HOST 1", config.Fallbacks[0].Outbounds[0])
+	require.Equal(t, "a.test", config.Routes[0].Params[0])
 }
 
 func TestImport_Backup(t *testing.T) {
 	config := makeConfig(t)
-	_, err := config.AddFallback(Fallback{Enabled: true, Endpoints: []string{"HOST 1"}})
+	_, err := config.AddFallback(Fallback{Enabled: true, Outbounds: []string{"HOST 1"}})
 	require.NoError(t, err)
-	_, err = config.AddFilter(Filter{Directive: "DOMAIN", Target: "Fallback 1", Enabled: true,
+	_, err = config.AddRoute(Route{Directive: "DOMAIN", Target: "Fallback 1", Enabled: true,
 		Params: []string{"a.test"}})
 	require.NoError(t, err)
 	config.Settings.DefaultTarget, config.Settings.MixedPort = "Fallback 1", 7000
@@ -311,7 +311,7 @@ func TestImport_Backup(t *testing.T) {
 	require.Equal(t, BackupFormat, backup.Format)
 	require.Equal(t, currentVersion, backup.Version)
 	require.Equal(t, "2023-11-14T22:13:20Z", backup.Created)
-	require.Len(t, backup.Endpoints, 5)
+	require.Len(t, backup.Outbounds, 5)
 	data, err := json.Marshal(backup)
 	require.NoError(t, err)
 	require.NotContains(t, string(data), "password_hash")
@@ -321,16 +321,16 @@ func TestImport_Backup(t *testing.T) {
 		target.Settings.LogLevel = "debug"
 		require.NoError(t, target.Import(backup, false))
 		require.NoError(t, target.Validate())
-		require.Equal(t, config.Endpoints, target.Endpoints)
+		require.Equal(t, config.Outbounds, target.Outbounds)
 		require.Equal(t, config.Fallbacks, target.Fallbacks)
-		require.Equal(t, config.Filters, target.Filters)
+		require.Equal(t, config.Routes, target.Routes)
 		require.Equal(t, 7899, target.Settings.MixedPort)
 		require.Equal(t, "debug", target.Settings.LogLevel)
 		require.Equal(t, "Fallback 1", target.Settings.DefaultTarget)
 		require.Equal(t, "secret", target.Secret)
 		require.Len(t, target.Users, 1)
-		backup.Endpoints[0].Name = "changed"
-		require.Empty(t, target.Endpoints[0].Name)
+		backup.Outbounds[0].Name = "changed"
+		require.Empty(t, target.Outbounds[0].Name)
 	}
 	{
 		target := Default()
@@ -340,29 +340,33 @@ func TestImport_Backup(t *testing.T) {
 	}
 	{
 		legacy := Backup{Format: BackupFormat, Version: 1, Settings: Default().Settings,
-			Endpoints: backup.Endpoints[:1], Fallbacks: []Fallback{{ID: "Old", Enabled: true,
-				Endpoints: []string{"HOST 1"}}}, Filters: []Filter{{Directive: "DOMAIN",
+			Fallbacks: []Fallback{{ID: "Old", Enabled: true, Legacy: []string{"HOST 1"}}},
+			Legacy: Legacy{Endpoints: backup.Outbounds[:1], Filters: []Route{{Directive: "DOMAIN",
 				Target: "Old", Params: []string{"a.test"}}, {Directive: "DOMAIN", Target: "Old",
-				Params: []string{"b.test"}}}}
+				Params: []string{"b.test"}}}}}
 		legacy.Settings.ConnectivityChecks, legacy.Settings.Capture = false, false
 		target := Default()
 		require.NoError(t, target.Import(legacy, true))
 		require.NoError(t, target.Validate())
 		require.True(t, target.Fallbacks[0].HealthCheck)
+		require.Equal(t, []string{"HOST 1"}, target.Fallbacks[0].Outbounds)
+		require.Nil(t, target.Fallbacks[0].Legacy)
+		require.Equal(t, "HOST 1", target.Outbounds[0].ID)
+		require.Equal(t, Legacy{}, target.Legacy)
 		require.True(t, target.Settings.ConnectivityChecks)
 		require.True(t, target.Settings.Capture)
-		require.Equal(t, "Filter 1", target.Filters[0].ID)
-		require.Equal(t, "Filter 2", target.Filters[1].ID)
-		require.Len(t, target.Filters[0].Key, 12)
-		require.NotEqual(t, target.Filters[0].Key, target.Filters[1].Key)
+		require.Equal(t, "Route 1", target.Routes[0].ID)
+		require.Equal(t, "Route 2", target.Routes[1].ID)
+		require.Len(t, target.Routes[0].Key, 12)
+		require.NotEqual(t, target.Routes[0].Key, target.Routes[1].Key)
 	}
 	{
 		target := Default()
 		require.NoError(t, target.Import(Backup{Format: BackupFormat, Version: currentVersion,
 			Settings: Default().Settings}, true))
-		require.NotNil(t, target.Endpoints)
+		require.NotNil(t, target.Outbounds)
 		require.NotNil(t, target.Fallbacks)
-		require.NotNil(t, target.Filters)
+		require.NotNil(t, target.Routes)
 		require.EqualError(t, target.Import(Backup{Format: "other", Version: 1}, true),
 			"unexpected backup format 'other'")
 		require.EqualError(t, target.Import(Backup{Format: BackupFormat, Version: 99}, true),
@@ -372,14 +376,14 @@ func TestImport_Backup(t *testing.T) {
 	}
 }
 
-func TestMoveEndpoint_Order(t *testing.T) {
+func TestMoveOutbound_Order(t *testing.T) {
 	config := makeConfig(t)
-	require.NoError(t, config.MoveEndpoint("HOST 1", -1))
-	require.Equal(t, "HOST 1", config.Endpoints[0].ID)
-	require.NoError(t, config.MoveEndpoint("HOST 1", 1))
-	require.Equal(t, "SOCKS5 1", config.Endpoints[0].ID)
-	require.Equal(t, "HOST 1", config.Endpoints[1].ID)
-	require.ErrorContains(t, config.MoveEndpoint("missing", 1), "item does not exist")
+	require.NoError(t, config.MoveOutbound("HOST 1", -1))
+	require.Equal(t, "HOST 1", config.Outbounds[0].ID)
+	require.NoError(t, config.MoveOutbound("HOST 1", 1))
+	require.Equal(t, "SOCKS5 1", config.Outbounds[0].ID)
+	require.Equal(t, "HOST 1", config.Outbounds[1].ID)
+	require.ErrorContains(t, config.MoveOutbound("missing", 1), "item does not exist")
 }
 
 func TestOpen_CreatesAndReloads(t *testing.T) {
@@ -393,14 +397,14 @@ func TestOpen_CreatesAndReloads(t *testing.T) {
 		calls++
 	})
 	require.NoError(t, store.Update(func(config *Config) error {
-		_, err := config.AddEndpoint(Endpoint{Type: TypeHost, Enabled: true})
+		_, err := config.AddOutbound(Outbound{Type: TypeHost, Enabled: true})
 		return err
 	}))
 	require.Equal(t, 1, calls)
 	{
 		failure := errors.New("rejected")
 		require.ErrorIs(t, store.Update(func(config *Config) error {
-			config.Endpoints = nil
+			config.Outbounds = nil
 			return failure
 		}), failure)
 		require.ErrorContains(t, store.Update(func(config *Config) error {
@@ -408,7 +412,7 @@ func TestOpen_CreatesAndReloads(t *testing.T) {
 			return nil
 		}), "invalid proxy port (0)")
 		require.Equal(t, 1, calls)
-		require.Len(t, store.Snapshot().Endpoints, 1)
+		require.Len(t, store.Snapshot().Outbounds, 1)
 		require.Equal(t, 7899, store.Snapshot().Settings.MixedPort)
 	}
 	{
@@ -452,26 +456,27 @@ func TestOpen_Migrates(t *testing.T) {
 	require.True(t, snapshot.Settings.ConnectivityChecks)
 	require.True(t, snapshot.Settings.Capture)
 	require.True(t, snapshot.Fallbacks[0].HealthCheck)
+	require.Equal(t, []string{"HOST 1"}, snapshot.Fallbacks[0].Outbounds)
 	require.Equal(t, &HostOptions{Mode: HostDefault, Attempts: 3, ReconnectTimeout: 10},
-		snapshot.Endpoints[0].Host)
-	require.Equal(t, "Filter 1", snapshot.Filters[0].ID)
-	require.Equal(t, "same", snapshot.Filters[1].ID)
-	require.Equal(t, "Filter 2", snapshot.Filters[2].ID)
+		snapshot.Outbounds[0].Host)
+	require.Equal(t, "Route 1", snapshot.Routes[0].ID)
+	require.Equal(t, "same", snapshot.Routes[1].ID)
+	require.Equal(t, "Route 2", snapshot.Routes[2].ID)
 }
 
-func TestRemoveEndpoint_Cascade(t *testing.T) {
+func TestRemoveOutbound_Cascade(t *testing.T) {
 	config := makeConfig(t)
-	_, err := config.AddFallback(Fallback{Endpoints: []string{"SOCKS5 1", "OpenVPN 1"}})
+	_, err := config.AddFallback(Fallback{Outbounds: []string{"SOCKS5 1", "OpenVPN 1"}})
 	require.NoError(t, err)
 	changed, err := config.SetRoutes("OpenVPN 1", []string{"10.0.0.0/8"})
 	require.NoError(t, err)
 	require.True(t, changed)
 	config.Settings.DefaultTarget = "OpenVPN 1"
-	require.NoError(t, config.RemoveEndpoint("OpenVPN 1"))
-	require.Equal(t, []string{"SOCKS5 1"}, config.Fallbacks[0].Endpoints)
-	require.Empty(t, config.Filters)
+	require.NoError(t, config.RemoveOutbound("OpenVPN 1"))
+	require.Equal(t, []string{"SOCKS5 1"}, config.Fallbacks[0].Outbounds)
+	require.Empty(t, config.Routes)
 	require.Equal(t, TargetDirect, config.Settings.DefaultTarget)
-	require.ErrorContains(t, config.RemoveEndpoint("OpenVPN 1"), "does not exist")
+	require.ErrorContains(t, config.RemoveOutbound("OpenVPN 1"), "does not exist")
 	require.NoError(t, config.Validate())
 }
 
@@ -486,19 +491,19 @@ func TestSetRoutes_Lifecycle(t *testing.T) {
 		changed, err := config.SetRoutes("OpenVPN 1", []string{"10.0.0.0/8", "172.16.0.0/12"})
 		require.NoError(t, err)
 		require.True(t, changed)
-		require.Equal(t, Filter{Key: config.Filters[0].Key, ID: "Routes of OpenVPN 1",
+		require.Equal(t, Route{Key: config.Routes[0].Key, ID: "Routes of OpenVPN 1",
 			Directive: "IP-CIDR", Target: "OpenVPN 1", Provided: "OpenVPN 1",
-			Params: []string{"10.0.0.0/8", "172.16.0.0/12"}}, config.Filters[0])
+			Params: []string{"10.0.0.0/8", "172.16.0.0/12"}}, config.Routes[0])
 		require.NoError(t, config.Validate())
 	}
 	{
-		key := config.Filters[0].Key
-		require.NoError(t, config.UpdateFilter(key, Filter{Enabled: true, Target: "REJECT",
+		key := config.Routes[0].Key
+		require.NoError(t, config.UpdateRoute(key, Route{Enabled: true, Target: "REJECT",
 			Params: []string{"1.1.1.1"}}))
-		require.True(t, config.Filters[0].Enabled)
-		require.Equal(t, "OpenVPN 1", config.Filters[0].Target)
-		require.Len(t, config.Filters[0].Params, 2)
-		require.ErrorContains(t, config.RemoveFilter(key), "provided filter is read-only")
+		require.True(t, config.Routes[0].Enabled)
+		require.Equal(t, "OpenVPN 1", config.Routes[0].Target)
+		require.Len(t, config.Routes[0].Params, 2)
+		require.ErrorContains(t, config.RemoveRoute(key), "provided route is read-only")
 	}
 	{
 		changed, err := config.SetRoutes("OpenVPN 1", []string{"10.0.0.0/8", "172.16.0.0/12"})
@@ -507,83 +512,83 @@ func TestSetRoutes_Lifecycle(t *testing.T) {
 		changed, err = config.SetRoutes("OpenVPN 1", []string{"10.0.0.0/8"})
 		require.NoError(t, err)
 		require.True(t, changed)
-		require.True(t, config.Filters[0].Enabled)
-		require.Equal(t, []string{"10.0.0.0/8"}, config.Filters[0].Params)
+		require.True(t, config.Routes[0].Enabled)
+		require.Equal(t, []string{"10.0.0.0/8"}, config.Routes[0].Params)
 		changed, err = config.SetRoutes("OpenVPN 1", []string{})
 		require.NoError(t, err)
 		require.True(t, changed)
-		require.Empty(t, config.Filters)
+		require.Empty(t, config.Routes)
 	}
 }
 
-func TestUpdateEndpoint_Identity(t *testing.T) {
+func TestUpdateOutbound_Identity(t *testing.T) {
 	config := makeConfig(t)
-	require.NoError(t, config.UpdateEndpoint("SOCKS5 1", Endpoint{Type: TypeHost, Slot: 77,
+	require.NoError(t, config.UpdateOutbound("SOCKS5 1", Outbound{Type: TypeHost, Slot: 77,
 		Name: "renamed", Socks5: &Socks5Options{Server: "10.0.0.9", Port: 1081}}))
-	endpoint, found := config.FindEndpoint("SOCKS5 1")
+	outbound, found := config.FindOutbound("SOCKS5 1")
 	require.True(t, found)
-	require.Equal(t, Endpoint{ID: "SOCKS5 1", Type: TypeSocks5, Slot: 2, Name: "renamed",
-		Socks5: &Socks5Options{Server: "10.0.0.9", Port: 1081}}, endpoint)
-	require.ErrorContains(t, config.UpdateEndpoint("SOCKS5 1", Endpoint{}), "invalid server address")
-	require.ErrorContains(t, config.UpdateEndpoint("missing", Endpoint{}), "does not exist")
-	_, found = config.FindEndpoint("missing")
+	require.Equal(t, Outbound{ID: "SOCKS5 1", Type: TypeSocks5, Slot: 2, Name: "renamed",
+		Socks5: &Socks5Options{Server: "10.0.0.9", Port: 1081}}, outbound)
+	require.ErrorContains(t, config.UpdateOutbound("SOCKS5 1", Outbound{}), "invalid server address")
+	require.ErrorContains(t, config.UpdateOutbound("missing", Outbound{}), "does not exist")
+	_, found = config.FindOutbound("missing")
 	require.False(t, found)
 	{
-		endpoint.ID = "HOST 1"
-		require.EqualError(t, config.UpdateEndpoint("SOCKS5 1", endpoint), "ID 'HOST 1' already exists")
-		endpoint.ID = "DIRECT"
-		require.EqualError(t, config.UpdateEndpoint("SOCKS5 1", endpoint), "ID 'DIRECT' already exists")
-		endpoint.ID = "bad,id"
-		require.EqualError(t, config.UpdateEndpoint("SOCKS5 1", endpoint), "invalid ID 'bad,id'")
-		endpoint.ID = " SOCKS5 1 "
-		require.NoError(t, config.UpdateEndpoint("SOCKS5 1", endpoint))
+		outbound.ID = "HOST 1"
+		require.EqualError(t, config.UpdateOutbound("SOCKS5 1", outbound), "ID 'HOST 1' already exists")
+		outbound.ID = "DIRECT"
+		require.EqualError(t, config.UpdateOutbound("SOCKS5 1", outbound), "ID 'DIRECT' already exists")
+		outbound.ID = "bad,id"
+		require.EqualError(t, config.UpdateOutbound("SOCKS5 1", outbound), "invalid ID 'bad,id'")
+		outbound.ID = " SOCKS5 1 "
+		require.NoError(t, config.UpdateOutbound("SOCKS5 1", outbound))
 	}
 }
 
-func TestUpdateEndpoint_Rename(t *testing.T) {
+func TestUpdateOutbound_Rename(t *testing.T) {
 	config := makeConfig(t)
-	_, err := config.AddFallback(Fallback{Enabled: true, Endpoints: []string{"HOST 1",
+	_, err := config.AddFallback(Fallback{Enabled: true, Outbounds: []string{"HOST 1",
 		"OpenVPN 1"}})
 	require.NoError(t, err)
-	_, err = config.AddFilter(Filter{Directive: "DOMAIN", Target: "OpenVPN 1",
+	_, err = config.AddRoute(Route{Directive: "DOMAIN", Target: "OpenVPN 1",
 		Params: []string{"a.test"}})
 	require.NoError(t, err)
-	_, err = config.AddFilter(Filter{Directive: "DOMAIN", Target: "Fallback 1",
+	_, err = config.AddRoute(Route{Directive: "DOMAIN", Target: "Fallback 1",
 		Params: []string{"b.test"}})
 	require.NoError(t, err)
 	_, err = config.SetRoutes("OpenVPN 1", []string{"10.0.0.0/8"})
 	require.NoError(t, err)
 	config.Settings.DefaultTarget = "OpenVPN 1"
-	endpoint, _ := config.FindEndpoint("OpenVPN 1")
-	endpoint.ID = "Office VPN"
-	require.NoError(t, config.UpdateEndpoint("OpenVPN 1", endpoint))
+	outbound, _ := config.FindOutbound("OpenVPN 1")
+	outbound.ID = "Office VPN"
+	require.NoError(t, config.UpdateOutbound("OpenVPN 1", outbound))
 	require.NoError(t, config.Validate())
-	require.Equal(t, []string{"HOST 1", "Office VPN"}, config.Fallbacks[0].Endpoints)
-	require.Equal(t, "Office VPN", config.Filters[0].Target)
-	require.Equal(t, "Fallback 1", config.Filters[1].Target)
-	require.Equal(t, Filter{Key: config.Filters[2].Key, ID: "Routes of Office VPN",
+	require.Equal(t, []string{"HOST 1", "Office VPN"}, config.Fallbacks[0].Outbounds)
+	require.Equal(t, "Office VPN", config.Routes[0].Target)
+	require.Equal(t, "Fallback 1", config.Routes[1].Target)
+	require.Equal(t, Route{Key: config.Routes[2].Key, ID: "Routes of Office VPN",
 		Directive: "IP-CIDR", Target: "Office VPN", Params: []string{"10.0.0.0/8"},
-		Provided: "Office VPN"}, config.Filters[2])
+		Provided: "Office VPN"}, config.Routes[2])
 	require.Equal(t, "Office VPN", config.Settings.DefaultTarget)
 	require.False(t, config.TargetExists("OpenVPN 1"))
 	{
 		config.Settings.DefaultTarget = "Fallback 1"
 		require.NoError(t, config.UpdateFallback("Fallback 1", Fallback{ID: "Main chain",
-			Enabled: true, HealthCheck: true, Endpoints: []string{"HOST 1"}}))
+			Enabled: true, HealthCheck: true, Outbounds: []string{"HOST 1"}}))
 		require.NoError(t, config.Validate())
 		require.Equal(t, "Main chain", config.Fallbacks[0].ID)
 		require.True(t, config.Fallbacks[0].HealthCheck)
-		require.Equal(t, "Main chain", config.Filters[1].Target)
+		require.Equal(t, "Main chain", config.Routes[1].Target)
 		require.Equal(t, "Main chain", config.Settings.DefaultTarget)
 	}
 	{
-		key := config.Filters[2].Key
-		config.Filters[2].ID = "custom"
-		endpoint.ID = "VPN 2"
-		require.NoError(t, config.UpdateEndpoint("Office VPN", endpoint))
-		require.Equal(t, "custom", config.Filters[2].ID)
-		require.Equal(t, "VPN 2", config.Filters[2].Provided)
-		require.Equal(t, key, config.Filters[2].Key)
+		key := config.Routes[2].Key
+		config.Routes[2].ID = "custom"
+		outbound.ID = "VPN 2"
+		require.NoError(t, config.UpdateOutbound("Office VPN", outbound))
+		require.Equal(t, "custom", config.Routes[2].ID)
+		require.Equal(t, "VPN 2", config.Routes[2].Provided)
+		require.Equal(t, key, config.Routes[2].Key)
 	}
 }
 
@@ -628,18 +633,18 @@ func TestValidate_Problems(t *testing.T) {
 			config.Users = []User{{Name: "a", Role: RoleUser, PasswordHash: "h"},
 				{Name: "a", Role: RoleUser, PasswordHash: "h"}}
 		}, "duplicate user 'a'"},
-		{func(config *Config) { config.Endpoints[1].ID = "HOST 1" }, "duplicate endpoint ID 'HOST 1'"},
-		{func(config *Config) { config.Endpoints[1].Slot = 1 }, "duplicate endpoint slot (1)"},
-		{func(config *Config) { config.Endpoints[1].Slot = 0 }, "invalid slot (0)"},
-		{func(config *Config) { config.Endpoints[1].Type = "x" }, "unexpected endpoint type 'x'"},
+		{func(config *Config) { config.Outbounds[1].ID = "HOST 1" }, "duplicate outbound ID 'HOST 1'"},
+		{func(config *Config) { config.Outbounds[1].Slot = 1 }, "duplicate outbound slot (1)"},
+		{func(config *Config) { config.Outbounds[1].Slot = 0 }, "invalid slot (0)"},
+		{func(config *Config) { config.Outbounds[1].Type = "x" }, "unexpected outbound type 'x'"},
 		{func(config *Config) { config.Fallbacks = []Fallback{{ID: "HOST 1"}} },
 			"duplicate fallback ID 'HOST 1'"},
-		{func(config *Config) { config.Fallbacks = []Fallback{{ID: "f", Endpoints: []string{"x"}}} },
+		{func(config *Config) { config.Fallbacks = []Fallback{{ID: "f", Outbounds: []string{"x"}}} },
 			"failed to check fallback 'f'"},
-		{func(config *Config) { config.Filters = []Filter{{Directive: "DOMAIN"}} },
-			"duplicate filter key ''"},
-		{func(config *Config) { config.Filters = []Filter{{Key: "k", Directive: "DOMAIN"}} },
-			"failed to check filter 1"},
+		{func(config *Config) { config.Routes = []Route{{Directive: "DOMAIN"}} },
+			"duplicate route key ''"},
+		{func(config *Config) { config.Routes = []Route{{Key: "k", Directive: "DOMAIN"}} },
+			"failed to check route 1"},
 		{func(config *Config) { config.Settings.CheckInterval = 1 }, "invalid check interval (1)"},
 		{func(config *Config) { config.Settings.ProbeTarget = "host" }, "failed to check probe target"},
 		{func(config *Config) { config.Settings.DefaultTarget = "x" }, "default target 'x'"},

@@ -20,7 +20,7 @@
 </p>
 
 <p align="center">
-  <img src="docs/images/dashboard.png" alt="Proximity dashboard: endpoint status, live throughput chart and unreachable destinations" width="100%">
+  <img src="docs/images/dashboard.png" alt="Proximity dashboard: outbound status, live throughput and connections charts, unreachable destinations" width="100%">
 </p>
 
 ---
@@ -33,8 +33,8 @@
 - [Quick start](#quick-start)
 - [Network modes](#network-modes)
 - [How it works](#how-it-works)
-- [Concepts: endpoints, fallbacks, filters](#concepts-endpoints-fallbacks-filters)
-- [Filters at a glance](#filters-at-a-glance)
+- [Concepts: outbounds, fallbacks, routes](#concepts-outbounds-fallbacks-routes)
+- [Routes at a glance](#routes-at-a-glance)
 - [Users and roles](#users-and-roles)
 - [Backup and restore](#backup-and-restore)
 - [Configuration folder](#configuration-folder)
@@ -53,8 +53,8 @@ program.
 Proximity puts all of that into one container:
 
 - **One place for all exits.** Your host uplink, proxies and VPN tunnels become
-  *endpoints* that Proximity starts, monitors and reconnects.
-- **One set of rules.** *Filters* decide which endpoint handles a connection: by domain,
+  *outbounds* that Proximity starts, monitors and reconnects.
+- **One set of rules.** *Routes* decide which outbound handles a connection: by domain,
   domain suffix or keyword, IP network, `IP:port`, country (GeoIP/GeoSite), process name
   and more. The first match wins, the rest goes to a default target.
 - **Nothing to configure in programs (Linux).** In the default Linux mode Proximity
@@ -71,12 +71,12 @@ port **8899**.
 
 | Area | What you get |
 |---|---|
-| 🌐 **Endpoints** | HOST Internet (default route or a specific interface/gateway), SOCKS5 (auth, TLS, UDP relay), HTTP proxy (separate HTTPS/FTP servers, TLS), OpenVPN (login, password, TOTP one-time codes, private key password), AmneziaWG (`.conf` upload, `vpn://` key import, QR code from an image) |
-| 🔀 **Fallbacks** | Proxy groups of endpoints in priority order: either "first endpoint that Proximity sees as good" or a mihomo health check by URL |
-| 🧭 **Filters** | 15 mihomo directives, automatic normalization (URLs → domains, IDN → punycode, `IP:port` → `AND` rule, masks), `#` comments, overlap and duplicate warnings, up/down ordering |
-| 📡 **VPN routes** | Routes pushed by OpenVPN appear as a read-only *provided* filter you can enable with one switch |
-| 🩺 **Monitoring** | Link state, latency, configurable checks, retries and reconnects; states `good` / `connecting` / `reconnecting` / `failed`; per-endpoint connection log with auto-scroll |
-| 📈 **Statistics** | Upload/download totals and rates per endpoint, interactive throughput chart (5 min / 15 min / 1 h), list of unreachable destinations with reason and matched rule |
+| 🌐 **Outbounds** | HOST Internet (default route or a specific interface/gateway), SOCKS5 (auth, TLS, UDP relay), HTTP proxy (separate HTTPS/FTP servers, TLS), OpenVPN (login, password, TOTP one-time codes, private key password), AmneziaWG (`.conf` upload, `vpn://` key import, QR code from an image) |
+| 🔀 **Fallbacks** | Proxy groups of outbounds in priority order (bottom of the Routes page): either "first outbound that Proximity sees as good" or a mihomo health check by URL |
+| 🧭 **Routes** | 15 mihomo directives, automatic normalization (URLs → domains, IDN → punycode, `IP:port` → `AND` rule, masks), `#` comments, overlap and duplicate warnings, up/down ordering |
+| 📡 **VPN routes** | Routes pushed by OpenVPN appear as a read-only *provided* route you can enable with one switch |
+| 🩺 **Monitoring** | Link state, latency, configurable checks, retries and reconnects; states `good` / `connecting` / `reconnecting` / `failed`; per-outbound connection log with auto-scroll |
+| 📈 **Statistics** | Upload/download totals and rates per outbound, interactive throughput chart (5 min / 15 min / 1 h) with an active connections chart beside it, list of unreachable destinations with reason and matched rule |
 | 🛡️ **Transparent mode** | Linux: captures all new outgoing host connections through a TUN device, hijacks DNS (fake-IP), sniffs TLS SNI / HTTP Host / QUIC, leaves LAN, Docker and inbound traffic alone |
 | 👥 **Access control** | Administrator, Operator, User and optional anonymous dashboard; secrets are hidden from read-only users |
 | 💾 **Backup** | One-click export/import of the whole configuration as a single JSON file |
@@ -86,9 +86,9 @@ port **8899**.
 
 | | |
 |---|---|
-| ![Endpoints](docs/images/endpoints.png) **Endpoints** — every exit with its state, latency and connection details | ![Filters](docs/images/filters.png) **Filters** — ordered rules with comments, overlap warnings and VPN-provided routes |
-| ![OpenVPN endpoint](docs/images/endpoint-openvpn.png) **OpenVPN endpoint** — upload or edit `.ovpn`, credentials, TOTP | ![Connection log](docs/images/endpoint-log.png) **Connection log** — live, auto-scrolling log of a tunnel |
-| ![Filter editor](docs/images/filter-dialog.png) **Filter editor** — normalized preview before saving | ![Fallbacks](docs/images/fallbacks.png) **Fallbacks** — proxy groups in priority order |
+| ![Outbounds](docs/images/outbounds.png) **Outbounds** — every exit with its state, latency and connection details | ![Routes](docs/images/routes.png) **Routes** — ordered rules with comments, overlap warnings and VPN-provided routes |
+| ![OpenVPN outbound](docs/images/outbound-openvpn.png) **OpenVPN outbound** — upload or edit `.ovpn`, credentials, TOTP | ![Connection log](docs/images/outbound-log.png) **Connection log** — live, auto-scrolling log of a tunnel |
+| ![Route editor](docs/images/route-dialog.png) **Route editor** — normalized preview before saving | ![Fallbacks](docs/images/fallbacks.png) **Fallbacks** — proxy groups in priority order, at the bottom of the Routes page |
 | ![Settings](docs/images/settings.png) **Settings** — router, access, backup and restore | ![Dark theme](docs/images/dashboard-dark.png) **Dark theme** |
 
 More screenshots with explanations are in the [User guide](docs/user-guide.md).
@@ -128,7 +128,7 @@ generated or printed to the log.
 For unattended installs set `PROXIMITY_ADMIN_USER` and `PROXIMITY_ADMIN_PASSWORD`
 before the first start; the dialog is then skipped.
 
-Then: add endpoints → (optionally) group them into fallbacks → write filters → pick the
+Then: add outbounds → (optionally) group them into fallbacks → write routes → pick the
 default target for everything else. A step-by-step walkthrough is in
 [Getting started](docs/getting-started.md).
 
@@ -151,7 +151,7 @@ PROXIMITY_NETWORK=bridge scripts/proximity.sh up -d --build
   priorities 5150–5170 and routing table 51000 that points into this interface.
 - Only **new outgoing** connections are captured. Local networks, Docker networks and
   inbound connections (SSH, the Proximity UI itself) keep working as before.
-- The domain used by DOMAIN filters comes from DNS (fake-IP) and from the connection
+- The domain used by DOMAIN routes comes from DNS (fake-IP) and from the connection
   itself (TLS SNI, HTTP `Host` header, QUIC).
 - Host DNS queries are intercepted, and the name is resolved by the rule's target:
   remotely for SOCKS5/HTTP proxies, through the tunnel's DNS for VPNs (when enabled),
@@ -192,9 +192,9 @@ flowchart LR
     Mihomo -- "routing-mark" --> AWG --> VPN2(("AmneziaWG server"))
 ```
 
-How each endpoint type is connected to mihomo:
+How each outbound type is connected to mihomo:
 
-| Endpoint | mihomo side |
+| Outbound | mihomo side |
 |---|---|
 | HOST Internet | proxy `direct`; for a specific interface — `interface-name`, with a gateway — `routing-mark` |
 | SOCKS5 Proxy | proxy `socks5` |
@@ -208,33 +208,38 @@ How each endpoint type is connected to mihomo:
   around the VPN.
 - OpenVPN runs in a pseudo-terminal; Proximity answers the user name, password and
   one-time code prompts itself (TOTP, same as `oathtool --totp -b`).
-- HOST endpoint: after *Connection attempts* failures in a row (pause — *Reconnection
+- HOST outbound: after *Connection attempts* failures in a row (pause — *Reconnection
   timeout*) it goes to `failed`, but checks continue, and it returns to `good` on its own
   when connectivity is back.
 
-## Concepts: endpoints, fallbacks, filters
+## Concepts: outbounds, fallbacks, routes
 
 | Concept | Meaning | Example |
 |---|---|---|
-| **Endpoint** | One outgoing connection | `OpenVPN 1` — corporate VPN |
-| **Fallback** | A group of endpoints used in priority order | `Proxies` = `SOCKS5 1`, then `SOCKS5 2` |
-| **Filter** | A list of conditions with one directive and one target | `DOMAIN-SUFFIX corp.example → OpenVPN 1` |
-| **Default target** | Where everything that matched no filter goes | `HOST 1` or `DIRECT` |
+| **Outbound** | One outgoing connection | `OpenVPN 1` — corporate VPN |
+| **Fallback** | A group of outbounds used in priority order | `Proxies` = `SOCKS5 1`, then `SOCKS5 2` |
+| **Route** | A list of conditions with one directive and one target | `DOMAIN-SUFFIX corp.example → OpenVPN 1` |
+| **Default target** | Where everything that matched no route goes | `HOST 1` or `DIRECT` |
 
 Identifiers:
 
-- IDs of endpoints, fallbacks and filters can be changed at any time. On rename all
-  references (fallback members, filter targets, default target) are updated, and a running
+- IDs of outbounds, fallbacks and routes can be changed at any time. On rename all
+  references (fallback members, route targets, default target) are updated, and a running
   tunnel is not interrupted.
-- An ID is unique within its section. An endpoint and a fallback can't share a name either,
-  because both can be filter targets.
-- Empty IDs are generated: `<Type> <N>` for endpoints, `Fallback <N>`, `Filter <N>`.
+- An ID is unique within its section. An outbound and a fallback can't share a name either,
+  because both can be route targets.
+- Empty IDs are generated: `<Type> <N>` for outbounds, `Fallback <N>`, `Route <N>`.
+- `proximity.json`, backups and the [HTTP API](docs/api.md) use the same names
+  (`outbounds`, `routes`). Files written by older versions with `endpoints` and `filters`
+  are read and converted automatically.
+- **Inbounds** (incoming connection points) have a placeholder page in the UI and will be
+  implemented in a future version.
 
-## Filters at a glance
+## Routes at a glance
 
-Each line of a filter's parameters becomes one mihomo rule `<Directive>,<parameter>,<Target>`.
+Each line of a route's parameters becomes one mihomo rule `<Directive>,<parameter>,<Target>`.
 A line whose first non-blank character is `#` is a comment: it is kept in place but is not
-sent to mihomo. A filter that has only comments is rejected.
+sent to mihomo. A route that has only comments is rejected.
 
 | Input | Result |
 |---|---|
@@ -251,21 +256,21 @@ A warning is shown only when an upper rule fully covers a lower one (the lower r
 never match) or when rules are identical. "Specific above general" is normal and produces
 no warning, for example `www.corp.example → DIRECT` above `corp.example → OpenVPN 1`.
 
-Full reference: [Filters](docs/filters.md).
+Full reference: [Routes](docs/routes.md).
 
 ## Users and roles
 
 | Role | Rights |
 |---|---|
 | Administrator | everything, including users and settings |
-| Operator | edit Endpoints, Fallbacks and Filters; export and import the configuration |
+| Operator | edit Outbounds, Fallbacks and Routes; export and import the configuration |
 | User | view only (passwords and keys are hidden) |
 | Anonymous | Dashboard only (can be disabled in Settings) |
 
 ## Backup and restore
 
-**Settings → [Backup & Restore]**: *Export configuration* saves one JSON file (endpoints
-with passwords and VPN keys, fallbacks, filters, settings); *Import configuration*
+**Settings → [Backup & Restore]**: *Export configuration* saves one JSON file (outbounds
+with passwords and VPN keys, fallbacks, routes, settings); *Import configuration*
 replaces the current ones. User accounts are not included. When an Operator imports a file,
 Settings stay unchanged.
 
@@ -273,12 +278,12 @@ Settings stay unchanged.
 
 | File | Contents |
 |---|---|
-| `proximity.json` | users, endpoints, fallbacks, filters, settings |
+| `proximity.json` | users, outbounds, fallbacks, routes, settings |
 | `state.json` | traffic counters and the list of unreachable destinations |
 | `mihomo/config.yaml` | generated mihomo configuration (JSON, which is valid YAML) |
 
 > [!WARNING]
-> Endpoint passwords and VPN configurations are stored in `proximity.json` as plain text.
+> Outbound passwords and VPN configurations are stored in `proximity.json` as plain text.
 > Protect the settings folder (and exported backup files) accordingly.
 
 ## Building and testing
@@ -302,7 +307,7 @@ connections untouched, `rp_filter=1`, container stop and kill.
 
 Not verified yet:
 
-- `docker-compose.yml` with a real `network_mode: host` on a physical machine; `PROCESS-NAME` filters.
+- `docker-compose.yml` with a real `network_mode: host` on a physical machine; `PROCESS-NAME` routes.
 - Interaction of capture with systemd-resolved, NetworkManager, firewalld and other VPN clients on the host.
 - macOS and Windows (Docker Desktop), the `proximity.ps1` script.
 - IPv6 capture, dynamic OTP challenge (CRV1), `tap` devices.
@@ -316,7 +321,7 @@ Bug reports and test results from these environments are very welcome.
 |---|---|
 | [Getting started](docs/getting-started.md) | Installation, first configuration, environment variables, upgrade and removal |
 | [User guide](docs/user-guide.md) | Every page of the web UI with screenshots |
-| [Filters](docs/filters.md) | Directives, normalization, comments, warnings, provided routes, recipes |
+| [Routes](docs/routes.md) | Directives, normalization, comments, warnings, provided routes, recipes |
 | [Architecture](docs/architecture.md) | Components, routing tables, transparent capture, DNS, monitoring, statistics |
 | [HTTP API](docs/api.md) | REST endpoints used by the UI, roles, examples with `curl` |
 | [Troubleshooting](docs/troubleshooting.md) | Common problems and how to diagnose them |

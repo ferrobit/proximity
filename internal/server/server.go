@@ -46,7 +46,7 @@ type Server struct {
 	warnings []string
 	failure  string
 	captured bool
-	routes   *http.ServeMux
+	mux      *http.ServeMux
 }
 
 type session struct {
@@ -89,7 +89,7 @@ func internalNew(options Options) (*Server, error) {
 		options.Logf("%v", message)
 	}
 	server := &Server{options: options, store: store, dirty: make(chan struct{}, 1),
-		started: time.Now(), warnings: []string{}, routes: http.NewServeMux()}
+		started: time.Now(), warnings: []string{}, mux: http.NewServeMux()}
 	home := filepath.Join(options.ConfigPath, "mihomo")
 	server.tracker = router.NewTracker(filepath.Join(options.ConfigPath, "state.json"))
 	if server.manager, err = link.NewManager(link.Options{Directory: options.RunPath,
@@ -132,7 +132,7 @@ func (failure *statusError) Error() string {
 }
 
 func (server *Server) Run(ctx context.Context) error {
-	listener := &http.Server{Addr: server.options.Listen, Handler: server.routes,
+	listener := &http.Server{Addr: server.options.Listen, Handler: server.mux,
 		ReadHeaderTimeout: 10 * time.Second}
 	failures, finished := make(chan error, 1), make(chan struct{})
 	ctx, stop := context.WithCancel(ctx)
@@ -217,26 +217,26 @@ func (server *Server) synchronize() {
 	if !server.options.HostNetwork || !snapshot.Settings.Capture {
 		server.capture()
 	}
-	server.manager.Apply(snapshot.Endpoints, snapshot.Settings)
+	server.manager.Apply(snapshot.Outbounds, snapshot.Settings)
 	links := server.manager.Status()
-	for _, endpoint := range snapshot.Endpoints {
-		status, found := links[endpoint.ID]
-		if !found || !endpoint.IsTunnel() || status.State != link.StateUp {
+	for _, outbound := range snapshot.Outbounds {
+		status, found := links[outbound.ID]
+		if !found || !outbound.IsTunnel() || status.State != link.StateUp {
 			continue
 		}
-		if changed, err := snapshot.SetRoutes(endpoint.ID, status.Routes); err != nil || !changed {
+		if changed, err := snapshot.SetRoutes(outbound.ID, status.Routes); err != nil || !changed {
 			continue
 		} else if err = server.store.Update(func(config *config.Config) error {
-			_, err := config.SetRoutes(endpoint.ID, status.Routes)
+			_, err := config.SetRoutes(outbound.ID, status.Routes)
 			return err
 		}); err != nil {
-			server.options.Logf("failed to save routes of '%v': %v", endpoint.ID, err)
+			server.options.Logf("failed to save routes of '%v': %v", outbound.ID, err)
 		} else {
-			server.options.Logf("routes of '%v' changed (%v)", endpoint.ID, len(status.Routes))
+			server.options.Logf("routes of '%v' changed (%v)", outbound.ID, len(status.Routes))
 		}
 	}
 	snapshot = server.store.Snapshot()
-	server.tracker.SetCollected(snapshot.Endpoints)
+	server.tracker.SetCollected(snapshot.Outbounds)
 	data, warnings, err := router.Generate(snapshot, links, router.Options{
 		Socket: server.mihomo.Socket(), ProxyBind: server.options.ProxyBind,
 		Capture: server.options.HostNetwork && snapshot.Settings.Capture})
@@ -266,7 +266,7 @@ func (server *Server) identify(request *http.Request) session {
 }
 
 func (server *Server) handle(pattern string, level int, action action) {
-	server.routes.HandleFunc(pattern, func(writer http.ResponseWriter, request *http.Request) {
+	server.mux.HandleFunc(pattern, func(writer http.ResponseWriter, request *http.Request) {
 		started := time.Now()
 		current := server.identify(request)
 		var result any

@@ -8,7 +8,7 @@ A tour of every page of the Proximity web UI (<http://localhost:8899>).
 
 - [Layout](#layout)
 - [Dashboard](#dashboard)
-- [Endpoints](#endpoints)
+- [Outbounds](#outbounds)
   - [HOST Internet](#host-internet)
   - [SOCKS5 Proxy](#socks5-proxy)
   - [HTTP Proxy](#http-proxy)
@@ -16,8 +16,9 @@ A tour of every page of the Proximity web UI (<http://localhost:8899>).
   - [AmneziaWG](#amneziawg)
   - [Monitoring](#monitoring)
   - [Connection log](#connection-log)
-- [Fallbacks](#fallbacks)
-- [Filters](#filters)
+- [Routes](#routes)
+  - [Fallbacks](#fallbacks)
+- [Inbounds](#inbounds)
 - [Users](#users)
 - [Settings](#settings)
 - [Themes](#themes)
@@ -26,9 +27,9 @@ A tour of every page of the Proximity web UI (<http://localhost:8899>).
 
 | Area | Contents |
 |---|---|
-| **Header** | Logo; endpoints in good state / enabled; current upload and download rate; active connections; `transparent` when the host's traffic is captured; router state; theme switch; current user and role (menu: *Change password*, *Sign out*) |
-| **Left column** | Dashboard, Endpoints, Fallbacks, Filters, Users, Settings — only the sections your role may open. The column can be collapsed |
-| **Center** | The selected section. The URL keeps the section (`#/filters`), so you can bookmark it |
+| **Header** | Logo; outbounds in good state / enabled; current upload and download rate; active connections; `transparent` when the host's traffic is captured; router state; theme switch; current user and role (menu: *Change password*, *Sign out*) |
+| **Left column** | Dashboard, Outbounds, Routes, Inbounds, Users, Settings — only the sections your role may open. The column can be collapsed |
+| **Center** | The selected section. The URL keeps the section (`#/routes`), so you can bookmark it |
 | **Footer** | Version, copyright, page generation time (total and server) |
 
 All lists refresh themselves; the **Refresh** buttons force an immediate reload.
@@ -37,12 +38,12 @@ All lists refresh themselves; the **Refresh** buttons force an immediate reload.
 
 ![Dashboard](images/dashboard.png)
 
-**Cards** at the top: endpoints (good / total, enabled), fallbacks, filters (and the number
+**Cards** at the top: outbounds (good / total, enabled), routes (and the number
 of active router rules), total uploaded and downloaded bytes with the current rate, and
 the router state with its uptime. The capture mode is shown in the header
 (`transparent`).
 
-**Throughput** — an interactive chart of the upload and download rate of every endpoint
+**Throughput** — an interactive chart of the upload and download rate of every outbound
 that collects statistics, plus a dashed **Total** line.
 
 ![Throughput chart with crosshair](images/throughput.png)
@@ -51,14 +52,17 @@ that collects statistics, plus a dashed **Total** line.
 - *5m* / *15m* / *1h* — time window (samples every 5 seconds);
 - click a legend item to hide or show a series;
 - hover to see exact values at a moment in time;
-- gaps in a line mean the endpoint had no samples (for example, it was disabled).
+- gaps in a line mean the outbound had no samples (for example, it was disabled).
 
-**Endpoints** table: status (enabled / disabled / unused — not referenced by any filter or
+**Connections** — to the right of the throughput chart (30% of the width): the number of
+active connections over the same time window, with the current, peak and average values.
+Hover to see the exact count at a moment in time. On narrow screens it moves below the
+throughput chart.
+
+**Outbounds** table: status (enabled / disabled / unused — not referenced by any route or
 fallback), operation state (`good`, `connecting`, `reconnecting`, `failed`), tunnel link
 state and interface, latency, total traffic, current rates with the number of
 connections, time since the last state change.
-
-**Fallbacks** — each group with its members in order; members are colored by their state.
 
 **Unreachable routes** (signed-in users) — connections that failed, grouped by destination:
 
@@ -66,7 +70,7 @@ connections, time since the last state change.
 |---|---|
 | Destination | host and port |
 | Reason | `refused`, `timeout`, `no route`, `unreachable`, `dns`, … |
-| Via | the endpoint or fallback that was used |
+| Via | the outbound or fallback that was used |
 | Matched rule | the mihomo rule that sent the connection there (`Match/` = default target) |
 | Count, Last seen | how often and how recently |
 
@@ -75,37 +79,37 @@ Operators can **Clear** the list.
 When *Anonymous users can view the dashboard* is on, the Dashboard is visible without
 signing in (secrets and the unreachable routes list are hidden).
 
-## Endpoints
+## Outbounds
 
-![Endpoints](images/endpoints.png)
+![Outbounds](images/outbounds.png)
 
-An endpoint is one outgoing connection. The table shows the order (↑ ↓), ID and name, type,
+An outbound is one outgoing connection. The table shows the order (↑ ↓), ID and name, type,
 group, the *Enabled* switch, whether statistics are collected, state with latency, and
 connection details (server, interface and tunnel address).
 
 Row actions: ✏️ **Edit**, 🔄 **Reconnect**, 📄 **Connection log**, 🗑️ **Delete**.
 
-**Add endpoint** opens a menu with the five types:
+**Add outbound** opens a menu with the five types:
 
-![Add endpoint menu](images/endpoint-add-menu.png)
+![Add outbound menu](images/outbound-add-menu.png)
 
-Every endpoint dialog has a **General** tab:
+Every outbound dialog has a **General** tab:
 
-![General tab](images/endpoint-general.png)
+![General tab](images/outbound-general.png)
 
 | Field | Meaning |
 |---|---|
-| ID | Unique among endpoints *and* fallbacks; empty → `<Type> <N>`. Renaming updates all references and does not interrupt a tunnel |
+| ID | Unique among outbounds *and* fallbacks; empty → `<Type> <N>`. Renaming updates all references and does not interrupt a tunnel |
 | Name | Free-text description |
 | Group | New or existing group label, shown on the Dashboard |
-| Enabled | Off: the endpoint is stopped and its filters are skipped |
+| Enabled | Off: the outbound is stopped and its routes are skipped |
 | Collect statistics | Count traffic and draw it on the chart |
 
 All fields are validated before saving. Changes are applied immediately.
 
 ### HOST Internet
 
-![HOST endpoint](images/endpoint-host.png)
+![HOST outbound](images/outbound-host.png)
 
 Your own uplink. *Outgoing connection*:
 
@@ -114,18 +118,18 @@ Your own uplink. *Outgoing connection*:
   *Gateway* when that interface has no default route of its own.
 
 *Connection attempts* (default 3) and *Reconnection timeout* (10 s) control when the
-endpoint is declared `failed`. It keeps being checked and returns to `good` by itself.
+outbound is declared `failed`. It keeps being checked and returns to `good` by itself.
 
 ### SOCKS5 Proxy
 
-![SOCKS5 endpoint](images/endpoint-socks5.png)
+![SOCKS5 outbound](images/outbound-socks5.png)
 
 Server (IP or host name), port (1080), optional user name and password, *TLS to server*
 with *Skip certificate check*, and *UDP relay* for UDP traffic through the proxy.
 
 ### HTTP Proxy
 
-![HTTP endpoint](images/endpoint-http.png)
+![HTTP outbound](images/outbound-http.png)
 
 Server and port (3128). *Use this proxy server for all protocols* is on by default; turn it
 off to set separate **HTTPS** and **FTP** proxy servers (empty → the HTTP proxy is used).
@@ -133,7 +137,7 @@ Proxy credentials and *TLS to proxy (HTTPS proxy)* are optional.
 
 ### OpenVPN
 
-![OpenVPN endpoint](images/endpoint-openvpn.png)
+![OpenVPN outbound](images/outbound-openvpn.png)
 
 - **VPN configuration file** — *Upload .ovpn file* or paste/edit the text; inline
   `<ca>`, `<cert>`, `<key>`, `<tls-auth>` blocks are supported.
@@ -141,16 +145,16 @@ Proxy credentials and *TLS to proxy (HTTPS proxy)* are optional.
 - **OTP key** — base32 TOTP secret; *OTP code usage* is either *Answer the CHALLENGE
   prompt* or *Append code to the password*.
 - **Private key password** — if the client key is encrypted.
-- **Use DNS servers pushed by VPN** — resolve the domains of filters that target this
-  endpoint through the VPN's DNS.
+- **Use DNS servers pushed by VPN** — resolve the domains of routes that target this
+  outbound through the VPN's DNS.
 
 Directives that would break Proximity's control (`dev`, `up`, `script-security`, `daemon`,
-`management` …) are removed automatically. Routes pushed by the server appear in Filters
+`management` …) are removed automatically. Routes pushed by the server appear in Routes
 as **Routes of OpenVPN N**.
 
 ### AmneziaWG
 
-![AmneziaWG endpoint](images/endpoint-amneziawg.png)
+![AmneziaWG outbound](images/outbound-amneziawg.png)
 
 - **Upload .conf file** or paste the configuration.
 - **Scan QR code from image** — choose a screenshot/photo of the QR code from the Amnezia
@@ -158,13 +162,13 @@ as **Routes of OpenVPN N**.
 - **Convert vpn:// key** — paste the `vpn://…` key exported by the Amnezia app and press
   the button: it is replaced with a normal configuration.
 - **Use DNS servers from configuration** — use the `DNS =` servers for the domains routed
-  to this endpoint.
+  to this outbound.
 
 ### Monitoring
 
 Tunnels (OpenVPN, AmneziaWG) have a **Monitoring** tab:
 
-![Monitoring tab](images/endpoint-monitoring.png)
+![Monitoring tab](images/outbound-monitoring.png)
 
 | Field | Meaning |
 |---|---|
@@ -180,49 +184,58 @@ OpenVPN is checked by pinging the VPN gateway through the tunnel.
 
 ### Connection log
 
-![Connection log](images/endpoint-log.png)
+![Connection log](images/outbound-log.png)
 
-The live log of an endpoint (last 300 lines): process output, answered prompts, applied
+The live log of an outbound (last 300 lines): process output, answered prompts, applied
 routes, check results. It refreshes every 1.5 s; **Follow new lines** keeps it scrolled to
 the bottom, **Copy** copies the whole log.
 
-## Fallbacks
+## Routes
 
-![Fallbacks](images/fallbacks.png)
+![Routes](images/routes.png)
 
-A fallback is a group of endpoints that filters can target as one. Order matters: the
-first usable member is used.
-
-![Fallback dialog](images/fallback-dialog.png)
-
-| Field | Meaning |
-|---|---|
-| ID | Unique among endpoints and fallbacks; empty → `Fallback <N>` |
-| Enabled | Off: the fallback and its filters are skipped |
-| Endpoints (in priority order) | Add with *Add endpoint…*, reorder with ↑ ↓, remove with ✕ |
-| Enable health check | **Off** (default): the first member that Proximity sees as good. **On**: mihomo requests *Health check URL* through every member each *Interval* seconds and uses the first that answers |
-
-## Filters
-
-![Filters](images/filters.png)
-
-Filters are checked from top to bottom; the first match wins. The table shows the order,
+Routes are checked from top to bottom; the first match wins. The table shows the order,
 the *On* switch, ID, directive, parameters (comments dimmed), and the target. Rows with a
 ⚠ are involved in a warning listed at the top. **Everything else (MATCH)** at the bottom
 sets the default target.
 
-- **Add filter** / ✏️ — the editor with a live preview of the generated router rules:
+- **Add route** / ✏️ — the editor with a live preview of the generated router rules:
 
-  ![Filter editor](images/filter-dialog.png)
+  ![Route editor](images/route-dialog.png)
 
-- 🔒 **provided** filters come from a VPN; they are read-only (👁 to view) but can be
+- 🔒 **provided** routes come from a VPN; they are read-only (👁 to view) but can be
   enabled and moved.
 - **Router configuration** — the complete generated mihomo configuration, read-only:
 
   ![Router configuration](images/router-config.png)
 
 The full reference, with all directives, normalization rules and recipes, is in
-[Filters](filters.md).
+[Routes](routes.md).
+
+### Fallbacks
+
+![Fallbacks](images/fallbacks.png)
+
+The **Fallbacks** section at the bottom of the Routes page lists proxy groups. A fallback
+is a group of outbounds that routes can target as one. Order matters: the
+first usable member is used.
+
+![Fallback dialog](images/fallback-dialog.png)
+
+| Field | Meaning |
+|---|---|
+| ID | Unique among outbounds and fallbacks; empty → `Fallback <N>` |
+| Enabled | Off: the fallback and its routes are skipped |
+| Outbounds (in priority order) | Add with *Add outbound…*, reorder with ↑ ↓, remove with ✕ |
+| Enable health check | **Off** (default): the first member that Proximity sees as good. **On**: mihomo requests *Health check URL* through every member each *Interval* seconds and uses the first that answers |
+
+## Inbounds
+
+![Inbounds](images/inbounds.png)
+
+A placeholder for a future version. An inbound will be an incoming connection point: a
+port or protocol on which Proximity accepts traffic from clients. Today all clients use the
+mixed proxy port and, in host network mode, transparent capture.
 
 ## Users
 
@@ -234,7 +247,7 @@ password empty to keep it), delete. Roles:
 | Role | Can |
 |---|---|
 | Administrator | everything, including users and settings |
-| Operator | edit endpoints, fallbacks and filters; export and import the configuration |
+| Operator | edit outbounds, fallbacks and routes; export and import the configuration |
 | User | view everything except secrets |
 
 Every user can change their own password from the user menu in the header. A password
@@ -252,15 +265,15 @@ change signs the user out of all other sessions.
 | Bind address | `*` = all addresses. In host mode `PROXIMITY_PROXY_BIND` overrides it |
 | Router log level | mihomo log level: `silent`, `error`, `warning`, `info`, `debug` |
 | Route all outgoing connections of the host through Proximity | Transparent capture. Available only in host network mode (Linux, `docker-compose.yml`) |
-| IPv6 | Enable when the host has IPv6; otherwise IPv6 traffic bypasses the filters |
-| Enable connectivity checks | Periodically check HOST endpoints and proxy servers |
+| IPv6 | Enable when the host has IPv6; otherwise IPv6 traffic bypasses the routes |
+| Enable connectivity checks | Periodically check HOST outbounds and proxy servers |
 | Probe target (host:port) | Target for HOST checks, default `1.1.1.1:443` |
 | Check interval, seconds | How often |
 
 **Access** — *Anonymous users can view the dashboard*.
 
 **Backup & Restore** (Administrator, Operator) — *Export configuration* downloads one
-JSON file with endpoints (including passwords and VPN keys), fallbacks, filters and
+JSON file with outbounds (including passwords and VPN keys), fallbacks, routes and
 settings; *Import configuration* replaces them after confirmation. User accounts are not
 included; an Operator's import keeps the current settings.
 
@@ -273,4 +286,4 @@ in the browser.
 
 ![Dark theme](images/dashboard-dark.png)
 
-![Endpoints in the dark theme](images/endpoints-dark.png)
+![Outbounds in the dark theme](images/outbounds-dark.png)

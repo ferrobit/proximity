@@ -6,9 +6,9 @@ sites, a proxy for a couple of services, everything else straight to your ISP.
 - [1. Requirements](#1-requirements)
 - [2. Install and start](#2-install-and-start)
 - [3. Create the administrator](#3-create-the-administrator)
-- [4. Add endpoints](#4-add-endpoints)
-- [5. Optional: group endpoints into a fallback](#5-optional-group-endpoints-into-a-fallback)
-- [6. Write filters](#6-write-filters)
+- [4. Add outbounds](#4-add-outbounds)
+- [5. Optional: group outbounds into a fallback](#5-optional-group-outbounds-into-a-fallback)
+- [6. Write routes](#6-write-routes)
 - [7. Point your programs at Proximity](#7-point-your-programs-at-proximity)
 - [8. Check that it works](#8-check-that-it-works)
 - [Environment variables](#environment-variables)
@@ -69,11 +69,11 @@ On the first visit you see the **Create Administrator Account** dialog. Enter a 
 > the first start. The account is created automatically and the dialog never appears.
 > The variables are ignored once any user exists.
 
-## 4. Add endpoints
+## 4. Add outbounds
 
-Go to **Endpoints → Add endpoint** and choose a type.
+Go to **Outbounds → Add outbound** and choose a type.
 
-| You have… | Add endpoint | Key fields |
+| You have… | Add outbound | Key fields |
 |---|---|---|
 | A normal internet connection | **HOST Internet** | *Outgoing connection*: default host routing, or a specific interface (+ gateway) |
 | A SOCKS5 server | **SOCKS5 Proxy** | server, port (1080), optional user/password, TLS, UDP relay |
@@ -81,27 +81,27 @@ Go to **Endpoints → Add endpoint** and choose a type.
 | An `.ovpn` file | **OpenVPN** | upload/paste the file, user, password, optional TOTP key |
 | An AmneziaWG `.conf`, `vpn://` key or QR code | **AmneziaWG** | upload/paste config, convert `vpn://`, or *Scan QR code from image* |
 
-Every endpoint also has a **General** tab (ID, name, group, enabled, collect statistics),
+Every outbound also has a **General** tab (ID, name, group, enabled, collect statistics),
 and tunnels have a **Monitoring** tab. Changes are applied immediately: there is no
 separate "apply" step.
 
-![OpenVPN endpoint dialog](images/endpoint-openvpn.png)
+![OpenVPN outbound dialog](images/outbound-openvpn.png)
 
 When a tunnel comes up its state turns **good**, and the interface and address appear in
 the *Connection* column.
 
-## 5. Optional: group endpoints into a fallback
+## 5. Optional: group outbounds into a fallback
 
-A fallback is a list of endpoints used in priority order. Use it when several exits can
+A fallback is a list of outbounds used in priority order. Use it when several exits can
 serve the same traffic.
 
-**Fallbacks → Add fallback**, choose the endpoints and order them. Leave *Enable health
-check* off to use the first endpoint that Proximity sees as good; turn it on to let mihomo
+**Routes → [Fallbacks] → Add fallback** (the section at the bottom of the Routes page), choose the outbounds and order them. Leave *Enable health
+check* off to use the first outbound that Proximity sees as good; turn it on to let mihomo
 probe a URL through every member.
 
-## 6. Write filters
+## 6. Write routes
 
-**Filters → Add filter**. Pick a directive, a target and type the parameters, one per line.
+**Routes → Add route**. Pick a directive, a target and type the parameters, one per line.
 The preview shows exactly what will be sent to the router.
 
 Example set:
@@ -114,10 +114,10 @@ Example set:
 | 4 | Media | DOMAIN | `media.example.net` | Proxies (fallback) |
 | — | Everything else | MATCH | — | HOST 1 |
 
-Filters are checked from top to bottom; the first match wins. Set the target for
+Routes are checked from top to bottom; the first match wins. Set the target for
 everything else in the **Everything else (MATCH)** selector under the table.
 
-See [Filters](filters.md) for all directives and recipes.
+See [Routes](routes.md) for all directives and recipes.
 
 ## 7. Point your programs at Proximity
 
@@ -134,11 +134,11 @@ curl -x socks5h://127.0.0.1:7899 https://ifconfig.me
 
 ## 8. Check that it works
 
-1. **Dashboard** → the endpoint you expect shows growing *Traffic* and a line on the
+1. **Dashboard** → the outbound you expect shows growing *Traffic* and a line on the
    **Throughput** chart.
-2. **Filters → Router configuration** shows the rules exactly as mihomo received them.
+2. **Routes → Router configuration** shows the rules exactly as mihomo received them.
 3. Connections that failed (refused, timeout, DNS) are listed under **Unreachable
-   routes** on the Dashboard with the endpoint and the rule that matched.
+   routes** on the Dashboard with the outbound and the rule that matched.
 
 ## Environment variables
 

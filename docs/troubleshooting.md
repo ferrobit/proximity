@@ -2,10 +2,10 @@
 
 Start with three places in the UI — they answer most questions:
 
-1. **Endpoints → 📄 Connection log** of the endpoint in question.
-2. **Dashboard → Unreachable routes**: destination, reason, the endpoint used and the rule
+1. **Outbounds → 📄 Connection log** of the outbound in question.
+2. **Dashboard → Unreachable routes**: destination, reason, the outbound used and the rule
    that matched.
-3. **Filters → Router configuration**: the rules exactly as mihomo received them.
+3. **Routes → Router configuration**: the rules exactly as mihomo received them.
 
 And the container log:
 
@@ -37,7 +37,7 @@ scripts/proximity.sh up -d
 Alternatively set `PROXIMITY_ADMIN_USER` / `PROXIMITY_ADMIN_PASSWORD` before starting —
 they are used only when there are no users.
 
-## An endpoint is `failed`
+## An outbound is `failed`
 
 | Message in the log / status | What to do |
 |---|---|
@@ -46,29 +46,29 @@ they are used only when there are no users.
 | `… is required by server` | The server asked for something not configured (user name, password, private key password) |
 | `device 'proximity_a<N>' is not ready` (AmneziaWG) | `amneziawg-go` did not create its interface and control socket within 10 s; see the log for its own error |
 | `connection timed out` (OpenVPN) | The server is not reachable or the configuration is wrong; OpenVPN did not finish within 60 s |
-| `monitoring failed after N attempts: failed to ping gateway …` | The tunnel is up but the gateway does not answer ping. Some servers block ICMP — disable *Enable monitoring* for this endpoint |
+| `monitoring failed after N attempts: failed to ping gateway …` | The tunnel is up but the gateway does not answer ping. Some servers block ICMP — disable *Enable monitoring* for this outbound |
 | `failed to run 'awg setconf …'` (AmneziaWG) | Check the configuration: keys and the Amnezia parameters (`Jc`, `S1`, `H1`…) must match the server |
-| HOST endpoint `failed` | *Probe target* (Settings, default `1.1.1.1:443`) is not reachable through this uplink. Change it to a host your network allows |
+| HOST outbound `failed` | *Probe target* (Settings, default `1.1.1.1:443`) is not reachable through this uplink. Change it to a host your network allows |
 
-A `failed` HOST endpoint keeps being checked and returns to `good` by itself. A `failed`
+A `failed` HOST outbound keeps being checked and returns to `good` by itself. A `failed`
 tunnel waits for **Reconnect** or a configuration change.
 
-## Traffic goes through the wrong endpoint
+## Traffic goes through the wrong outbound
 
 1. Look at **Dashboard → Unreachable routes** or the router log: the *Matched rule* column
    shows which rule caught the connection.
-2. Filters are checked **top to bottom**; a broader filter above wins. The warning at the
-   top of the Filters page lists rules that can never match.
+2. Routes are checked **top to bottom**; a broader route above wins. The warning at the
+   top of the Routes page lists rules that can never match.
 3. `DOMAIN-KEYWORD` matches substrings: `ads` also matches `downloads.example.org`.
-4. A disabled endpoint or fallback makes its filters inactive (*Some filters are not
+4. A disabled outbound or fallback makes its routes inactive (*Some routes are not
    active*). A disabled default target falls back to `DIRECT`.
 5. In transparent mode a connection made by IP address matches DOMAIN rules only if the
    domain can be sniffed (TLS SNI, HTTP Host, QUIC). Otherwise use `IP-CIDR` rules.
 
 ## Intranet names do not resolve
 
-- On the VPN endpoint enable **Use DNS servers pushed by VPN** (OpenVPN) or **Use DNS
-  servers from configuration** (AmneziaWG). The filter's domains are then resolved through
+- On the VPN outbound enable **Use DNS servers pushed by VPN** (OpenVPN) or **Use DNS
+  servers from configuration** (AmneziaWG). The route's domains are then resolved through
   the tunnel.
 - In bridge mode programs must send the *name* to the proxy, not an IP they resolved
   themselves: use `socks5h://` in curl, "proxy DNS when using SOCKS" in Firefox, or the
@@ -105,7 +105,7 @@ sudo ip route flush table 51000
 
 mihomo rejected the generated configuration (`mihomo -t` failed). The message shows the
 reason. Typical causes: an unknown GEOSITE category, a regular expression mihomo does not
-accept, a missing GeoIP database file. Fix or disable the filter; the previous working
+accept, a missing GeoIP database file. Fix or disable the route; the previous working
 configuration stays active meanwhile.
 
 ## The throughput chart is empty after a restart
@@ -125,6 +125,6 @@ Please include:
 
 - OS, Docker version, compose file used (host or bridge);
 - `scripts/proximity.sh logs --tail 300`;
-- the connection log of the affected endpoint (passwords are not printed there, but
+- the connection log of the affected outbound (passwords are not printed there, but
   check before posting);
-- **Filters → Router configuration** with secrets removed.
+- **Routes → Router configuration** with secrets removed.

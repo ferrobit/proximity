@@ -58,7 +58,7 @@ func call(t *testing.T, server *Server, cookie *http.Cookie, method string, path
 		request.AddCookie(cookie)
 	}
 	recorder := httptest.NewRecorder()
-	server.routes.ServeHTTP(recorder, request)
+	server.mux.ServeHTTP(recorder, request)
 	result, raw := map[string]any{}, json.RawMessage{}
 	require.NoError(t, json.Unmarshal(recorder.Body.Bytes(), &raw), recorder.Body.String())
 	if json.Unmarshal(raw, &result) != nil {
@@ -76,7 +76,7 @@ func call(t *testing.T, server *Server, cookie *http.Cookie, method string, path
 
 func fetch(server *Server, path string) *httptest.ResponseRecorder {
 	recorder := httptest.NewRecorder()
-	server.routes.ServeHTTP(recorder, httptest.NewRequest(http.MethodGet, path, nil))
+	server.mux.ServeHTTP(recorder, httptest.NewRequest(http.MethodGet, path, nil))
 	return recorder
 }
 
@@ -130,13 +130,13 @@ func TestServer_Access(t *testing.T) {
 	require.Equal(t, map[string]any{"user": "", "role": "anonymous", "level": 0.0,
 		"version": "test", "anonymous_dashboard": true, "setup": false, "host_network": false},
 		body)
-	code, body, _ = call(t, server, nil, http.MethodGet, "/api/endpoints", nil)
+	code, body, _ = call(t, server, nil, http.MethodGet, "/api/outbounds", nil)
 	require.Equal(t, http.StatusUnauthorized, code)
 	require.Equal(t, "authentication required", body["error"])
 	{
 		request := httptest.NewRequest(http.MethodPost, "/api/logout", nil)
 		recorder := httptest.NewRecorder()
-		server.routes.ServeHTTP(recorder, request)
+		server.mux.ServeHTTP(recorder, request)
 		require.Equal(t, http.StatusForbidden, recorder.Code)
 		require.Contains(t, recorder.Body.String(), "request header does not exist")
 		require.NotEmpty(t, recorder.Header().Get("X-Proximity-Time"))
@@ -179,8 +179,8 @@ func TestServer_Access(t *testing.T) {
 	}
 	viewer := login(t, server, "viewer", "viewer123")
 	{
-		code, body, _ := call(t, server, viewer, http.MethodPost, "/api/endpoints",
-			config.Endpoint{Type: config.TypeHost})
+		code, body, _ := call(t, server, viewer, http.MethodPost, "/api/outbounds",
+			config.Outbound{Type: config.TypeHost})
 		require.Equal(t, http.StatusForbidden, code)
 		require.Equal(t, "access denied for role 'user'", body["error"])
 		code, _, _ = call(t, server, viewer, http.MethodGet, "/api/users", nil)
@@ -208,17 +208,17 @@ func TestServer_Access(t *testing.T) {
 		code, _, _ = call(t, server, admin, http.MethodPut, "/api/users/viewer",
 			userRequest{Password: "1", Confirm: "1"})
 		require.Equal(t, http.StatusBadRequest, code)
-		code, _, _ = call(t, server, viewer, http.MethodGet, "/api/endpoints", nil)
+		code, _, _ = call(t, server, viewer, http.MethodGet, "/api/outbounds", nil)
 		require.Equal(t, http.StatusUnauthorized, code)
 		operator := login(t, server, "viewer", "viewer789")
-		code, _, _ = call(t, server, operator, http.MethodPost, "/api/endpoints",
-			config.Endpoint{Type: config.TypeHost, Enabled: true})
+		code, _, _ = call(t, server, operator, http.MethodPost, "/api/outbounds",
+			config.Outbound{Type: config.TypeHost, Enabled: true})
 		require.Equal(t, http.StatusOK, code)
 		code, _, _ = call(t, server, operator, http.MethodPut, "/api/settings", config.Settings{})
 		require.Equal(t, http.StatusForbidden, code)
 		code, _, _ = call(t, server, admin, http.MethodDelete, "/api/users/viewer", nil)
 		require.Equal(t, http.StatusOK, code)
-		code, _, _ = call(t, server, operator, http.MethodGet, "/api/endpoints", nil)
+		code, _, _ = call(t, server, operator, http.MethodGet, "/api/outbounds", nil)
 		require.Equal(t, http.StatusUnauthorized, code)
 	}
 	{
@@ -249,11 +249,11 @@ func TestServer_Access(t *testing.T) {
 func TestServer_Backup(t *testing.T) {
 	server := makeServer(t)
 	admin := login(t, server, "admin", "secret123")
-	code, _, _ := call(t, server, admin, http.MethodPost, "/api/endpoints", config.Endpoint{
+	code, _, _ := call(t, server, admin, http.MethodPost, "/api/outbounds", config.Outbound{
 		Type: config.TypeSocks5, Enabled: true, Socks5: &config.Socks5Options{Server: "10.0.0.1",
 			Port: 1080, Password: "pass"}})
 	require.Equal(t, http.StatusOK, code)
-	code, _, _ = call(t, server, admin, http.MethodPost, "/api/filters", config.Filter{
+	code, _, _ = call(t, server, admin, http.MethodPost, "/api/routes", config.Route{
 		Directive: "DOMAIN", Target: "SOCKS5 1", Enabled: true, Params: []string{"a.test"}})
 	require.Equal(t, http.StatusOK, code)
 	code, _, _ = call(t, server, admin, http.MethodPost, "/api/users",
@@ -267,9 +267,9 @@ func TestServer_Backup(t *testing.T) {
 	code, exported, _ := call(t, server, admin, http.MethodGet, "/api/backup", nil)
 	require.Equal(t, http.StatusOK, code)
 	require.Equal(t, config.BackupFormat, exported["format"])
-	require.Equal(t, 2.0, exported["version"])
-	require.Len(t, exported["endpoints"], 1)
-	require.Len(t, exported["filters"], 1)
+	require.Equal(t, 3.0, exported["version"])
+	require.Len(t, exported["outbounds"], 1)
+	require.Len(t, exported["routes"], 1)
 	require.NotContains(t, exported, "users")
 	require.NotContains(t, exported, "secret")
 	{
@@ -282,19 +282,19 @@ func TestServer_Backup(t *testing.T) {
 		require.Equal(t, http.StatusUnauthorized, code)
 	}
 	{
-		code, _, _ := call(t, server, admin, http.MethodDelete, "/api/endpoints/SOCKS5%201", nil)
+		code, _, _ := call(t, server, admin, http.MethodDelete, "/api/outbounds/SOCKS5%201", nil)
 		require.Equal(t, http.StatusOK, code)
-		require.Empty(t, server.store.Snapshot().Endpoints)
+		require.Empty(t, server.store.Snapshot().Outbounds)
 		settings := exported["settings"].(map[string]any)
 		settings["mixed_port"], settings["log_level"] = 7000.0, "debug"
 		operator := login(t, server, "operator", "operator1")
 		code, body, _ := call(t, server, operator, http.MethodPost, "/api/backup", exported)
 		require.Equal(t, http.StatusOK, code, body)
-		require.Equal(t, map[string]any{"endpoints": 1.0, "fallbacks": 0.0, "filters": 1.0}, body)
+		require.Equal(t, map[string]any{"outbounds": 1.0, "fallbacks": 0.0, "routes": 1.0}, body)
 		snapshot := server.store.Snapshot()
-		require.Equal(t, "SOCKS5 1", snapshot.Endpoints[0].ID)
-		require.Equal(t, "pass", snapshot.Endpoints[0].Socks5.Password)
-		require.Equal(t, "SOCKS5 1", snapshot.Filters[0].Target)
+		require.Equal(t, "SOCKS5 1", snapshot.Outbounds[0].ID)
+		require.Equal(t, "pass", snapshot.Outbounds[0].Socks5.Password)
+		require.Equal(t, "SOCKS5 1", snapshot.Routes[0].Target)
 		require.Equal(t, 7899, snapshot.Settings.MixedPort)
 		require.Len(t, snapshot.Users, 3)
 		code, _, _ = call(t, server, admin, http.MethodPost, "/api/backup", exported)
@@ -310,21 +310,21 @@ func TestServer_Backup(t *testing.T) {
 		require.Equal(t, http.StatusBadRequest, code)
 		require.Equal(t, "failed to import backup: unexpected backup format 'other'", body["error"])
 		exported["format"] = config.BackupFormat
-		exported["fallbacks"] = []any{map[string]any{"id": "Chain", "endpoints": []any{"missing"}}}
+		exported["fallbacks"] = []any{map[string]any{"id": "Chain", "outbounds": []any{"missing"}}}
 		code, body, _ = call(t, server, admin, http.MethodPost, "/api/backup", exported)
 		require.Equal(t, http.StatusBadRequest, code)
 		require.Equal(t, "failed to import backup: failed to check fallback 'Chain': "+
-			"endpoint 'missing' does not exist", body["error"])
+			"outbound 'missing' does not exist", body["error"])
 		code, _, _ = call(t, server, admin, http.MethodPost, "/api/backup", 5)
 		require.Equal(t, http.StatusBadRequest, code)
-		require.Equal(t, "SOCKS5 1", server.store.Snapshot().Filters[0].Target)
+		require.Equal(t, "SOCKS5 1", server.store.Snapshot().Routes[0].Target)
 	}
 }
 
-func TestServer_Endpoints(t *testing.T) {
+func TestServer_Outbounds(t *testing.T) {
 	server := makeServer(t)
 	admin := login(t, server, "admin", "secret123")
-	for _, endpoint := range []config.Endpoint{
+	for _, outbound := range []config.Outbound{
 		{Type: config.TypeHost, Enabled: true, Group: "uplinks", Statistics: true},
 		{Type: config.TypeSocks5, Enabled: true, Group: "work", Socks5: &config.Socks5Options{
 			Server: "127.0.0.1", Port: 1, Username: "user", Password: "pass"}},
@@ -333,24 +333,24 @@ func TestServer_Endpoints(t *testing.T) {
 		{Type: config.TypeOpenVPN, OpenVPN: &config.OpenVPNOptions{Config: sampleOpenVPN,
 			Password: "pass", OTPKey: "GEZDGNBVGY3TQOJQ", KeyPassword: "key"}},
 		{Type: config.TypeAmneziaWG, AmneziaWG: &config.AmneziaWGOptions{Config: sampleTunnel}}} {
-		code, body, _ := call(t, server, admin, http.MethodPost, "/api/endpoints", endpoint)
+		code, body, _ := call(t, server, admin, http.MethodPost, "/api/outbounds", outbound)
 		require.Equal(t, http.StatusOK, code, body)
 	}
-	code, body, _ := call(t, server, admin, http.MethodPost, "/api/endpoints",
-		config.Endpoint{Type: "unknown"})
+	code, body, _ := call(t, server, admin, http.MethodPost, "/api/outbounds",
+		config.Outbound{Type: "unknown"})
 	require.Equal(t, http.StatusBadRequest, code)
-	require.Equal(t, "unexpected endpoint type 'unknown'", body["error"])
-	code, _, _ = call(t, server, admin, http.MethodPost, "/api/endpoints", "text")
+	require.Equal(t, "unexpected outbound type 'unknown'", body["error"])
+	code, _, _ = call(t, server, admin, http.MethodPost, "/api/outbounds", "text")
 	require.Equal(t, http.StatusBadRequest, code)
 	server.synchronize()
 	require.Eventually(t, func() bool {
 		return server.manager.Status()["SOCKS5 1"].State == link.StateDown
 	}, 10*time.Second, 20*time.Millisecond)
 	{
-		code, body, _ := call(t, server, admin, http.MethodGet, "/api/endpoints", nil)
+		code, body, _ := call(t, server, admin, http.MethodGet, "/api/outbounds", nil)
 		require.Equal(t, http.StatusOK, code)
 		require.Equal(t, []any{"uplinks", "work"}, body["groups"])
-		views := body["endpoints"].([]any)
+		views := body["outbounds"].([]any)
 		require.Len(t, views, 5)
 		first, second := views[0].(map[string]any), views[1].(map[string]any)
 		require.Equal(t, "HOST 1", first["id"])
@@ -366,9 +366,9 @@ func TestServer_Endpoints(t *testing.T) {
 			userRequest{Name: "viewer", Role: config.RoleUser, Password: "viewer123", Confirm: "viewer123"})
 		require.Equal(t, http.StatusOK, code)
 		viewer := login(t, server, "viewer", "viewer123")
-		code, body, _ := call(t, server, viewer, http.MethodGet, "/api/endpoints", nil)
+		code, body, _ := call(t, server, viewer, http.MethodGet, "/api/outbounds", nil)
 		require.Equal(t, http.StatusOK, code)
-		views := body["endpoints"].([]any)
+		views := body["outbounds"].([]any)
 		require.Equal(t, true, views[1].(map[string]any)["redacted"])
 		require.Equal(t, "", views[1].(map[string]any)["socks5"].(map[string]any)["password"])
 		require.Equal(t, "user", views[1].(map[string]any)["socks5"].(map[string]any)["username"])
@@ -377,7 +377,7 @@ func TestServer_Endpoints(t *testing.T) {
 		require.Equal(t, "", tunnel["config"])
 		require.Equal(t, "", tunnel["otp_key"])
 		require.Equal(t, "", views[4].(map[string]any)["amneziawg"].(map[string]any)["config"])
-		code, _, _ = call(t, server, viewer, http.MethodGet, "/api/endpoints/HOST%201/log", nil)
+		code, _, _ = call(t, server, viewer, http.MethodGet, "/api/outbounds/HOST%201/log", nil)
 		require.Equal(t, http.StatusForbidden, code)
 	}
 	{
@@ -390,47 +390,47 @@ func TestServer_Endpoints(t *testing.T) {
 		require.Equal(t, `cannot parse "bad" as time`, body["error"])
 		code, body, _ = call(t, server, nil, http.MethodGet, "/api/dashboard", nil)
 		require.Equal(t, http.StatusOK, code)
-		views := body["endpoints"].([]any)
+		views := body["outbounds"].([]any)
 		second := views[1].(map[string]any)
 		require.Equal(t, "SOCKS5 1", second["id"])
 		require.NotContains(t, second, "socks5")
 		require.Equal(t, "down", second["status"].(map[string]any)["state"])
 		require.Equal(t, "", second["status"].(map[string]any)["message"])
 		require.Empty(t, body["warnings"])
-		require.Equal(t, map[string]any{"endpoints": 5.0, "endpoints_enabled": 2.0,
-			"endpoints_up": 1.0, "fallbacks": 0.0, "filters": 0.0, "rules": 0.0}, body["counts"])
+		require.Equal(t, map[string]any{"outbounds": 5.0, "outbounds_enabled": 2.0,
+			"outbounds_up": 1.0, "fallbacks": 0.0, "routes": 0.0, "rules": 0.0}, body["counts"])
 		require.Contains(t, body["failure"], "failed to check router configuration")
 		require.Equal(t, 7899.0, body["proxy_port"])
 	}
 	{
-		code, _, _ := call(t, server, admin, http.MethodPut, "/api/endpoints/SOCKS5%201",
-			config.Endpoint{Name: "renamed", Enabled: true, Socks5: &config.Socks5Options{
+		code, _, _ := call(t, server, admin, http.MethodPut, "/api/outbounds/SOCKS5%201",
+			config.Outbound{Name: "renamed", Enabled: true, Socks5: &config.Socks5Options{
 				Server: "127.0.0.1", Port: 2}})
 		require.Equal(t, http.StatusOK, code)
-		code, _, _ = call(t, server, admin, http.MethodPut, "/api/endpoints/SOCKS5%201", 5)
+		code, _, _ = call(t, server, admin, http.MethodPut, "/api/outbounds/SOCKS5%201", 5)
 		require.Equal(t, http.StatusBadRequest, code)
-		code, body, _ := call(t, server, admin, http.MethodPut, "/api/endpoints/missing",
-			config.Endpoint{})
-		require.Equal(t, "endpoint 'missing' does not exist", body["error"])
+		code, body, _ := call(t, server, admin, http.MethodPut, "/api/outbounds/missing",
+			config.Outbound{})
+		require.Equal(t, "outbound 'missing' does not exist", body["error"])
 		require.Equal(t, http.StatusBadRequest, code)
-		code, _, _ = call(t, server, admin, http.MethodPost, "/api/endpoints/SOCKS5%201/move",
+		code, _, _ = call(t, server, admin, http.MethodPost, "/api/outbounds/SOCKS5%201/move",
 			moveRequest{Delta: -1})
 		require.Equal(t, http.StatusOK, code)
-		code, _, _ = call(t, server, admin, http.MethodPost, "/api/endpoints/SOCKS5%201/move", "x")
+		code, _, _ = call(t, server, admin, http.MethodPost, "/api/outbounds/SOCKS5%201/move", "x")
 		require.Equal(t, http.StatusBadRequest, code)
 		snapshot := server.store.Snapshot()
-		require.Equal(t, "SOCKS5 1", snapshot.Endpoints[0].ID)
-		require.Equal(t, "renamed", snapshot.Endpoints[0].Name)
-		require.Equal(t, 2, snapshot.Endpoints[0].Socks5.Port)
+		require.Equal(t, "SOCKS5 1", snapshot.Outbounds[0].ID)
+		require.Equal(t, "renamed", snapshot.Outbounds[0].Name)
+		require.Equal(t, 2, snapshot.Outbounds[0].Socks5.Port)
 	}
 	{
-		code, _, _ := call(t, server, admin, http.MethodPost, "/api/endpoints/HOST%201/restart", nil)
+		code, _, _ := call(t, server, admin, http.MethodPost, "/api/outbounds/HOST%201/restart", nil)
 		require.Equal(t, http.StatusOK, code)
-		code, body, _ := call(t, server, admin, http.MethodPost, "/api/endpoints/HTTP%201/restart",
+		code, body, _ := call(t, server, admin, http.MethodPost, "/api/outbounds/HTTP%201/restart",
 			nil)
 		require.Equal(t, http.StatusBadRequest, code)
-		require.Equal(t, "endpoint 'HTTP 1' is not running", body["error"])
-		code, body, _ = call(t, server, admin, http.MethodGet, "/api/endpoints/HOST%201/log", nil)
+		require.Equal(t, "outbound 'HTTP 1' is not running", body["error"])
+		code, body, _ = call(t, server, admin, http.MethodGet, "/api/outbounds/HOST%201/log", nil)
 		require.Equal(t, http.StatusOK, code)
 		require.Contains(t, body, "lines")
 		code, body, _ = call(t, server, admin, http.MethodGet, "/api/interfaces", nil)
@@ -450,36 +450,128 @@ func TestServer_Endpoints(t *testing.T) {
 		require.Equal(t, http.StatusBadRequest, code)
 		code, _, _ = call(t, server, admin, http.MethodPost, "/api/import/amneziawg", 5)
 		require.Equal(t, http.StatusBadRequest, code)
-		code, _, _ = call(t, server, admin, http.MethodDelete, "/api/endpoints/HTTP%201", nil)
+		code, _, _ = call(t, server, admin, http.MethodDelete, "/api/outbounds/HTTP%201", nil)
 		require.Equal(t, http.StatusOK, code)
-		require.Len(t, server.store.Snapshot().Endpoints, 4)
+		require.Len(t, server.store.Snapshot().Outbounds, 4)
 	}
 }
 
-func TestServer_Filters(t *testing.T) {
+func TestServer_ProvidedRoutes(t *testing.T) {
 	server := makeServer(t)
 	admin := login(t, server, "admin", "secret123")
-	for _, endpoint := range []config.Endpoint{{Type: config.TypeHost, Enabled: true},
+	code, _, _ := call(t, server, admin, http.MethodPost, "/api/outbounds", config.Outbound{
+		Type: config.TypeAmneziaWG, Enabled: true, AmneziaWG: &config.AmneziaWGOptions{
+			Config: sampleTunnel + "AllowedIPs = 10.55.0.0/16\n"}})
+	require.Equal(t, http.StatusOK, code)
+	require.NoError(t, server.store.Update(func(config *config.Config) error {
+		_, err := config.SetRoutes("AmneziaWG 1", []string{"10.55.0.0/16"})
+		return err
+	}))
+	snapshot := server.store.Snapshot()
+	require.Len(t, snapshot.Routes, 1)
+	require.Equal(t, "AmneziaWG 1", snapshot.Routes[0].Provided)
+	require.False(t, snapshot.Routes[0].Enabled)
+	key := url.PathEscape(snapshot.Routes[0].Key)
+	{
+		code, _, _ := call(t, server, admin, http.MethodPut, "/api/routes/"+key,
+			config.Route{Enabled: true, Directive: "DOMAIN", Params: []string{"ignored.test"}})
+		require.Equal(t, http.StatusOK, code)
+		snapshot := server.store.Snapshot()
+		require.True(t, snapshot.Routes[0].Enabled)
+		require.Equal(t, []string{"10.55.0.0/16"}, snapshot.Routes[0].Params)
+		code, body, _ := call(t, server, admin, http.MethodDelete, "/api/routes/"+key, nil)
+		require.Equal(t, http.StatusBadRequest, code)
+		require.Equal(t, "provided route is read-only", body["error"])
+	}
+}
+
+func TestServer_Rename(t *testing.T) {
+	server := makeServer(t)
+	admin := login(t, server, "admin", "secret123")
+	for _, outbound := range []config.Outbound{
+		{Type: config.TypeHost, Enabled: true, Statistics: true},
+		{Type: config.TypeHost, Enabled: true, Statistics: true}} {
+		code, _, _ := call(t, server, admin, http.MethodPost, "/api/outbounds", outbound)
+		require.Equal(t, http.StatusOK, code)
+	}
+	code, _, _ := call(t, server, admin, http.MethodPost, "/api/fallbacks",
+		config.Fallback{Enabled: true, Outbounds: []string{"HOST 1", "HOST 2"}})
+	require.Equal(t, http.StatusOK, code)
+	code, body, _ := call(t, server, admin, http.MethodPost, "/api/routes", config.Route{
+		Directive: "DOMAIN", Target: "HOST 1", Enabled: true, Params: []string{"a.test"}})
+	require.Equal(t, http.StatusOK, code)
+	require.Equal(t, "Route 1", body["id"])
+	key := body["key"].(string)
+	server.synchronize()
+	server.tracker.Update(router.Connections{Items: []router.Connection{{ID: "1", Upload: 10,
+		Download: 20, Chains: []string{"HOST 1"}}}, Upload: 10, Download: 20}, nil)
+	{
+		code, _, _ := call(t, server, admin, http.MethodPut, "/api/outbounds/HOST%201",
+			config.Outbound{ID: " Uplink ", Enabled: true, Statistics: true})
+		require.Equal(t, http.StatusOK, code)
+		snapshot := server.store.Snapshot()
+		require.Equal(t, "Uplink", snapshot.Outbounds[0].ID)
+		require.Equal(t, []string{"Uplink", "HOST 2"}, snapshot.Fallbacks[0].Outbounds)
+		require.Equal(t, "Uplink", snapshot.Routes[0].Target)
+		traffic, _ := server.tracker.Snapshot()
+		require.Equal(t, int64(10), traffic["Uplink"].Upload)
+		require.NotContains(t, traffic, "HOST 1")
+		code, body, _ := call(t, server, admin, http.MethodPut, "/api/outbounds/Uplink",
+			config.Outbound{ID: "HOST 2", Enabled: true})
+		require.Equal(t, http.StatusBadRequest, code)
+		require.Equal(t, "ID 'HOST 2' already exists", body["error"])
+		code, body, _ = call(t, server, admin, http.MethodPut, "/api/outbounds/Uplink",
+			config.Outbound{ID: "Fallback 1", Enabled: true})
+		require.Equal(t, "ID 'Fallback 1' already exists", body["error"])
+		require.Equal(t, http.StatusBadRequest, code)
+	}
+	{
+		code, _, _ := call(t, server, admin, http.MethodPut, "/api/fallbacks/Fallback%201",
+			config.Fallback{ID: "Chain", Enabled: true, Outbounds: []string{"Uplink"}})
+		require.Equal(t, http.StatusOK, code)
+		code, body, _ := call(t, server, admin, http.MethodPut, "/api/fallbacks/Chain",
+			config.Fallback{ID: "Uplink", Enabled: true, Outbounds: []string{"Uplink"}})
+		require.Equal(t, http.StatusBadRequest, code)
+		require.Equal(t, "ID 'Uplink' already exists", body["error"])
+		code, _, _ = call(t, server, admin, http.MethodPut, "/api/routes/"+key, config.Route{
+			ID: "Work", Directive: "DOMAIN", Target: "Chain", Enabled: true,
+			Params: []string{"a.test"}})
+		require.Equal(t, http.StatusOK, code)
+		code, body, _ = call(t, server, admin, http.MethodPost, "/api/routes", config.Route{
+			ID: "Work", Directive: "DOMAIN", Target: "Chain", Params: []string{"b.test"}})
+		require.Equal(t, http.StatusBadRequest, code)
+		require.Equal(t, "route ID 'Work' already exists", body["error"])
+		snapshot := server.store.Snapshot()
+		require.Equal(t, "Chain", snapshot.Fallbacks[0].ID)
+		require.Equal(t, "Work", snapshot.Routes[0].ID)
+		require.Equal(t, "Chain", snapshot.Routes[0].Target)
+	}
+}
+
+func TestServer_Routes(t *testing.T) {
+	server := makeServer(t)
+	admin := login(t, server, "admin", "secret123")
+	for _, outbound := range []config.Outbound{{Type: config.TypeHost, Enabled: true},
 		{Type: config.TypeHost, Enabled: true}} {
-		code, _, _ := call(t, server, admin, http.MethodPost, "/api/endpoints", endpoint)
+		code, _, _ := call(t, server, admin, http.MethodPost, "/api/outbounds", outbound)
 		require.Equal(t, http.StatusOK, code)
 	}
 	code, body, _ := call(t, server, admin, http.MethodPost, "/api/fallbacks",
-		config.Fallback{Enabled: true, Endpoints: []string{"HOST 1"}})
+		config.Fallback{Enabled: true, Outbounds: []string{"HOST 1"}})
 	require.Equal(t, http.StatusOK, code)
 	require.Equal(t, "Fallback 1", body["id"])
 	{
 		code, _, _ := call(t, server, admin, http.MethodPost, "/api/fallbacks",
-			config.Fallback{ID: "Second", Endpoints: []string{"HOST 2", "HOST 1"}})
+			config.Fallback{ID: "Second", Outbounds: []string{"HOST 2", "HOST 1"}})
 		require.Equal(t, http.StatusOK, code)
 		code, body, _ := call(t, server, admin, http.MethodPost, "/api/fallbacks",
-			config.Fallback{Endpoints: []string{"missing"}})
+			config.Fallback{Outbounds: []string{"missing"}})
 		require.Equal(t, http.StatusBadRequest, code)
-		require.Equal(t, "endpoint 'missing' does not exist", body["error"])
+		require.Equal(t, "outbound 'missing' does not exist", body["error"])
 		code, _, _ = call(t, server, admin, http.MethodPost, "/api/fallbacks", 5)
 		require.Equal(t, http.StatusBadRequest, code)
 		code, _, _ = call(t, server, admin, http.MethodPut, "/api/fallbacks/Second",
-			config.Fallback{Enabled: true, Endpoints: []string{"HOST 2"}, Interval: 120})
+			config.Fallback{Enabled: true, Outbounds: []string{"HOST 2"}, Interval: 120})
 		require.Equal(t, http.StatusOK, code)
 		code, _, _ = call(t, server, admin, http.MethodPut, "/api/fallbacks/Second", 5)
 		require.Equal(t, http.StatusBadRequest, code)
@@ -495,77 +587,77 @@ func TestServer_Filters(t *testing.T) {
 		require.Equal(t, 120.0, list[0].(map[string]any)["interval"])
 	}
 	keys := []string{}
-	for _, filter := range []config.Filter{
+	for _, route := range []config.Route{
 		{ID: "corp", Directive: "DOMAIN-SUFFIX", Target: "Fallback 1", Enabled: true,
 			Params: []string{"https://Corp.Test/path", ""}},
 		{Directive: "DOMAIN", Target: "HOST 2", Enabled: true, Params: []string{"wiki.corp.test"}},
 		{Directive: "IP-CIDR", Target: "REJECT", Enabled: true, Params: []string{"1.2.3.4:443"}}} {
-		code, body, _ := call(t, server, admin, http.MethodPost, "/api/filters", filter)
+		code, body, _ := call(t, server, admin, http.MethodPost, "/api/routes", route)
 		require.Equal(t, http.StatusOK, code, body)
 		keys = append(keys, body["key"].(string))
 	}
 	{
-		code, body, _ := call(t, server, admin, http.MethodPost, "/api/filters",
-			config.Filter{Directive: "DOMAIN", Target: "missing", Params: []string{"a.test"}})
+		code, body, _ := call(t, server, admin, http.MethodPost, "/api/routes",
+			config.Route{Directive: "DOMAIN", Target: "missing", Params: []string{"a.test"}})
 		require.Equal(t, http.StatusBadRequest, code)
 		require.Equal(t, "target 'missing' does not exist", body["error"])
-		code, _, _ = call(t, server, admin, http.MethodPost, "/api/filters", 5)
+		code, _, _ = call(t, server, admin, http.MethodPost, "/api/routes", 5)
 		require.Equal(t, http.StatusBadRequest, code)
-		code, body, _ = call(t, server, admin, http.MethodPost, "/api/filters/preview",
-			config.Filter{Directive: "IP-CIDR", Target: "HOST 1",
+		code, body, _ = call(t, server, admin, http.MethodPost, "/api/routes/preview",
+			config.Route{Directive: "IP-CIDR", Target: "HOST 1",
 				Params: []string{"10.1.2.3:8080", "192.168.0.1"}})
 		require.Equal(t, http.StatusOK, code)
 		require.Equal(t, []any{"AND,((IP-CIDR,10.1.2.3/32),(DST-PORT,8080)),HOST 1",
 			"IP-CIDR,192.168.0.1/32,HOST 1"}, body["lines"])
 		require.Equal(t, []any{"10.1.2.3/32:8080", "192.168.0.1/32"}, body["params"])
-		code, body, _ = call(t, server, admin, http.MethodPost, "/api/filters/preview",
-			config.Filter{Directive: "DOMAIN", Target: "HOST 1",
+		code, body, _ = call(t, server, admin, http.MethodPost, "/api/routes/preview",
+			config.Route{Directive: "DOMAIN", Target: "HOST 1",
 				Params: []string{"# corporate", "Wiki.Corp.Test", " # off.test"}})
 		require.Equal(t, http.StatusOK, code)
 		require.Equal(t, []any{"DOMAIN,wiki.corp.test,HOST 1"}, body["lines"])
 		require.Equal(t, []any{"# corporate", "wiki.corp.test", "# off.test"}, body["params"])
-		code, body, _ = call(t, server, admin, http.MethodPost, "/api/filters/preview",
-			config.Filter{Directive: "DOMAIN", Params: []string{"bad domain"}})
+		code, body, _ = call(t, server, admin, http.MethodPost, "/api/routes/preview",
+			config.Route{Directive: "DOMAIN", Params: []string{"bad domain"}})
 		require.Equal(t, http.StatusBadRequest, code)
 		require.Contains(t, body["error"], "failed to parse line 1")
-		code, _, _ = call(t, server, admin, http.MethodPost, "/api/filters/preview", 5)
+		code, _, _ = call(t, server, admin, http.MethodPost, "/api/routes/preview", 5)
 		require.Equal(t, http.StatusBadRequest, code)
 	}
 	{
-		code, _, _ := call(t, server, admin, http.MethodPut, "/api/filters/default",
+		code, _, _ := call(t, server, admin, http.MethodPut, "/api/routes/default",
 			targetRequest{Target: "Second"})
 		require.Equal(t, http.StatusOK, code)
-		code, body, _ := call(t, server, admin, http.MethodPut, "/api/filters/default",
+		code, body, _ := call(t, server, admin, http.MethodPut, "/api/routes/default",
 			targetRequest{Target: "missing"})
 		require.Equal(t, http.StatusBadRequest, code)
 		require.Contains(t, body["error"], "default target 'missing' does not exist")
-		code, _, _ = call(t, server, admin, http.MethodPut, "/api/filters/default", 5)
+		code, _, _ = call(t, server, admin, http.MethodPut, "/api/routes/default", 5)
 		require.Equal(t, http.StatusBadRequest, code)
-		code, _, _ = call(t, server, admin, http.MethodPost, "/api/filters/"+keys[2]+"/move",
+		code, _, _ = call(t, server, admin, http.MethodPost, "/api/routes/"+keys[2]+"/move",
 			moveRequest{Delta: -1})
 		require.Equal(t, http.StatusOK, code)
-		code, _, _ = call(t, server, admin, http.MethodPost, "/api/filters/"+keys[2]+"/move", "x")
+		code, _, _ = call(t, server, admin, http.MethodPost, "/api/routes/"+keys[2]+"/move", "x")
 		require.Equal(t, http.StatusBadRequest, code)
-		code, _, _ = call(t, server, admin, http.MethodPut, "/api/filters/"+keys[1],
-			config.Filter{Directive: "DOMAIN", Target: "HOST 2", Enabled: true,
+		code, _, _ = call(t, server, admin, http.MethodPut, "/api/routes/"+keys[1],
+			config.Route{Directive: "DOMAIN", Target: "HOST 2", Enabled: true,
 				Params: []string{"wiki.corp.test", "corp.test"}})
 		require.Equal(t, http.StatusOK, code)
-		code, _, _ = call(t, server, admin, http.MethodPut, "/api/filters/"+keys[1], 5)
+		code, _, _ = call(t, server, admin, http.MethodPut, "/api/routes/"+keys[1], 5)
 		require.Equal(t, http.StatusBadRequest, code)
 		server.synchronize()
-		code, body, _ = call(t, server, admin, http.MethodGet, "/api/filters", nil)
+		code, body, _ = call(t, server, admin, http.MethodGet, "/api/routes", nil)
 		require.Equal(t, http.StatusOK, code)
 		require.Equal(t, "Second", body["default_target"])
 		require.Contains(t, body["directives"], "GEOSITE")
 		require.Contains(t, body["failure"], "failed to check router configuration")
-		filters := body["filters"].([]any)
-		require.Len(t, filters, 3)
-		require.Equal(t, keys[2], filters[1].(map[string]any)["key"])
-		require.Equal(t, []any{"corp.test"}, filters[0].(map[string]any)["params"])
+		routes := body["routes"].([]any)
+		require.Len(t, routes, 3)
+		require.Equal(t, keys[2], routes[1].(map[string]any)["key"])
+		require.Equal(t, []any{"corp.test"}, routes[0].(map[string]any)["params"])
 		warnings := body["warnings"].([]any)
 		require.Len(t, warnings, 2)
 		require.Contains(t, warnings[0].(map[string]any)["message"],
-			"DOMAIN-SUFFIX 'corp.test' in 'corp' covers DOMAIN 'wiki.corp.test' in 'Filter 1'")
+			"DOMAIN-SUFFIX 'corp.test' in 'corp' covers DOMAIN 'wiki.corp.test' in 'Route 1'")
 	}
 	{
 		code, body, _ := call(t, server, admin, http.MethodGet, "/api/router/config", nil)
@@ -584,108 +676,16 @@ func TestServer_Filters(t *testing.T) {
 		require.Empty(t, body["refused"])
 	}
 	{
-		code, _, _ := call(t, server, admin, http.MethodDelete, "/api/filters/"+keys[0], nil)
+		code, _, _ := call(t, server, admin, http.MethodDelete, "/api/routes/"+keys[0], nil)
 		require.Equal(t, http.StatusOK, code)
-		code, body, _ := call(t, server, admin, http.MethodDelete, "/api/filters/"+keys[0], nil)
+		code, body, _ := call(t, server, admin, http.MethodDelete, "/api/routes/"+keys[0], nil)
 		require.Equal(t, http.StatusBadRequest, code)
-		require.Equal(t, "filter '"+keys[0]+"' does not exist", body["error"])
+		require.Equal(t, "route '"+keys[0]+"' does not exist", body["error"])
 		code, _, _ = call(t, server, admin, http.MethodDelete, "/api/fallbacks/Second", nil)
 		require.Equal(t, http.StatusOK, code)
 		snapshot := server.store.Snapshot()
 		require.Equal(t, config.TargetDirect, snapshot.Settings.DefaultTarget)
-		require.Len(t, snapshot.Filters, 2)
-	}
-}
-
-func TestServer_Rename(t *testing.T) {
-	server := makeServer(t)
-	admin := login(t, server, "admin", "secret123")
-	for _, endpoint := range []config.Endpoint{
-		{Type: config.TypeHost, Enabled: true, Statistics: true},
-		{Type: config.TypeHost, Enabled: true, Statistics: true}} {
-		code, _, _ := call(t, server, admin, http.MethodPost, "/api/endpoints", endpoint)
-		require.Equal(t, http.StatusOK, code)
-	}
-	code, _, _ := call(t, server, admin, http.MethodPost, "/api/fallbacks",
-		config.Fallback{Enabled: true, Endpoints: []string{"HOST 1", "HOST 2"}})
-	require.Equal(t, http.StatusOK, code)
-	code, body, _ := call(t, server, admin, http.MethodPost, "/api/filters", config.Filter{
-		Directive: "DOMAIN", Target: "HOST 1", Enabled: true, Params: []string{"a.test"}})
-	require.Equal(t, http.StatusOK, code)
-	require.Equal(t, "Filter 1", body["id"])
-	key := body["key"].(string)
-	server.synchronize()
-	server.tracker.Update(router.Connections{Items: []router.Connection{{ID: "1", Upload: 10,
-		Download: 20, Chains: []string{"HOST 1"}}}, Upload: 10, Download: 20}, nil)
-	{
-		code, _, _ := call(t, server, admin, http.MethodPut, "/api/endpoints/HOST%201",
-			config.Endpoint{ID: " Uplink ", Enabled: true, Statistics: true})
-		require.Equal(t, http.StatusOK, code)
-		snapshot := server.store.Snapshot()
-		require.Equal(t, "Uplink", snapshot.Endpoints[0].ID)
-		require.Equal(t, []string{"Uplink", "HOST 2"}, snapshot.Fallbacks[0].Endpoints)
-		require.Equal(t, "Uplink", snapshot.Filters[0].Target)
-		traffic, _ := server.tracker.Snapshot()
-		require.Equal(t, int64(10), traffic["Uplink"].Upload)
-		require.NotContains(t, traffic, "HOST 1")
-		code, body, _ := call(t, server, admin, http.MethodPut, "/api/endpoints/Uplink",
-			config.Endpoint{ID: "HOST 2", Enabled: true})
-		require.Equal(t, http.StatusBadRequest, code)
-		require.Equal(t, "ID 'HOST 2' already exists", body["error"])
-		code, body, _ = call(t, server, admin, http.MethodPut, "/api/endpoints/Uplink",
-			config.Endpoint{ID: "Fallback 1", Enabled: true})
-		require.Equal(t, "ID 'Fallback 1' already exists", body["error"])
-		require.Equal(t, http.StatusBadRequest, code)
-	}
-	{
-		code, _, _ := call(t, server, admin, http.MethodPut, "/api/fallbacks/Fallback%201",
-			config.Fallback{ID: "Chain", Enabled: true, Endpoints: []string{"Uplink"}})
-		require.Equal(t, http.StatusOK, code)
-		code, body, _ := call(t, server, admin, http.MethodPut, "/api/fallbacks/Chain",
-			config.Fallback{ID: "Uplink", Enabled: true, Endpoints: []string{"Uplink"}})
-		require.Equal(t, http.StatusBadRequest, code)
-		require.Equal(t, "ID 'Uplink' already exists", body["error"])
-		code, _, _ = call(t, server, admin, http.MethodPut, "/api/filters/"+key, config.Filter{
-			ID: "Work", Directive: "DOMAIN", Target: "Chain", Enabled: true,
-			Params: []string{"a.test"}})
-		require.Equal(t, http.StatusOK, code)
-		code, body, _ = call(t, server, admin, http.MethodPost, "/api/filters", config.Filter{
-			ID: "Work", Directive: "DOMAIN", Target: "Chain", Params: []string{"b.test"}})
-		require.Equal(t, http.StatusBadRequest, code)
-		require.Equal(t, "filter ID 'Work' already exists", body["error"])
-		snapshot := server.store.Snapshot()
-		require.Equal(t, "Chain", snapshot.Fallbacks[0].ID)
-		require.Equal(t, "Work", snapshot.Filters[0].ID)
-		require.Equal(t, "Chain", snapshot.Filters[0].Target)
-	}
-}
-
-func TestServer_Routes(t *testing.T) {
-	server := makeServer(t)
-	admin := login(t, server, "admin", "secret123")
-	code, _, _ := call(t, server, admin, http.MethodPost, "/api/endpoints", config.Endpoint{
-		Type: config.TypeAmneziaWG, Enabled: true, AmneziaWG: &config.AmneziaWGOptions{
-			Config: sampleTunnel + "AllowedIPs = 10.55.0.0/16\n"}})
-	require.Equal(t, http.StatusOK, code)
-	require.NoError(t, server.store.Update(func(config *config.Config) error {
-		_, err := config.SetRoutes("AmneziaWG 1", []string{"10.55.0.0/16"})
-		return err
-	}))
-	snapshot := server.store.Snapshot()
-	require.Len(t, snapshot.Filters, 1)
-	require.Equal(t, "AmneziaWG 1", snapshot.Filters[0].Provided)
-	require.False(t, snapshot.Filters[0].Enabled)
-	key := url.PathEscape(snapshot.Filters[0].Key)
-	{
-		code, _, _ := call(t, server, admin, http.MethodPut, "/api/filters/"+key,
-			config.Filter{Enabled: true, Directive: "DOMAIN", Params: []string{"ignored.test"}})
-		require.Equal(t, http.StatusOK, code)
-		snapshot := server.store.Snapshot()
-		require.True(t, snapshot.Filters[0].Enabled)
-		require.Equal(t, []string{"10.55.0.0/16"}, snapshot.Filters[0].Params)
-		code, body, _ := call(t, server, admin, http.MethodDelete, "/api/filters/"+key, nil)
-		require.Equal(t, http.StatusBadRequest, code)
-		require.Equal(t, "provided filter is read-only", body["error"])
+		require.Len(t, snapshot.Routes, 2)
 	}
 }
 

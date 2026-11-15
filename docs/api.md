@@ -1,11 +1,11 @@
 # HTTP API
 
 The web UI talks to Proximity through a small JSON API on the same port (8899). You can
-use it for scripting: provisioning endpoints, toggling filters, exporting backups.
+use it for scripting: provisioning outbounds, toggling routes, exporting backups.
 
 - [Conventions](#conventions)
 - [Authentication](#authentication)
-- [Endpoints reference](#endpoints-reference)
+- [API endpoints reference](#api-endpoints-reference)
 - [Examples](#examples)
 
 ## Conventions
@@ -34,7 +34,11 @@ Access levels:
 
 A request below the required level gets `401` (not signed in) or `403` (role too low).
 
-## Endpoints reference
+## API endpoints reference
+
+> [!NOTE]
+> Earlier releases called the resources `endpoints` and `filters`. Configuration
+> files and backups with these keys are still read and converted on load.
 
 ### Session and accounts
 
@@ -54,28 +58,28 @@ A request below the required level gets `401` (not signed in) or `403` (role too
 
 | Method and path | Level | Description |
 |---|---|---|
-| `GET /api/dashboard` | 0* | Counts, totals, router state, endpoints with status and traffic, fallbacks, unreachable routes, warnings |
-| `GET /api/history?since=<unix>` | 0* | Throughput samples newer than `since` (5 s step, up to 1 hour) |
+| `GET /api/dashboard` | 0* | Counts, totals, router state, outbounds with status and traffic, fallbacks, unreachable routes, warnings |
+| `GET /api/history?since=<unix>` | 0* | Throughput and connection count samples newer than `since` (5 s step, up to 1 hour) |
 | `DELETE /api/refused` | 2 | Clear the unreachable routes list |
 
 \* Level 0 only when *Anonymous users can view the dashboard* is on; otherwise 1.
 
-### Endpoints
+### Outbounds
 
 | Method and path | Level | Description |
 |---|---|---|
-| `GET /api/endpoints` | 1 | List with status and traffic (secrets removed for level 1) |
-| `POST /api/endpoints` | 2 | Add an endpoint |
-| `PUT /api/endpoints/{id}` | 2 | Replace an endpoint (rename by changing `id`) |
-| `DELETE /api/endpoints/{id}` | 2 | Delete |
-| `POST /api/endpoints/{id}/move` | 2 | `{delta: -1 \| 1}` — move up or down |
-| `POST /api/endpoints/{id}/restart` | 2 | Reconnect |
-| `GET /api/endpoints/{id}/log` | 2 | Connection log (last 300 lines) |
+| `GET /api/outbounds` | 1 | List with status and traffic (secrets removed for level 1) |
+| `POST /api/outbounds` | 2 | Add an outbound |
+| `PUT /api/outbounds/{id}` | 2 | Replace an outbound (rename by changing `id`) |
+| `DELETE /api/outbounds/{id}` | 2 | Delete |
+| `POST /api/outbounds/{id}/move` | 2 | `{delta: -1 \| 1}` — move up or down |
+| `POST /api/outbounds/{id}/restart` | 2 | Reconnect |
+| `GET /api/outbounds/{id}/log` | 2 | Connection log (last 300 lines) |
 | `POST /api/import/amneziawg` | 2 | `{text: "vpn://…"}` → `{config: "<.conf text>"}` |
-| `GET /api/interfaces` | 1 | Host network interfaces (for HOST endpoints) |
-| `GET /api/targets` | 1 | Endpoints and fallbacks usable as filter targets |
+| `GET /api/interfaces` | 1 | Host network interfaces (for HOST outbounds) |
+| `GET /api/targets` | 1 | Outbounds and fallbacks usable as route targets |
 
-Endpoint object (fields depend on `type`):
+Outbound object (fields depend on `type`):
 
 ```json
 {
@@ -107,22 +111,22 @@ reconnect_attempts, target}`.
 | Method and path | Level | Description |
 |---|---|---|
 | `GET /api/fallbacks` | 1 | List |
-| `POST /api/fallbacks` | 2 | `{id, enabled, endpoints: [...], health_check, url, interval}` |
+| `POST /api/fallbacks` | 2 | `{id, enabled, outbounds: [...], health_check, url, interval}` |
 | `PUT /api/fallbacks/{id}` | 2 | Replace |
 | `DELETE /api/fallbacks/{id}` | 2 | Delete |
 | `POST /api/fallbacks/{id}/move` | 2 | `{delta}` |
 
-### Filters
+### Routes
 
 | Method and path | Level | Description |
 |---|---|---|
-| `GET /api/filters` | 1 | `{filters, directives, default_target, warnings, failure}` |
-| `POST /api/filters` | 2 | `{id, directive, target, params: [...], enabled}` |
-| `POST /api/filters/preview` | 1 | Same body → `{params, lines}` (normalized parameters and mihomo rules) or an error with the line number |
-| `PUT /api/filters/default` | 2 | `{target}` — target for everything else |
-| `PUT /api/filters/{key}` | 2 | Replace (filters are addressed by their internal `key`) |
-| `DELETE /api/filters/{key}` | 2 | Delete |
-| `POST /api/filters/{key}/move` | 2 | `{delta}` |
+| `GET /api/routes` | 1 | `{routes, directives, default_target, warnings, failure}` |
+| `POST /api/routes` | 2 | `{id, directive, target, params: [...], enabled}` |
+| `POST /api/routes/preview` | 1 | Same body → `{params, lines}` (normalized parameters and mihomo rules) or an error with the line number |
+| `PUT /api/routes/default` | 2 | `{target}` — target for everything else |
+| `PUT /api/routes/{key}` | 2 | Replace (routes are addressed by their internal `key`) |
+| `DELETE /api/routes/{key}` | 2 | Delete |
+| `POST /api/routes/{key}/move` | 2 | `{delta}` |
 | `GET /api/router/config` | 2 | `{config}` — current mihomo configuration |
 
 ### Settings and backup
@@ -154,16 +158,16 @@ H='X-Requested-With: cli'
 # sign in and keep the cookie
 curl -s -c jar -H "$H" -d '{"username":"admin","password":"…"}' $P/api/login
 
-# list endpoints with their state
-curl -s -b jar $P/api/endpoints | jq -r '.endpoints[] | "\(.id)\t\(.status.state)"'
+# list outbounds with their state
+curl -s -b jar $P/api/outbounds | jq -r '.outbounds[] | "\(.id)\t\(.status.state)"'
 
-# add a SOCKS5 endpoint
-curl -s -b jar -H "$H" -X POST $P/api/endpoints -d '{
+# add a SOCKS5 outbound
+curl -s -b jar -H "$H" -X POST $P/api/outbounds -d '{
   "id": "SOCKS5 3", "type": "socks5", "enabled": true, "statistics": true,
   "socks5": {"server": "10.0.0.5", "port": 1080, "udp": true}}'
 
-# check how a filter will be normalized
-curl -s -b jar -H "$H" $P/api/filters/preview -d '{
+# check how a route will be normalized
+curl -s -b jar -H "$H" $P/api/routes/preview -d '{
   "directive": "IP-CIDR", "target": "DIRECT", "params": ["1.2.3.4:443", "2001:db8::1"]}'
 # {"lines":["AND,((IP-CIDR,1.2.3.4/32),(DST-PORT,443)),DIRECT","IP-CIDR6,2001:db8::1/128,DIRECT"],
 #  "params":["1.2.3.4/32:443","2001:db8::1/128"]}

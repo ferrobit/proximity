@@ -350,6 +350,6 @@ func (tools Tools) cleanup() error {
 	return nil
 }
 
-func (tools Tools) loosenFilter(device string) {
+func (tools Tools) loosenRoute(device string) {
 	_ = os.WriteFile("/proc/sys/net/ipv4/conf/"+device+"/rp_filter", []byte("2"), 0o644)
 }

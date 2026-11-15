@@ -62,23 +62,23 @@ const amneziaSockets = "/var/run/amneziawg"
 var amneziaPattern = regexp.MustCompile(`^(DEBUG: )?\(\S+\) \d{4}/\d\d/\d\d \d\d:\d\d:\d\d `)
 
 func makeDriver(runner *runner) driver {
-	endpoint, tools := runner.endpoint, runner.manager.options.Tools
-	slot := strconv.Itoa(endpoint.Slot)
-	switch endpoint.Type {
+	outbound, tools := runner.outbound, runner.manager.options.Tools
+	slot := strconv.Itoa(outbound.Slot)
+	switch outbound.Type {
 	case config.TypeHost:
-		return &hostDriver{runner: runner, tools: tools, options: *endpoint.Host,
-			table: Table(endpoint.Slot)}
+		return &hostDriver{runner: runner, tools: tools, options: *outbound.Host,
+			table: Table(outbound.Slot)}
 	case config.TypeSocks5:
 		return &proxyDriver{bypass: runner.bypass, target: net.JoinHostPort(
-			endpoint.Socks5.Server, strconv.Itoa(endpoint.Socks5.Port))}
+			outbound.Socks5.Server, strconv.Itoa(outbound.Socks5.Port))}
 	case config.TypeHTTP:
-		return &proxyDriver{bypass: runner.bypass, target: net.JoinHostPort(endpoint.HTTP.Server,
-			strconv.Itoa(endpoint.HTTP.Port))}
+		return &proxyDriver{bypass: runner.bypass, target: net.JoinHostPort(outbound.HTTP.Server,
+			strconv.Itoa(outbound.HTTP.Port))}
 	case config.TypeOpenVPN:
 		return makeOpenVPNDriver(runner)
 	default:
-		return &amneziaDriver{runner: runner, tools: tools, options: *endpoint.AmneziaWG,
-			target: endpoint.Monitoring.Target, table: Table(endpoint.Slot),
+		return &amneziaDriver{runner: runner, tools: tools, options: *outbound.AmneziaWG,
+			target: outbound.Monitoring.Target, table: Table(outbound.Slot),
 			directory: filepath.Join(runner.manager.options.Directory, "amneziawg-"+slot),
 			device:    devicePrefix + "a" + slot}
 	}
@@ -261,7 +261,7 @@ func (driver *amneziaDriver) install(ctx context.Context, path string) error {
 		"up"); err != nil {
 		return fmt.Errorf("failed to enable device '%v': %w", driver.device, err)
 	}
-	driver.tools.loosenFilter(driver.device)
+	driver.tools.loosenRoute(driver.device)
 	driver.tools.sourceRules(driver.table, driver.parsed.Addresses())
 	for family := range families {
 		if _, err := driver.tools.ip(family, "route", "replace", "default", "dev", driver.device,

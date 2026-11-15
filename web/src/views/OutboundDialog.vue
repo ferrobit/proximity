@@ -8,8 +8,8 @@
           <a-row :gutter="16">
             <a-col :span="12">
               <a-form-item label="ID" name="id" :rules="[{ pattern: idPattern, message: 'Letters, digits, space, _ . - (up to 48)' }]"
-                :extra="endpoint ? 'Unique among endpoints and fallbacks; references are updated on rename' : 'Unique, allocated automatically when empty'">
-                <a-input v-model:value="form.id" :placeholder="endpoint ? endpoint.id : `${shortLabels[kind]} N`" />
+                :extra="outbound ? 'Unique among outbounds and fallbacks; references are updated on rename' : 'Unique, allocated automatically when empty'">
+                <a-input v-model:value="form.id" :placeholder="outbound ? outbound.id : `${shortLabels[kind]} N`" />
               </a-form-item>
             </a-col>
             <a-col :span="12">
@@ -51,7 +51,7 @@
             <a-row :gutter="16">
               <a-col :span="12">
                 <a-form-item label="Connection attempts" :name="['host', 'attempts']" :rules="range(1, 100)"
-                  extra="Failed attempts in a row before the endpoint falls to the failed state">
+                  extra="Failed attempts in a row before the outbound falls to the failed state">
                   <a-input-number v-model:value="form.host.attempts" style="width: 100%" />
                 </a-form-item>
               </a-col>
@@ -113,7 +113,7 @@
                 </a-form-item>
               </a-col>
               <a-col :span="12"><a-form-item label="Private key password (optional)"><a-input-password v-model:value="form.openvpn.key_password" autocomplete="new-password" /></a-form-item></a-col>
-              <a-col :span="12"><a-form-item label="Use DNS servers pushed by VPN" extra="For domains routed to this endpoint"><a-switch v-model:checked="form.openvpn.use_dns" /></a-form-item></a-col>
+              <a-col :span="12"><a-form-item label="Use DNS servers pushed by VPN" extra="For domains routed to this outbound"><a-switch v-model:checked="form.openvpn.use_dns" /></a-form-item></a-col>
             </a-row>
           </template>
           <template v-else>
@@ -129,7 +129,7 @@
               </a-space>
               <a-textarea v-model:value="form.amneziawg.config" class="mono" :rows="12" placeholder="[Interface]&#10;PrivateKey = …&#10;Address = 10.8.1.2/32&#10;Jc = 4&#10;…&#10;[Peer]&#10;PublicKey = …&#10;Endpoint = host:port&#10;AllowedIPs = 0.0.0.0/0" spellcheck="false" />
             </a-form-item>
-            <a-form-item label="Use DNS servers from configuration" extra="For domains routed to this endpoint"><a-switch v-model:checked="form.amneziawg.use_dns" /></a-form-item>
+            <a-form-item label="Use DNS servers from configuration" extra="For domains routed to this outbound"><a-switch v-model:checked="form.amneziawg.use_dns" /></a-form-item>
           </template>
         </a-tab-pane>
         <a-tab-pane v-if="tunnel" key="monitoring" force-render>
@@ -167,7 +167,7 @@ import { typeLabels } from '../format'
 
 const props = defineProps({
   open: Boolean,
-  endpoint: { type: Object, default: null },
+  outbound: { type: Object, default: null },
   kind: { type: String, default: 'host' },
   groups: { type: Array, default: () => [] }
 })
@@ -193,7 +193,7 @@ const interfaces = ref([])
 const form = reactive({})
 
 const tunnel = computed(() => props.kind === 'openvpn' || props.kind === 'amneziawg')
-const title = computed(() => props.endpoint ? `Edit endpoint '${props.endpoint.id}'` : `Add ${typeLabels[props.kind]} endpoint`)
+const title = computed(() => props.outbound ? `Edit outbound '${props.outbound.id}'` : `Add ${typeLabels[props.kind]} outbound`)
 const interfaceOptions = computed(() => interfaces.value.map((item) => ({
   value: item.name,
   label: `${item.name} (${item.state}${item.addresses.length ? `, ${item.addresses.join(', ')}` : ''})`
@@ -215,7 +215,7 @@ watch(() => props.open, async (opened) => {
   if (!opened) return
   tab.value = 'general'
   const initial = defaults(props.kind)
-  const source = props.endpoint ? JSON.parse(JSON.stringify(props.endpoint)) : {}
+  const source = props.outbound ? JSON.parse(JSON.stringify(props.outbound)) : {}
   for (const key of Object.keys(initial)) {
     const value = source[key]
     form[key] = value && typeof value === 'object' ? { ...initial[key], ...value } : value !== undefined ? value : initial[key]
@@ -302,12 +302,12 @@ async function save() {
   }
   busy.value = true
   try {
-    if (props.endpoint) {
-      await api.put(`/api/endpoints/${id(props.endpoint.id)}`, body)
+    if (props.outbound) {
+      await api.put(`/api/outbounds/${id(props.outbound.id)}`, body)
     } else {
-      await api.post('/api/endpoints', body)
+      await api.post('/api/outbounds', body)
     }
-    message.success('Endpoint saved')
+    message.success('Outbound saved')
     emit('update:open', false)
     emit('saved')
   } catch (error) {

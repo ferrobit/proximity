@@ -6,7 +6,7 @@ meant for people who want to understand, debug or extend the project.
 - [Components](#components)
 - [Container image](#container-image)
 - [Control loop](#control-loop)
-- [Endpoints and mihomo](#endpoints-and-mihomo)
+- [Outbounds and mihomo](#outbounds-and-mihomo)
 - [Routing tables and marks](#routing-tables-and-marks)
 - [Transparent capture](#transparent-capture)
 - [DNS](#dns)
@@ -26,9 +26,9 @@ flowchart TB
     subgraph Proximity["proximity (single Go binary, web UI embedded)"]
         Server["server<br/>HTTP API, sessions, roles"]
         Config["config<br/>model, validation, JSON store, backup"]
-        Rules["rules<br/>parse, normalize, check filters"]
+        Rules["rules<br/>parse, normalize, check routes"]
         Router["router<br/>config generator, mihomo process, tracker"]
-        Link["link<br/>endpoint drivers, monitoring, routing, capture"]
+        Link["link<br/>outbound drivers, monitoring, routing, capture"]
         Auth["auth<br/>PBKDF2 passwords, tokens"]
         Wg["wgconf<br/>WireGuard / AmneziaWG config, vpn:// import"]
     end
@@ -46,9 +46,9 @@ flowchart TB
 | `cmd/proximity` | Entry point: flags and environment, `health` and `hook` subcommands |
 | `internal/server` | HTTP API, cookie sessions, role checks, control loop that ties everything together |
 | `internal/config` | Data model, validation, cascading renames, JSON store with atomic writes, backup export/import |
-| `internal/rules` | Filter parsing, normalization, comments, overlap and duplicate checks |
+| `internal/rules` | Route parsing, normalization, comments, overlap and duplicate checks |
 | `internal/router` | Generation of mihomo configuration, mihomo process and API client, traffic tracker and history |
-| `internal/link` | Endpoint drivers (HOST, proxy, OpenVPN, AmneziaWG), monitoring, routing tables, transparent capture |
+| `internal/link` | Outbound drivers (HOST, proxy, OpenVPN, AmneziaWG), monitoring, routing tables, transparent capture |
 | `internal/auth` | Password hashing (PBKDF2-SHA256, 600 000 iterations), signed session tokens, bootstrap admin |
 | `internal/wgconf` | Parsing WireGuard/AmneziaWG configuration, Amnezia `vpn://` import |
 | `web` | Vue 3 single-page app, built by Vite and embedded with `go:embed` |
@@ -78,20 +78,20 @@ it:
 
 1. Any change through the API is validated and saved to `proximity.json`.
 2. The store notifies the server, which **synchronizes**:
-   - endpoint drivers are started, restarted (only when their settings changed) or stopped;
-   - routes reported by VPNs are saved as *provided* filters;
-   - a new mihomo configuration is generated from endpoints, fallbacks, filters and the
-     current endpoint states;
+   - outbound drivers are started, restarted (only when their settings changed) or stopped;
+   - routes reported by VPNs are saved as *provided* routes;
+   - a new mihomo configuration is generated from outbounds, fallbacks, routes and the
+     current outbound states;
    - the configuration is checked with `mihomo -t` and applied through mihomo's unix
      socket API without restarting the process.
 3. Every 500 ms the server polls mihomo `/connections` to update traffic counters and
    re-checks transparent capture. Every 30 s the counters are saved to `state.json`.
-4. Endpoint state changes (e.g. a tunnel goes up or down) trigger step 2 again, so
-   fallbacks always contain the endpoints that currently work.
+4. Outbound state changes (e.g. a tunnel goes up or down) trigger step 2 again, so
+   fallbacks always contain the outbounds that currently work.
 
-## Endpoints and mihomo
+## Outbounds and mihomo
 
-| Endpoint | mihomo proxy | Notes |
+| Outbound | mihomo proxy | Notes |
 |---|---|---|
 | HOST, default routing | `direct` | |
 | HOST, interface | `direct` + `interface-name` | |
@@ -108,10 +108,10 @@ Fallbacks become `proxy-groups`:
 | *Enable health check* off | `select` with the members that Proximity currently sees as `up`, in order |
 | *Enable health check* on | `fallback` with all members; mihomo requests the URL through each of them every *interval* seconds |
 
-A fallback with no enabled members is skipped with a warning; filters that target it are
+A fallback with no enabled members is skipped with a warning; routes that target it are
 skipped too.
 
-The generated configuration can be viewed in **Filters → Router configuration**.
+The generated configuration can be viewed in **Routes → Router configuration**.
 
 ![Generated router configuration](images/router-config.png)
 
@@ -119,7 +119,7 @@ The generated configuration can be viewed in **Filters → Router configuration*
 
 Proximity never touches the main routing table. Each tunnel (and HOST with a gateway) gets
 its own table, numbered `51000 + slot`, where *slot* is a stable number assigned when the
-endpoint is created (renaming does not change it):
+outbound is created (renaming does not change it):
 
 ```text
 $ ip rule show
@@ -135,7 +135,7 @@ blackhole default metric 4294967295             # stays when the tunnel is down 
 172.16.40.0/24 via 10.8.0.1 dev proximity_o5
 ```
 
-mihomo sets `routing-mark = 51000 + slot` on connections that go to a tunnel endpoint, so
+mihomo sets `routing-mark = 51000 + slot` on connections that go to a tunnel outbound, so
 the kernel looks them up in the tunnel's table. If the tunnel is down, only the
 `blackhole` route is left and the connection fails instead of escaping through the ISP.
 
@@ -174,7 +174,7 @@ addresses.
 | Situation | mihomo DNS configuration |
 |---|---|
 | Transparent capture | `enhanced-mode: fake-ip`, range `198.18.0.1/16`, `dns-hijack: any:53`, nameserver `system` |
-| VPN with *Use DNS servers…* enabled | `nameserver-policy` sends the filter's domains (and domains pushed by the VPN) to the tunnel's DNS servers, through the tunnel |
+| VPN with *Use DNS servers…* enabled | `nameserver-policy` sends the route's domains (and domains pushed by the VPN) to the tunnel's DNS servers, through the tunnel |
 | Otherwise | mihomo resolves through the system resolver of the container |
 
 With fake-IP the application receives a placeholder address immediately; the real name is
@@ -185,14 +185,14 @@ by the system resolver for DIRECT/HOST.
 
 | State | Meaning |
 |---|---|
-| `disabled` | Endpoint is switched off |
+| `disabled` | Outbound is switched off |
 | `connecting` | Starting (tunnel process launched, waiting for it) |
 | `up` (*good* in the UI) | Working; checks pass |
 | `reconnecting` | Checks failed; restarting after the configured delay |
 | `down` | Proxy server is not reachable; checks continue and it comes back to `up` by itself |
 | `failed` | All attempts exhausted; see the message and the connection log |
 
-| Endpoint | How it is checked |
+| Outbound | How it is checked |
 |---|---|
 | HOST | TCP connection to *Probe target* (Settings, default `1.1.1.1:443`) through the same path mihomo uses; after *Connection attempts* failures → `failed`, but checks continue and it returns to `up` |
 | SOCKS5 / HTTP | TCP connection to the proxy server |
@@ -201,7 +201,7 @@ by the system resolver for DIRECT/HOST.
 
 Proxy and HOST checks run every *Check interval* when **Enable connectivity checks** is on.
 Tunnel monitoring (interval, timeout, retries, reconnect delay and attempts) is set per
-endpoint on its **Monitoring** tab.
+outbound on its **Monitoring** tab.
 
 ## OpenVPN driver
 
@@ -211,14 +211,14 @@ endpoint on its **Monitoring** tab.
   kept.
 - `openvpn` is started inside a pseudo-terminal with `--dev proximity_o<slot>`,
   `--route-noexec` and `proximity hook` as the `up` / `route-up` script.
-- Prompts are answered from the endpoint settings: user name, password, private key
+- Prompts are answered from the outbound settings: user name, password, private key
   password and the one-time code. The code is generated with `oathtool --totp -b` from the
   base32 *OTP key*, and either typed into the `CHALLENGE` prompt or appended to the
   password (*OTP code usage*).
 - The hook reports the interface address, gateway, pushed DNS servers, domains and routes.
   Routes are not installed into the main table; they are stored in the tunnel's table and
-  shown as the *provided* filter.
-- `AUTH_FAILED` without an OTP key stops the endpoint as `failed` at once, without
+  shown as the *provided* route.
+- `AUTH_FAILED` without an OTP key stops the outbound as `failed` at once, without
   retrying, to avoid locking the account. With an OTP key the next attempt uses a fresh
   code.
 
@@ -237,13 +237,14 @@ endpoint on its **Monitoring** tab.
 ## Statistics and unreachable routes
 
 - `router.Tracker` reads mihomo `/connections` every 500 ms and attributes bytes to the
-  endpoint at the end of each connection's chain (fallback members included).
-- Every 5 s a sample (`total` + per endpoint upload/download rates) is added to an
-  in-memory history of 720 samples (1 hour). The Dashboard chart requests only new
+  outbound at the end of each connection's chain (fallback members included).
+- Every 5 s a sample (`total` + per outbound upload/download rates + number of active
+  connections) is added to an in-memory history of 720 samples (1 hour). The Dashboard
+  throughput and connections charts request only new
   samples (`/api/history?since=…`). History is not persisted; totals are.
 - mihomo's log stream (`/logs?level=info`) is parsed for dial errors. Each error is
   classified (`refused`, `timeout`, `no route`, `unreachable`, `dns`, …) and stored with the
-  destination, endpoint, matched rule, count and first/last time.
+  destination, outbound, matched rule, count and first/last time.
 
 ## Storage
 
@@ -251,7 +252,7 @@ All persistent data lives in the settings folder mounted as `/config`:
 
 | File | Written | Contents |
 |---|---|---|
-| `proximity.json` | on every change (atomic replace) | users, endpoints, fallbacks, filters, settings, token secret |
+| `proximity.json` | on every change (atomic replace) | users, outbounds, fallbacks, routes, settings, token secret |
 | `state.json` | every 30 s and on shutdown | traffic totals, unreachable routes |
 | `mihomo/config.yaml` | on every synchronization | generated mihomo configuration |
 | `mihomo/geoip.metadb`, `geosite.dat` | first start | GeoIP / GeoSite databases |
@@ -265,7 +266,7 @@ Runtime files (unix socket, generated tunnel configs, hook output) are in `/run/
   Changing a user's password invalidates all existing sessions of that user.
 - Every non-GET request must carry the `X-Requested-With` header (CSRF protection).
 - Failed sign-ins are delayed by 0.7 s.
-- Users with the *User* role receive endpoints with passwords and keys removed.
+- Users with the *User* role receive outbounds with passwords and keys removed.
 - Secrets in `proximity.json` and in backups are stored in plain text — protect the folder
   and backup files.
 
@@ -278,5 +279,5 @@ Runtime files (unix socket, generated tunnel configs, hook output) are in `/run/
 | Capture TUN device | `proximity_tun` |
 | OpenVPN device | `proximity_o<slot>` |
 | AmneziaWG device | `proximity_a<slot>` |
-| Routing tables | `51000` (capture), `51000 + slot` (endpoints) |
-| `ip rule` priorities | `5100` (endpoints), `5150`–`5170` (capture) |
+| Routing tables | `51000` (capture), `51000 + slot` (outbounds) |
+| `ip rule` priorities | `5100` (outbounds), `5150`–`5170` (capture) |

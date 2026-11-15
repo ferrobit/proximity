@@ -10,42 +10,40 @@
         </template>
       </a-alert>
       <a-row :gutter="[16, 16]">
-        <a-col :xs="12" :md="8" :xl="4">
-          <a-card size="small" class="stat-card"><a-statistic title="Endpoints" :value="overview.counts.endpoints_up" :suffix="`/ ${overview.counts.endpoints}`">
-            <template #prefix><ApiOutlined /></template></a-statistic>
-            <div class="muted">{{ overview.counts.endpoints_enabled }} enabled</div></a-card>
+        <a-col :xs="12" :md="8" class="stat-col">
+          <a-card size="small" class="stat-card"><a-statistic title="Outbounds" :value="overview.counts.outbounds_up" :suffix="`/ ${overview.counts.outbounds}`">
+            <template #prefix><ExportOutlined /></template></a-statistic>
+            <div class="muted">{{ overview.counts.outbounds_enabled }} enabled</div></a-card>
         </a-col>
-        <a-col :xs="12" :md="8" :xl="4">
-          <a-card size="small" class="stat-card"><a-statistic title="Fallbacks" :value="overview.counts.fallbacks">
-            <template #prefix><BranchesOutlined /></template></a-statistic>
-            <div class="muted">proxy groups</div></a-card>
-        </a-col>
-        <a-col :xs="12" :md="8" :xl="4">
-          <a-card size="small" class="stat-card"><a-statistic title="Filters" :value="overview.counts.filters">
-            <template #prefix><FilterOutlined /></template></a-statistic>
+        <a-col :xs="12" :md="8" class="stat-col">
+          <a-card size="small" class="stat-card"><a-statistic title="Routes" :value="overview.counts.routes">
+            <template #prefix><SwapOutlined /></template></a-statistic>
             <div class="muted">{{ overview.counts.rules }} active rules</div></a-card>
         </a-col>
-        <a-col :xs="12" :md="8" :xl="4">
+        <a-col :xs="12" :md="8" class="stat-col">
           <a-card size="small" class="stat-card"><a-statistic title="Uploaded" :value="bytes(overview.total.upload)">
             <template #prefix><ArrowUpOutlined /></template></a-statistic>
             <div class="muted">{{ rate(overview.total.upload_rate) }}</div></a-card>
         </a-col>
-        <a-col :xs="12" :md="8" :xl="4">
+        <a-col :xs="12" :md="8" class="stat-col">
           <a-card size="small" class="stat-card"><a-statistic title="Downloaded" :value="bytes(overview.total.download)">
             <template #prefix><ArrowDownOutlined /></template></a-statistic>
             <div class="muted">{{ rate(overview.total.download_rate) }}</div></a-card>
         </a-col>
-        <a-col :xs="12" :md="8" :xl="4">
+        <a-col :xs="12" :md="8" class="stat-col">
           <a-card size="small" class="stat-card"><a-statistic title="Router" :value="overview.router.running ? 'running' : 'stopped'"
             :value-style="{ color: overview.router.running ? '#3f8600' : '#cf1322' }">
             <template #prefix><DeploymentUnitOutlined /></template></a-statistic>
             <div class="muted">up {{ duration(overview.uptime) }}</div></a-card>
         </a-col>
       </a-row>
-      <TrafficChart :overview="overview" />
+      <div class="charts">
+        <TrafficChart v-model:range="range" class="chart-main" :overview="overview" :samples="history.samples.value" :step="history.step.value" />
+        <ConnectionsChart class="chart-side" :samples="history.samples.value" :step="history.step.value" :range="range" />
+      </div>
       <a-card size="small">
-        <template #title><ApiOutlined /> Endpoints</template>
-        <a-table :columns="endpointColumns" :data-source="overview.endpoints" row-key="id" size="small" :pagination="false" :scroll="{ x: 900 }">
+        <template #title><ExportOutlined /> Outbounds</template>
+        <a-table :columns="outboundColumns" :data-source="overview.outbounds" row-key="id" size="small" :pagination="false" :scroll="{ x: 900 }">
           <template #bodyCell="{ column, record }">
             <template v-if="column.key === 'id'">
               <b>{{ record.id }}</b>
@@ -86,18 +84,6 @@
           </template>
         </a-table>
       </a-card>
-      <a-card size="small" v-if="overview.fallbacks.length">
-        <template #title><BranchesOutlined /> Fallbacks</template>
-        <div v-for="fallback in overview.fallbacks" :key="fallback.id" class="chain" style="margin-bottom: 8px">
-          <b style="min-width: 140px">{{ fallback.id }}</b>
-          <a-tag v-if="!fallback.enabled">disabled</a-tag>
-          <template v-for="(member, index) in fallback.endpoints" :key="member">
-            <RightOutlined v-if="index" class="muted" />
-            <a-tag :color="memberColor(member)">{{ member }}</a-tag>
-          </template>
-          <span v-if="!fallback.endpoints.length" class="muted">no endpoints</span>
-        </div>
-      </a-card>
       <a-card size="small" v-if="session.level > 0">
         <template #title><StopOutlined /> Unreachable routes</template>
         <template #extra>
@@ -120,21 +106,26 @@
 </template>
 
 <script setup>
+import { ref } from 'vue'
 import { message } from 'ant-design-vue'
 import {
-  ApiOutlined, ArrowDownOutlined, ArrowUpOutlined, BranchesOutlined, ClearOutlined, DashboardOutlined,
-  DeploymentUnitOutlined, FilterOutlined, RightOutlined, StopOutlined
+  ArrowDownOutlined, ArrowUpOutlined, ClearOutlined, DashboardOutlined, DeploymentUnitOutlined, ExportOutlined,
+  StopOutlined, SwapOutlined
 } from '@ant-design/icons-vue'
 import { api, canEdit, session } from '../api'
 import { ago, bytes, duration, rate, reasonColors, typeColors, typeLabels, usageColors } from '../format'
 import StateTag from '../components/StateTag.vue'
 import TrafficChart from '../components/TrafficChart.vue'
+import ConnectionsChart from '../components/ConnectionsChart.vue'
+import { useHistory } from '../components/history'
 
 const props = defineProps({ overview: { type: Object, default: null } })
 const emit = defineEmits(['refresh'])
+const range = ref(900)
+const history = useHistory(() => props.overview)
 
-const endpointColumns = [
-  { title: 'Endpoint', key: 'id' },
+const outboundColumns = [
+  { title: 'Outbound', key: 'id' },
   { title: 'Type', key: 'type' },
   { title: 'Group', dataIndex: 'group' },
   { title: 'Status', key: 'usage' },
@@ -154,12 +145,6 @@ const refusedColumns = [
   { title: 'Last seen', key: 'last' }
 ]
 
-function memberColor(member) {
-  const found = props.overview.endpoints.find((item) => item.id === member)
-  if (!found || !found.enabled) return 'default'
-  return found.status.state === 'up' ? 'green' : found.status.state === 'failed' || found.status.state === 'down' ? 'red' : 'orange'
-}
-
 async function clearRefused() {
   try {
     await api.remove('/api/refused')
@@ -169,3 +154,16 @@ async function clearRefused() {
   }
 }
 </script>
+
+<style scoped>
+.charts { display: flex; gap: 16px; align-items: stretch; }
+.chart-main { flex: 1 1 0; min-width: 0; }
+.chart-side { flex: 0 0 30%; min-width: 0; }
+@media (max-width: 991px) {
+  .charts { flex-direction: column; }
+  .chart-side { flex-basis: auto; }
+}
+@media (min-width: 1200px) {
+  .stat-col { flex: 0 0 20%; max-width: 20%; }
+}
+</style>

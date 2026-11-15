@@ -45,7 +45,7 @@ type Manager struct {
 
 type runner struct {
 	manager   *Manager
-	endpoint  config.Endpoint
+	outbound  config.Outbound
 	settings  config.Settings
 	signature string
 	bypass    int
@@ -107,26 +107,26 @@ func (failure *fatalError) Unwrap() error {
 	return failure.cause
 }
 
-func (manager *Manager) Apply(endpoints []config.Endpoint, settings config.Settings) {
+func (manager *Manager) Apply(outbounds []config.Outbound, settings config.Settings) {
 	manager.mutex.Lock()
 	defer manager.mutex.Unlock()
 	wanted, bypass := map[int]bool{}, 0
 	if manager.options.HostNetwork && settings.Capture {
 		bypass = CaptureMark
 	}
-	for _, endpoint := range endpoints {
-		signature := makeSignature(endpoint, settings, bypass)
-		wanted[endpoint.Slot] = endpoint.Enabled
-		if current, found := manager.runners[endpoint.Slot]; found && endpoint.Enabled &&
+	for _, outbound := range outbounds {
+		signature := makeSignature(outbound, settings, bypass)
+		wanted[outbound.Slot] = outbound.Enabled
+		if current, found := manager.runners[outbound.Slot]; found && outbound.Enabled &&
 			current.signature == signature {
-			current.rename(endpoint.ID)
+			current.rename(outbound.ID)
 			continue
 		} else if found {
 			current.close()
-			delete(manager.runners, endpoint.Slot)
+			delete(manager.runners, outbound.Slot)
 		}
-		if endpoint.Enabled {
-			manager.runners[endpoint.Slot] = manager.launch(endpoint, settings, signature, bypass)
+		if outbound.Enabled {
+			manager.runners[outbound.Slot] = manager.launch(outbound, settings, signature, bypass)
 		}
 	}
 	for slot, current := range manager.runners {
@@ -142,12 +142,12 @@ func (manager *Manager) Restart(id string) error {
 	defer manager.mutex.Unlock()
 	current := manager.find(id)
 	if current == nil {
-		return fmt.Errorf("endpoint '%v' is not running", id)
+		return fmt.Errorf("outbound '%v' is not running", id)
 	}
 	current.close()
-	endpoint := current.endpoint
-	endpoint.ID = id
-	manager.runners[endpoint.Slot] = manager.launch(endpoint, current.settings,
+	outbound := current.outbound
+	outbound.ID = id
+	manager.runners[outbound.Slot] = manager.launch(outbound, current.settings,
 		current.signature, current.bypass)
 	return nil
 }
@@ -168,7 +168,7 @@ func (manager *Manager) Counters() map[string][2]int64 {
 	result := map[string][2]int64{}
 	for _, current := range manager.runners {
 		status := current.snapshot()
-		if !current.endpoint.IsTunnel() || status.State != StateUp {
+		if !current.outbound.IsTunnel() || status.State != StateUp {
 			continue
 		}
 		upload, first := readCounter(status.Device, "tx_bytes")
@@ -210,36 +210,36 @@ func (manager *Manager) find(id string) *runner {
 	return nil
 }
 
-func (manager *Manager) launch(endpoint config.Endpoint, settings config.Settings,
+func (manager *Manager) launch(outbound config.Outbound, settings config.Settings,
 	signature string, bypass int) *runner {
 	ctx, cancel := context.WithCancel(context.Background())
-	result := &runner{manager: manager, endpoint: endpoint, settings: settings,
+	result := &runner{manager: manager, outbound: outbound, settings: settings,
 		signature: signature, bypass: bypass, cancel: cancel, done: make(chan struct{}),
-		id: endpoint.ID, status: Status{State: StateConnecting, Since: time.Now().Unix(),
+		id: outbound.ID, status: Status{State: StateConnecting, Since: time.Now().Unix(),
 			Latency: -1, DNS: []string{}, Domains: []string{}, Routes: []string{}}}
 	go result.run(ctx)
 	return result
 }
 
-func makeSignature(endpoint config.Endpoint, settings config.Settings, bypass int) string {
-	endpoint.ID, endpoint.Name, endpoint.Group, endpoint.Statistics = "", "", "", false
-	if endpoint.IsTunnel() && endpoint.Monitoring != nil && endpoint.Monitoring.Enabled {
+func makeSignature(outbound config.Outbound, settings config.Settings, bypass int) string {
+	outbound.ID, outbound.Name, outbound.Group, outbound.Statistics = "", "", "", false
+	if outbound.IsTunnel() && outbound.Monitoring != nil && outbound.Monitoring.Enabled {
 		settings = config.Settings{}
 	}
-	data, err := json.Marshal([]any{endpoint, settings.ProbeTarget, settings.CheckInterval,
+	data, err := json.Marshal([]any{outbound, settings.ProbeTarget, settings.CheckInterval,
 		settings.ConnectivityChecks, bypass})
 	if err != nil {
-		return strconv.Itoa(endpoint.Slot)
+		return strconv.Itoa(outbound.Slot)
 	}
 	return string(data)
 }
 
 func (runner *runner) policy() policy {
 	interval := time.Duration(runner.settings.CheckInterval) * time.Second
-	if monitoring := runner.endpoint.Monitoring; runner.endpoint.IsTunnel() {
+	if monitoring := runner.outbound.Monitoring; runner.outbound.IsTunnel() {
 		return policy{limit: monitoring.ReconnectAttempts + 1, exhausted: StateFailed,
 			delay: time.Duration(monitoring.ReconnectDelay) * time.Second, terminal: true}
-	} else if host := runner.endpoint.Host; host != nil {
+	} else if host := runner.outbound.Host; host != nil {
 		return policy{limit: host.Attempts, exhausted: StateFailed,
 			delay:  time.Duration(host.ReconnectTimeout) * time.Second,
 			verify: runner.settings.ConnectivityChecks}
@@ -299,7 +299,7 @@ func (runner *runner) run(ctx context.Context) {
 
 func (runner *runner) watch(ctx context.Context, driver driver, verified bool,
 	healthy func()) error {
-	monitoring := runner.endpoint.Monitoring
+	monitoring := runner.outbound.Monitoring
 	active := monitoring != nil && monitoring.Enabled
 	interval, timeout, retries := time.Duration(runner.settings.CheckInterval)*time.Second,
 		defaultCheckTimeout, 1

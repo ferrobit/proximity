@@ -18,7 +18,7 @@ const sampleOpenVPN = "client\ndev tun\nremote vpn.example.com 1194 udp\n"
 
 func makeSnapshot(t *testing.T) config.Config {
 	result := config.Default()
-	for _, endpoint := range []config.Endpoint{{Type: config.TypeHost, Enabled: true},
+	for _, outbound := range []config.Outbound{{Type: config.TypeHost, Enabled: true},
 		{Type: config.TypeHost, Enabled: true, Host: &config.HostOptions{
 			Mode: config.HostInterface, Interface: "eth1"}},
 		{Type: config.TypeHost, Enabled: true, Host: &config.HostOptions{
@@ -33,17 +33,17 @@ func makeSnapshot(t *testing.T) config.Config {
 			Config: sampleOpenVPN, UseDNS: true}},
 		{Type: config.TypeAmneziaWG, AmneziaWG: &config.AmneziaWGOptions{Config: sampleTunnel,
 			UseDNS: true}}} {
-		_, err := result.AddEndpoint(endpoint)
+		_, err := result.AddOutbound(outbound)
 		require.NoError(t, err)
 	}
 	for _, fallback := range []config.Fallback{
-		{Enabled: true, HealthCheck: true, Endpoints: []string{"SOCKS5 1", "HTTP 1", "AmneziaWG 1"}},
-		{Enabled: true, Endpoints: []string{"AmneziaWG 1"}},
-		{Endpoints: []string{"HOST 1"}}} {
+		{Enabled: true, HealthCheck: true, Outbounds: []string{"SOCKS5 1", "HTTP 1", "AmneziaWG 1"}},
+		{Enabled: true, Outbounds: []string{"AmneziaWG 1"}},
+		{Outbounds: []string{"HOST 1"}}} {
 		_, err := result.AddFallback(fallback)
 		require.NoError(t, err)
 	}
-	for _, filter := range []config.Filter{
+	for _, route := range []config.Route{
 		{ID: "corp", Directive: "DOMAIN-SUFFIX", Target: "OpenVPN 1", Enabled: true,
 			Params: []string{"corp.test"}},
 		{Directive: "DOMAIN", Target: "OpenVPN 1", Enabled: true, Params: []string{"wiki.test"}},
@@ -52,7 +52,7 @@ func makeSnapshot(t *testing.T) config.Config {
 		{Directive: "DOMAIN", Target: "AmneziaWG 1", Enabled: true, Params: []string{"off.test"}},
 		{Directive: "DOMAIN", Target: "Fallback 2", Enabled: true, Params: []string{"none.test"}},
 		{Directive: "DOMAIN", Target: "HOST 2", Params: []string{"disabled.test"}}} {
-		_, err := result.AddFilter(filter)
+		_, err := result.AddRoute(route)
 		require.NoError(t, err)
 	}
 	result.Settings.DefaultTarget = "Fallback 3"
@@ -114,16 +114,16 @@ func TestGenerate_Document(t *testing.T) {
 				"+.vpn.test": servers}}, result.DNS)
 	}
 	{
-		require.Equal(t, []string{"fallback 'Fallback 2' is skipped: no enabled endpoints",
-			"filter 'Filter 4' is skipped: target 'AmneziaWG 1' is disabled or does not exist",
-			"filter 'Filter 5' is skipped: target 'Fallback 2' is disabled or does not exist",
+		require.Equal(t, []string{"fallback 'Fallback 2' is skipped: no enabled outbounds",
+			"route 'Route 4' is skipped: target 'AmneziaWG 1' is disabled or does not exist",
+			"route 'Route 5' is skipped: target 'Fallback 2' is disabled or does not exist",
 			"default target 'Fallback 3' is disabled, using 'DIRECT'"}, warnings)
 	}
 }
 
 func TestGenerate_Minimal(t *testing.T) {
 	snapshot := config.Default()
-	snapshot.Filters = []config.Filter{{Key: "k", Directive: "DOMAIN", Target: "DIRECT",
+	snapshot.Routes = []config.Route{{Key: "k", Directive: "DOMAIN", Target: "DIRECT",
 		Enabled: true, Params: []string{"bad domain"}}}
 	data, warnings, err := Generate(snapshot, nil, Options{Socket: "socket"})
 	require.NoError(t, err)
@@ -134,7 +134,7 @@ func TestGenerate_Minimal(t *testing.T) {
 	require.Nil(t, result.DNS)
 	require.Empty(t, result.Proxies)
 	require.Len(t, warnings, 1)
-	require.Contains(t, warnings[0], "filter #1 is skipped: failed to parse line 1")
+	require.Contains(t, warnings[0], "route #1 is skipped: failed to parse line 1")
 }
 
 func TestGenerate_Capture(t *testing.T) {
@@ -161,10 +161,10 @@ func TestGenerate_Capture(t *testing.T) {
 
 func TestGenerate_CaptureProxyDNS(t *testing.T) {
 	snapshot := config.Default()
-	_, err := snapshot.AddEndpoint(config.Endpoint{Type: config.TypeSocks5, Enabled: true,
+	_, err := snapshot.AddOutbound(config.Outbound{Type: config.TypeSocks5, Enabled: true,
 		Socks5: &config.Socks5Options{Server: "127.0.0.1", Port: 12007}})
 	require.NoError(t, err)
-	_, err = snapshot.AddFilter(config.Filter{Directive: "DOMAIN-SUFFIX", Target: "SOCKS5 1",
+	_, err = snapshot.AddRoute(config.Route{Directive: "DOMAIN-SUFFIX", Target: "SOCKS5 1",
 		Enabled: true, Params: []string{"pki.elvees.com"}})
 	require.NoError(t, err)
 	data, _, err := Generate(snapshot, nil, Options{Socket: "socket", Capture: true})
@@ -211,12 +211,12 @@ func TestItems_EnabledOnly(t *testing.T) {
 	result := Items(snapshot)
 	require.Len(t, result, 6)
 	require.Equal(t, "'corp'", result[0].Label)
-	require.Equal(t, "'Filter 1'", result[1].Label)
+	require.Equal(t, "'Route 1'", result[1].Label)
 	require.Equal(t, "OpenVPN 1", result[1].Target)
 	require.Equal(t, "10.0.0.0/8", result[2].Rules[0].Value)
-	require.Equal(t, snapshot.Filters[5].Key, result[5].Key)
+	require.Equal(t, snapshot.Routes[5].Key, result[5].Key)
 	{
-		snapshot.Filters[0].Params = []string{"# corporate", "corp.test", "# old.test"}
+		snapshot.Routes[0].Params = []string{"# corporate", "corp.test", "# old.test"}
 		result := Items(snapshot)
 		require.Equal(t, []rules.Rule{{Directive: rules.DomainSuffix, Value: "corp.test"}},
 			result[0].Rules)

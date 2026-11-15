@@ -86,9 +86,9 @@ func sanitizeOpenVPN(text string, login bool) (string, string) {
 }
 
 func makeOpenVPNDriver(runner *runner) *openvpnDriver {
-	slot := runner.endpoint.Slot
+	slot := runner.outbound.Slot
 	return &openvpnDriver{runner: runner, tools: runner.manager.options.Tools,
-		options: *runner.endpoint.OpenVPN, table: Table(slot),
+		options: *runner.outbound.OpenVPN, table: Table(slot),
 		directory: filepath.Join(runner.manager.options.Directory, "openvpn-"+strconv.Itoa(slot)),
 		device:    devicePrefix + "o" + strconv.Itoa(slot)}
 }
@@ -146,7 +146,7 @@ func (driver *openvpnDriver) start(ctx context.Context) error {
 
 func (driver *openvpnDriver) install(kind string) error {
 	table, gateway := strconv.Itoa(driver.table), driver.values["route_vpn_gateway"]
-	driver.tools.loosenFilter(driver.device)
+	driver.tools.loosenRoute(driver.device)
 	driver.tools.sourceRules(driver.table, []string{driver.values["ifconfig_local"]})
 	route := []string{"-4", "route", "replace", "default", "dev", driver.device, "table", table}
 	if kind == "tap" && gateway != "" {

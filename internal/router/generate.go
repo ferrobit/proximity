@@ -130,11 +130,11 @@ func Owner(name string) string {
 
 func Items(snapshot config.Config) []rules.Item {
 	result := []rules.Item{}
-	for index, filter := range snapshot.Filters {
-		if parsed, err := rules.Parse(filter.Directive, filter.Params); err == nil &&
-			filter.Enabled {
-			result = append(result, rules.Item{Key: filter.Key, Label: filterLabel(filter, index),
-				Directive: filter.Directive, Target: filter.Target, Rules: parsed})
+	for index, route := range snapshot.Routes {
+		if parsed, err := rules.Parse(route.Directive, route.Params); err == nil &&
+			route.Enabled {
+			result = append(result, rules.Item{Key: route.Key, Label: routeLabel(route, index),
+				Directive: route.Directive, Target: route.Target, Rules: parsed})
 		}
 	}
 	return result
@@ -142,16 +142,16 @@ func Items(snapshot config.Config) []rules.Item {
 
 func Used(snapshot config.Config) map[string]bool {
 	result := map[string]bool{snapshot.Settings.DefaultTarget: true}
-	for _, filter := range snapshot.Filters {
-		if filter.Enabled {
-			result[filter.Target] = true
+	for _, route := range snapshot.Routes {
+		if route.Enabled {
+			result[route.Target] = true
 		}
 	}
 	for _, fallback := range snapshot.Fallbacks {
 		if !fallback.Enabled || !result[fallback.ID] {
 			continue
 		}
-		for _, id := range fallback.Endpoints {
+		for _, id := range fallback.Outbounds {
 			result[id] = true
 		}
 	}
@@ -168,9 +168,9 @@ func setCredentials(proxy map[string]any, username string, password string, secu
 	}
 }
 
-func filterLabel(filter config.Filter, index int) string {
-	if filter.ID != "" {
-		return "'" + filter.ID + "'"
+func routeLabel(route config.Route, index int) string {
+	if route.ID != "" {
+		return "'" + route.ID + "'"
 	}
 	return fmt.Sprintf("#%v", index+1)
 }
@@ -180,42 +180,42 @@ func (state *buildState) warnf(format string, arguments ...any) {
 }
 
 func (state *buildState) buildProxies() {
-	for _, endpoint := range state.config.Endpoints {
-		if !endpoint.Enabled {
+	for _, outbound := range state.config.Outbounds {
+		if !outbound.Enabled {
 			continue
 		}
-		state.active[endpoint.ID] = true
-		proxy := map[string]any{"name": endpoint.ID}
-		switch endpoint.Type {
+		state.active[outbound.ID] = true
+		proxy := map[string]any{"name": outbound.ID}
+		switch outbound.Type {
 		case config.TypeHost:
 			proxy["type"], proxy["udp"] = "direct", true
-			if host := endpoint.Host; host.Mode == config.HostInterface && host.Gateway != "" {
-				proxy["routing-mark"] = link.Table(endpoint.Slot)
+			if host := outbound.Host; host.Mode == config.HostInterface && host.Gateway != "" {
+				proxy["routing-mark"] = link.Table(outbound.Slot)
 			} else if host.Mode == config.HostInterface {
 				proxy["interface-name"] = host.Interface
 			}
 		case config.TypeSocks5:
-			options := endpoint.Socks5
+			options := outbound.Socks5
 			proxy["type"], proxy["server"], proxy["port"] = "socks5", options.Server, options.Port
 			proxy["udp"] = options.UDP
 			setCredentials(proxy, options.Username, options.Password, options.TLS,
 				options.SkipCertVerify)
 		case config.TypeHTTP:
-			options := endpoint.HTTP
+			options := outbound.HTTP
 			proxy["type"], proxy["server"], proxy["port"] = "http", options.Server, options.Port
 			setCredentials(proxy, options.Username, options.Password, options.TLS,
 				options.SkipCertVerify)
-			state.buildSplit(endpoint, proxy)
+			state.buildSplit(outbound, proxy)
 		default:
 			proxy["type"], proxy["udp"] = "direct", true
-			proxy["routing-mark"] = link.Table(endpoint.Slot)
+			proxy["routing-mark"] = link.Table(outbound.Slot)
 		}
 		state.document.Proxies = append(state.document.Proxies, proxy)
 	}
 }
 
-func (state *buildState) buildSplit(endpoint config.Endpoint, proxy map[string]any) {
-	options := endpoint.HTTP
+func (state *buildState) buildSplit(outbound config.Outbound, proxy map[string]any) {
+	options := outbound.HTTP
 	if options.Single {
 		return
 	}
@@ -233,18 +233,18 @@ func (state *buildState) buildSplit(endpoint config.Endpoint, proxy map[string]a
 		for key, value := range proxy {
 			variant[key] = value
 		}
-		variant["name"], variant["server"] = endpoint.ID+item.suffix, item.server
+		variant["name"], variant["server"] = outbound.ID+item.suffix, item.server
 		variant["port"] = item.port
 		state.document.Proxies = append(state.document.Proxies, variant)
-		state.variants[endpoint.ID] = append(state.variants[endpoint.ID],
-			rules.Variant{Port: item.match, Target: endpoint.ID + item.suffix})
+		state.variants[outbound.ID] = append(state.variants[outbound.ID],
+			rules.Variant{Port: item.match, Target: outbound.ID + item.suffix})
 	}
 }
 
 func (state *buildState) buildGroups() {
 	for _, fallback := range state.config.Fallbacks {
 		members := []string{}
-		for _, id := range fallback.Endpoints {
+		for _, id := range fallback.Outbounds {
 			if state.active[id] {
 				members = append(members, id)
 			}
@@ -252,7 +252,7 @@ func (state *buildState) buildGroups() {
 		if !fallback.Enabled {
 			continue
 		} else if len(members) == 0 {
-			state.warnf("fallback '%v' is skipped: no enabled endpoints", fallback.ID)
+			state.warnf("fallback '%v' is skipped: no enabled outbounds", fallback.ID)
 			continue
 		}
 		state.active[fallback.ID] = true
@@ -304,24 +304,24 @@ func (state *buildState) alive(members []string) []string {
 
 func (state *buildState) buildRules() {
 	policy := map[string][]string{}
-	for index, filter := range state.config.Filters {
-		label := filterLabel(filter, index)
-		if !filter.Enabled {
+	for index, route := range state.config.Routes {
+		label := routeLabel(route, index)
+		if !route.Enabled {
 			continue
-		} else if !state.active[filter.Target] {
-			state.warnf("filter %v is skipped: target '%v' is disabled or does not exist", label,
-				filter.Target)
+		} else if !state.active[route.Target] {
+			state.warnf("route %v is skipped: target '%v' is disabled or does not exist", label,
+				route.Target)
 			continue
 		}
-		parsed, err := rules.Parse(filter.Directive, filter.Params)
+		parsed, err := rules.Parse(route.Directive, route.Params)
 		if err != nil {
-			state.warnf("filter %v is skipped: %v", label, err)
+			state.warnf("route %v is skipped: %v", label, err)
 			continue
 		}
-		servers := state.nameservers(filter.Target)
+		servers := state.nameservers(route.Target)
 		for _, rule := range parsed {
 			state.document.Rules = append(state.document.Rules,
-				rule.Lines(filter.Target, state.variants[filter.Target])...)
+				rule.Lines(route.Target, state.variants[route.Target])...)
 			if strings.HasPrefix(rule.Directive, "PROCESS-") {
 				state.document.FindProcess = "strict"
 			}
@@ -332,9 +332,9 @@ func (state *buildState) buildRules() {
 			}
 		}
 	}
-	for _, endpoint := range state.config.Endpoints {
-		servers := state.nameservers(endpoint.ID)
-		for _, domain := range state.links[endpoint.ID].Domains {
+	for _, outbound := range state.config.Outbounds {
+		servers := state.nameservers(outbound.ID)
+		for _, domain := range state.links[outbound.ID].Domains {
 			if len(servers) != 0 && domain != "" {
 				policy["+."+domain] = servers
 			}
@@ -358,12 +358,12 @@ func (state *buildState) buildRules() {
 }
 
 func (state *buildState) nameservers(id string) []string {
-	endpoint, found := state.config.FindEndpoint(id)
-	if !found || !endpoint.Enabled || !endpoint.IsTunnel() {
+	outbound, found := state.config.FindOutbound(id)
+	if !found || !outbound.Enabled || !outbound.IsTunnel() {
 		return nil
-	} else if endpoint.OpenVPN != nil && !endpoint.OpenVPN.UseDNS {
+	} else if outbound.OpenVPN != nil && !outbound.OpenVPN.UseDNS {
 		return nil
-	} else if endpoint.AmneziaWG != nil && !endpoint.AmneziaWG.UseDNS {
+	} else if outbound.AmneziaWG != nil && !outbound.AmneziaWG.UseDNS {
 		return nil
 	}
 	result := []string{}

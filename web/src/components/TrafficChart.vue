@@ -8,7 +8,7 @@
           <a-radio-button value="download">Download</a-radio-button>
           <a-radio-button value="upload">Upload</a-radio-button>
         </a-radio-group>
-        <a-radio-group v-model:value="range" size="small">
+        <a-radio-group :value="range" size="small" @update:value="$emit('update:range', $event)">
           <a-radio-button v-for="option in ranges" :key="option.value" :value="option.value">{{ option.label }}</a-radio-button>
         </a-radio-group>
       </div>
@@ -59,43 +59,43 @@
 </template>
 
 <script setup>
-import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
+import { computed, onMounted, onUnmounted, ref } from 'vue'
 import { LineChartOutlined } from '@ant-design/icons-vue'
 import { theme } from 'ant-design-vue'
-import { api } from '../api'
 import { rate } from '../format'
+import { clock, ranges, timeTicks } from './history'
 
-const props = defineProps({ overview: { type: Object, required: true } })
+const props = defineProps({
+  overview: { type: Object, required: true },
+  samples: { type: Array, required: true },
+  step: { type: Number, default: 5 },
+  range: { type: Number, default: 900 }
+})
+defineEmits(['update:range'])
 const { token } = theme.useToken()
 
 const palette = ['#2a78d6', '#eb6834', '#1baf7a', '#eda100', '#e87ba4', '#008300', '#6250d6', '#e34948']
 const otherColor = '#8a8984'
-const maxHistory = 3600
-const ranges = [{ value: 300, label: '5m' }, { value: 900, label: '15m' }, { value: 3600, label: '1h' }]
 const margin = { top: 12, right: 112, bottom: 24, left: 72 }
 const height = 260
 
-const samples = ref([])
-const step = ref(5)
 const direction = ref('sum')
-const range = ref(900)
 const hidden = ref(new Set())
 const focused = ref('')
 const hover = ref(null)
 const box = ref(null)
 const width = ref(0)
 let observer = null
-let loading = false
 
 const colors = computed(() => ({ text: token.value.colorTextSecondary, muted: token.value.colorTextTertiary,
   grid: token.value.colorBorderSecondary, hover: token.value.colorFillTertiary, surface: token.value.colorBgElevated,
   shadow: token.value.boxShadowSecondary }))
-const rangeLabel = computed(() => ranges.find((item) => item.value === range.value).label)
+const rangeLabel = computed(() => ranges.find((item) => item.value === props.range).label)
 const plotWidth = computed(() => width.value - margin.left - margin.right)
 const plotHeight = computed(() => height - margin.top - margin.bottom)
 
 const series = computed(() => {
-  const collected = props.overview.endpoints.filter((item) => item.enabled && item.statistics).map((item) => item.id)
+  const collected = props.overview.outbounds.filter((item) => item.enabled && item.statistics).map((item) => item.id)
   const named = collected.length > palette.length ? collected.slice(0, palette.length - 1) : collected
   const rest = collected.slice(named.length)
   const result = named.map((id, index) => ({ key: `e:${id}`, name: id, ids: [id], color: palette[index], dash: '' }))
@@ -109,11 +109,11 @@ const series = computed(() => {
 const visible = computed(() => series.value.filter((item) => !hidden.value.has(item.key)))
 
 const end = computed(() => {
-  const last = samples.value[samples.value.length - 1]
+  const last = props.samples[props.samples.length - 1]
   return last ? last.time : Math.floor(Date.now() / 1000)
 })
 
-const shown = computed(() => samples.value.filter((sample) => sample.time >= end.value - range.value))
+const shown = computed(() => props.samples.filter((sample) => sample.time >= end.value - props.range))
 
 const yMax = computed(() => {
   let result = 0
@@ -127,14 +127,7 @@ const yMax = computed(() => {
 
 const yTicks = computed(() => [0, 1, 2, 3, 4].map((index) => (yMax.value * index) / 4))
 
-const xTicks = computed(() => {
-  const spacing = range.value <= 300 ? 60 : range.value <= 900 ? 180 : 600
-  const result = []
-  for (let tick = Math.ceil((end.value - range.value) / spacing) * spacing; tick <= end.value; tick += spacing) {
-    result.push(tick)
-  }
-  return result
-})
+const xTicks = computed(() => timeTicks(end.value, props.range, props.range <= 300 ? 60 : props.range <= 900 ? 180 : 600))
 
 const endLabels = computed(() => {
   if (visible.value.length > 4 || !shown.value.length) return []
@@ -174,16 +167,16 @@ function pick(pair) {
 
 function value(item, sample) {
   if (!item.ids) return pick(sample.total)
-  return item.ids.reduce((sum, id) => sum + pick(sample.endpoints[id]), 0)
+  return item.ids.reduce((sum, id) => sum + pick(sample.outbounds[id]), 0)
 }
 
 function latest(item) {
-  const last = samples.value[samples.value.length - 1]
+  const last = props.samples[props.samples.length - 1]
   return last ? value(item, last) : 0
 }
 
 function x(time) {
-  return margin.left + ((time - (end.value - range.value)) / range.value) * plotWidth.value
+  return margin.left + ((time - (end.value - props.range)) / props.range) * plotWidth.value
 }
 
 function y(amount) {
@@ -194,17 +187,11 @@ function path(item) {
   let result = ''
   let previous = null
   for (const sample of shown.value) {
-    const command = previous === null || sample.time - previous > step.value * 2.5 ? 'M' : 'L'
+    const command = previous === null || sample.time - previous > props.step * 2.5 ? 'M' : 'L'
     result += `${command}${x(sample.time).toFixed(1)},${y(value(item, sample)).toFixed(1)}`
     previous = sample.time
   }
   return result
-}
-
-function clock(time, seconds) {
-  const date = new Date(time * 1000)
-  const pad = (number) => String(number).padStart(2, '0')
-  return `${pad(date.getHours())}:${pad(date.getMinutes())}${seconds ? `:${pad(date.getSeconds())}` : ''}`
 }
 
 function toggle(key) {
@@ -218,7 +205,7 @@ function toggle(key) {
 function point(event) {
   if (!shown.value.length) return
   const bounds = event.currentTarget.ownerSVGElement.getBoundingClientRect()
-  const time = end.value - range.value + ((event.clientX - bounds.left - margin.left) / plotWidth.value) * range.value
+  const time = end.value - props.range + ((event.clientX - bounds.left - margin.left) / plotWidth.value) * props.range
   let nearest = shown.value[0]
   for (const sample of shown.value) {
     if (Math.abs(sample.time - time) < Math.abs(nearest.time - time)) {
@@ -230,31 +217,11 @@ function point(event) {
   hover.value = { time: nearest.time, rows }
 }
 
-async function load() {
-  if (loading) return
-  loading = true
-  try {
-    const last = samples.value[samples.value.length - 1]
-    const result = await api.get(`/api/history${last ? `?since=${last.time}` : ''}`, true)
-    const merged = samples.value.concat(result.samples)
-    const cutoff = merged.length ? merged[merged.length - 1].time - maxHistory : 0
-    step.value = result.step
-    samples.value = merged.filter((sample) => sample.time > cutoff)
-  } catch (error) {
-    hover.value = null
-  } finally {
-    loading = false
-  }
-}
-
-watch(() => props.overview, load)
-
 onMounted(() => {
   observer = new ResizeObserver((entries) => {
     width.value = Math.floor(entries[0].contentRect.width)
   })
   observer.observe(box.value)
-  load()
 })
 
 onUnmounted(() => {

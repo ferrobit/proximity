@@ -90,7 +90,7 @@ type Monitoring struct {
 	Target            string `json:"target"`
 }
 
-type Endpoint struct {
+type Outbound struct {
 	ID         string            `json:"id"`
 	Name       string            `json:"name"`
 	Group      string            `json:"group"`
@@ -109,13 +109,14 @@ type Endpoint struct {
 type Fallback struct {
 	ID          string   `json:"id"`
 	Enabled     bool     `json:"enabled"`
-	Endpoints   []string `json:"endpoints"`
+	Outbounds   []string `json:"outbounds"`
 	HealthCheck bool     `json:"health_check"`
 	URL         string   `json:"url"`
 	Interval    int      `json:"interval"`
+	Legacy      []string `json:"endpoints,omitempty"`
 }
 
-type Filter struct {
+type Route struct {
 	Key       string   `json:"key"`
 	ID        string   `json:"id"`
 	Directive string   `json:"directive"`
@@ -130,9 +131,15 @@ type Config struct {
 	Secret    string     `json:"secret"`
 	Settings  Settings   `json:"settings"`
 	Users     []User     `json:"users"`
-	Endpoints []Endpoint `json:"endpoints"`
+	Outbounds []Outbound `json:"outbounds"`
 	Fallbacks []Fallback `json:"fallbacks"`
-	Filters   []Filter   `json:"filters"`
+	Routes    []Route    `json:"routes"`
+	Legacy
+}
+
+type Legacy struct {
+	Endpoints []Outbound `json:"endpoints,omitempty"`
+	Filters   []Route    `json:"filters,omitempty"`
 }
 
 const (
@@ -165,7 +172,7 @@ const (
 	OTPAppend    = "append"
 )
 
-const currentVersion = 2
+const currentVersion = 3
 const maxSlot = 9999
 const defaultAttempts = 3
 const defaultReconnectTimeout = 10
@@ -188,7 +195,7 @@ func Default() Config {
 		DefaultTarget: TargetDirect, LogLevel: "warning", AnonymousDashboard: true,
 		ConnectivityChecks: true, ProbeTarget: defaultProbeTarget, CheckInterval: 30,
 		Capture: true}, Users: []User{},
-		Endpoints: []Endpoint{}, Fallbacks: []Fallback{}, Filters: []Filter{}}
+		Outbounds: []Outbound{}, Fallbacks: []Fallback{}, Routes: []Route{}}
 }
 
 func TypeLabel(kind string) string {
@@ -269,95 +276,95 @@ func (user *User) validate() error {
 	return nil
 }
 
-func (endpoint *Endpoint) normalize() {
-	endpoint.ID = strings.TrimSpace(endpoint.ID)
-	endpoint.Name = strings.TrimSpace(endpoint.Name)
-	endpoint.Group = strings.TrimSpace(endpoint.Group)
-	if endpoint.Type != TypeHost {
-		endpoint.Host = nil
-	} else if endpoint.Host == nil {
-		endpoint.Host = &HostOptions{Mode: HostDefault}
+func (outbound *Outbound) normalize() {
+	outbound.ID = strings.TrimSpace(outbound.ID)
+	outbound.Name = strings.TrimSpace(outbound.Name)
+	outbound.Group = strings.TrimSpace(outbound.Group)
+	if outbound.Type != TypeHost {
+		outbound.Host = nil
+	} else if outbound.Host == nil {
+		outbound.Host = &HostOptions{Mode: HostDefault}
 	}
-	if endpoint.Host != nil && endpoint.Host.Attempts == 0 {
-		endpoint.Host.Attempts = defaultAttempts
+	if outbound.Host != nil && outbound.Host.Attempts == 0 {
+		outbound.Host.Attempts = defaultAttempts
 	}
-	if endpoint.Host != nil && endpoint.Host.ReconnectTimeout == 0 {
-		endpoint.Host.ReconnectTimeout = defaultReconnectTimeout
+	if outbound.Host != nil && outbound.Host.ReconnectTimeout == 0 {
+		outbound.Host.ReconnectTimeout = defaultReconnectTimeout
 	}
-	if endpoint.Type != TypeSocks5 {
-		endpoint.Socks5 = nil
-	} else if endpoint.Socks5 == nil {
-		endpoint.Socks5 = &Socks5Options{}
+	if outbound.Type != TypeSocks5 {
+		outbound.Socks5 = nil
+	} else if outbound.Socks5 == nil {
+		outbound.Socks5 = &Socks5Options{}
 	}
-	if endpoint.Type != TypeHTTP {
-		endpoint.HTTP = nil
-	} else if endpoint.HTTP == nil {
-		endpoint.HTTP = &HTTPOptions{}
+	if outbound.Type != TypeHTTP {
+		outbound.HTTP = nil
+	} else if outbound.HTTP == nil {
+		outbound.HTTP = &HTTPOptions{}
 	}
-	if endpoint.Type != TypeOpenVPN {
-		endpoint.OpenVPN = nil
-	} else if endpoint.OpenVPN == nil {
-		endpoint.OpenVPN = &OpenVPNOptions{}
+	if outbound.Type != TypeOpenVPN {
+		outbound.OpenVPN = nil
+	} else if outbound.OpenVPN == nil {
+		outbound.OpenVPN = &OpenVPNOptions{}
 	}
-	if endpoint.Type != TypeAmneziaWG {
-		endpoint.AmneziaWG = nil
-	} else if endpoint.AmneziaWG == nil {
-		endpoint.AmneziaWG = &AmneziaWGOptions{}
+	if outbound.Type != TypeAmneziaWG {
+		outbound.AmneziaWG = nil
+	} else if outbound.AmneziaWG == nil {
+		outbound.AmneziaWG = &AmneziaWGOptions{}
 	}
-	if !endpoint.IsTunnel() {
-		endpoint.Monitoring = nil
-	} else if endpoint.Monitoring == nil {
-		endpoint.Monitoring = &Monitoring{Interval: 30, Timeout: 5, Retries: 3, ReconnectDelay: 10,
+	if !outbound.IsTunnel() {
+		outbound.Monitoring = nil
+	} else if outbound.Monitoring == nil {
+		outbound.Monitoring = &Monitoring{Interval: 30, Timeout: 5, Retries: 3, ReconnectDelay: 10,
 			ReconnectAttempts: 3}
 	}
-	if endpoint.Monitoring != nil && strings.TrimSpace(endpoint.Monitoring.Target) == "" {
-		endpoint.Monitoring.Target = defaultProbeTarget
+	if outbound.Monitoring != nil && strings.TrimSpace(outbound.Monitoring.Target) == "" {
+		outbound.Monitoring.Target = defaultProbeTarget
 	}
-	if endpoint.OpenVPN != nil {
-		endpoint.OpenVPN.OTPKey = strings.ToUpper(strings.NewReplacer(" ", "", "-", "", "=", "").
-			Replace(endpoint.OpenVPN.OTPKey))
-		if endpoint.OpenVPN.OTPMode == "" {
-			endpoint.OpenVPN.OTPMode = OTPChallenge
+	if outbound.OpenVPN != nil {
+		outbound.OpenVPN.OTPKey = strings.ToUpper(strings.NewReplacer(" ", "", "-", "", "=", "").
+			Replace(outbound.OpenVPN.OTPKey))
+		if outbound.OpenVPN.OTPMode == "" {
+			outbound.OpenVPN.OTPMode = OTPChallenge
 		}
 	}
 }
 
-func (endpoint *Endpoint) IsTunnel() bool {
-	return endpoint.Type == TypeOpenVPN || endpoint.Type == TypeAmneziaWG
+func (outbound *Outbound) IsTunnel() bool {
+	return outbound.Type == TypeOpenVPN || outbound.Type == TypeAmneziaWG
 }
 
-func (endpoint *Endpoint) IsSplit() bool {
-	return endpoint.HTTP != nil && !endpoint.HTTP.Single &&
-		(endpoint.HTTP.HTTPSServer != "" || endpoint.HTTP.FTPServer != "")
+func (outbound *Outbound) IsSplit() bool {
+	return outbound.HTTP != nil && !outbound.HTTP.Single &&
+		(outbound.HTTP.HTTPSServer != "" || outbound.HTTP.FTPServer != "")
 }
 
-func (endpoint *Endpoint) validate() error {
-	if err := validateIdentifier(endpoint.ID); err != nil {
+func (outbound *Outbound) validate() error {
+	if err := validateIdentifier(outbound.ID); err != nil {
 		return err
-	} else if len(endpoint.Name) > 96 || len(endpoint.Group) > 48 {
+	} else if len(outbound.Name) > 96 || len(outbound.Group) > 48 {
 		return errors.New("name or group is too long")
-	} else if err = validateRange("slot", endpoint.Slot, 1, maxSlot); err != nil {
+	} else if err = validateRange("slot", outbound.Slot, 1, maxSlot); err != nil {
 		return err
 	}
-	switch endpoint.Type {
+	switch outbound.Type {
 	case TypeHost:
-		return endpoint.Host.validate()
+		return outbound.Host.validate()
 	case TypeSocks5:
-		return validateServer(endpoint.Socks5.Server, endpoint.Socks5.Port)
+		return validateServer(outbound.Socks5.Server, outbound.Socks5.Port)
 	case TypeHTTP:
-		return endpoint.HTTP.validate()
+		return outbound.HTTP.validate()
 	case TypeOpenVPN:
-		if err := endpoint.OpenVPN.validate(); err != nil {
+		if err := outbound.OpenVPN.validate(); err != nil {
 			return err
 		}
-		return endpoint.Monitoring.validate()
+		return outbound.Monitoring.validate()
 	case TypeAmneziaWG:
-		if _, err := wgconf.Parse(endpoint.AmneziaWG.Config); err != nil {
+		if _, err := wgconf.Parse(outbound.AmneziaWG.Config); err != nil {
 			return fmt.Errorf("failed to check AmneziaWG configuration: %w", err)
 		}
-		return endpoint.Monitoring.validate()
+		return outbound.Monitoring.validate()
 	default:
-		return fmt.Errorf("unexpected endpoint type '%v'", endpoint.Type)
+		return fmt.Errorf("unexpected outbound type '%v'", outbound.Type)
 	}
 }
 
@@ -443,8 +450,8 @@ func (fallback *Fallback) normalize() {
 	if fallback.Interval == 0 {
 		fallback.Interval = 60
 	}
-	if fallback.Endpoints == nil {
-		fallback.Endpoints = []string{}
+	if fallback.Outbounds == nil {
+		fallback.Outbounds = []string{}
 	}
 }
 
@@ -458,34 +465,34 @@ func (fallback *Fallback) validate(config *Config) error {
 	} else if address.Host == "" || (address.Scheme != "http" && address.Scheme != "https") {
 		return fmt.Errorf("invalid check URL '%v'", fallback.URL)
 	}
-	for index, id := range fallback.Endpoints {
-		if config.findEndpoint(id) < 0 {
-			return fmt.Errorf("endpoint '%v' does not exist", id)
+	for index, id := range fallback.Outbounds {
+		if config.findOutbound(id) < 0 {
+			return fmt.Errorf("outbound '%v' does not exist", id)
 		}
-		for _, other := range fallback.Endpoints[:index] {
+		for _, other := range fallback.Outbounds[:index] {
 			if other == id {
-				return fmt.Errorf("duplicate endpoint '%v'", id)
+				return fmt.Errorf("duplicate outbound '%v'", id)
 			}
 		}
 	}
 	return nil
 }
 
-func (filter *Filter) normalize() {
-	filter.ID = strings.TrimSpace(filter.ID)
+func (route *Route) normalize() {
+	route.ID = strings.TrimSpace(route.ID)
 	params := []string{}
-	for _, line := range filter.Params {
+	for _, line := range route.Params {
 		if line = strings.TrimSpace(line); line != "" {
 			params = append(params, line)
 		}
 	}
-	filter.Params = params
+	route.Params = params
 }
 
-func (filter *Filter) validate() error {
-	if filter.ID == "" || len(filter.ID) > 64 {
-		return fmt.Errorf("invalid filter ID length (%v)", len(filter.ID))
-	} else if _, err := rules.Parse(filter.Directive, filter.Params); err != nil {
+func (route *Route) validate() error {
+	if route.ID == "" || len(route.ID) > 64 {
+		return fmt.Errorf("invalid route ID length (%v)", len(route.ID))
+	} else if _, err := rules.Parse(route.Directive, route.Params); err != nil {
 		return fmt.Errorf("failed to check rule parameters: %w", err)
 	}
 	return nil

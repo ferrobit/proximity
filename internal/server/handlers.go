@@ -16,8 +16,8 @@ import (
 	"proximity/internal/wgconf"
 )
 
-type endpointView struct {
-	config.Endpoint
+type outboundView struct {
+	config.Outbound
 	Status   link.Status    `json:"status"`
 	Traffic  router.Traffic `json:"traffic"`
 	Usage    string         `json:"usage"`
@@ -77,22 +77,22 @@ const (
 	usageUnused   = "unused"
 )
 
-func redact(endpoint config.Endpoint) config.Endpoint {
-	endpoint = endpoint.Clone()
-	if endpoint.Socks5 != nil {
-		endpoint.Socks5.Password = ""
+func redact(outbound config.Outbound) config.Outbound {
+	outbound = outbound.Clone()
+	if outbound.Socks5 != nil {
+		outbound.Socks5.Password = ""
 	}
-	if endpoint.HTTP != nil {
-		endpoint.HTTP.Password = ""
+	if outbound.HTTP != nil {
+		outbound.HTTP.Password = ""
 	}
-	if endpoint.OpenVPN != nil {
-		endpoint.OpenVPN.Config, endpoint.OpenVPN.Password = "", ""
-		endpoint.OpenVPN.OTPKey, endpoint.OpenVPN.KeyPassword = "", ""
+	if outbound.OpenVPN != nil {
+		outbound.OpenVPN.Config, outbound.OpenVPN.Password = "", ""
+		outbound.OpenVPN.OTPKey, outbound.OpenVPN.KeyPassword = "", ""
 	}
-	if endpoint.AmneziaWG != nil {
-		endpoint.AmneziaWG.Config = ""
+	if outbound.AmneziaWG != nil {
+		outbound.AmneziaWG.Config = ""
 	}
-	return endpoint
+	return outbound
 }
 
 func confirm(password string, repeated string) error {
@@ -118,26 +118,26 @@ func (server *Server) register() {
 	server.handle("DELETE /api/refused", 2, server.clearRefused)
 	server.handle("GET /api/targets", 1, server.getTargets)
 	server.handle("GET /api/interfaces", 1, server.getInterfaces)
-	server.handle("GET /api/endpoints", 1, server.getEndpoints)
-	server.handle("POST /api/endpoints", 2, server.addEndpoint)
-	server.handle("PUT /api/endpoints/{id}", 2, server.updateEndpoint)
-	server.handle("DELETE /api/endpoints/{id}", 2, server.removeEndpoint)
-	server.handle("POST /api/endpoints/{id}/move", 2, server.moveEndpoint)
-	server.handle("POST /api/endpoints/{id}/restart", 2, server.restartEndpoint)
-	server.handle("GET /api/endpoints/{id}/log", 2, server.getEndpointLog)
+	server.handle("GET /api/outbounds", 1, server.getOutbounds)
+	server.handle("POST /api/outbounds", 2, server.addOutbound)
+	server.handle("PUT /api/outbounds/{id}", 2, server.updateOutbound)
+	server.handle("DELETE /api/outbounds/{id}", 2, server.removeOutbound)
+	server.handle("POST /api/outbounds/{id}/move", 2, server.moveOutbound)
+	server.handle("POST /api/outbounds/{id}/restart", 2, server.restartOutbound)
+	server.handle("GET /api/outbounds/{id}/log", 2, server.getOutboundLog)
 	server.handle("POST /api/import/amneziawg", 2, server.importAmnezia)
 	server.handle("GET /api/fallbacks", 1, server.getFallbacks)
 	server.handle("POST /api/fallbacks", 2, server.addFallback)
 	server.handle("PUT /api/fallbacks/{id}", 2, server.updateFallback)
 	server.handle("DELETE /api/fallbacks/{id}", 2, server.removeFallback)
 	server.handle("POST /api/fallbacks/{id}/move", 2, server.moveFallback)
-	server.handle("GET /api/filters", 1, server.getFilters)
-	server.handle("POST /api/filters", 2, server.addFilter)
-	server.handle("POST /api/filters/preview", 1, server.previewFilter)
-	server.handle("PUT /api/filters/default", 2, server.setDefaultTarget)
-	server.handle("PUT /api/filters/{key}", 2, server.updateFilter)
-	server.handle("DELETE /api/filters/{key}", 2, server.removeFilter)
-	server.handle("POST /api/filters/{key}/move", 2, server.moveFilter)
+	server.handle("GET /api/routes", 1, server.getRoutes)
+	server.handle("POST /api/routes", 2, server.addRoute)
+	server.handle("POST /api/routes/preview", 1, server.previewRoute)
+	server.handle("PUT /api/routes/default", 2, server.setDefaultTarget)
+	server.handle("PUT /api/routes/{key}", 2, server.updateRoute)
+	server.handle("DELETE /api/routes/{key}", 2, server.removeRoute)
+	server.handle("POST /api/routes/{key}/move", 2, server.moveRoute)
 	server.handle("GET /api/settings", 1, server.getSettings)
 	server.handle("PUT /api/settings", 3, server.updateSettings)
 	server.handle("GET /api/users", 3, server.getUsers)
@@ -147,7 +147,7 @@ func (server *Server) register() {
 	server.handle("GET /api/router/config", 2, server.getRouterConfig)
 	server.handle("GET /api/backup", 2, server.exportBackup)
 	server.handle("POST /api/backup", 2, server.importBackup)
-	server.routes.Handle("/", server.static())
+	server.mux.Handle("/", server.static())
 }
 
 func (server *Server) problems() ([]string, string) {
@@ -162,34 +162,34 @@ func (server *Server) capturing() bool {
 	return server.captured
 }
 
-func (server *Server) views(snapshot config.Config, level int) []endpointView {
+func (server *Server) views(snapshot config.Config, level int) []outboundView {
 	links, used := server.manager.Status(), router.Used(snapshot)
 	traffic, _ := server.tracker.Snapshot()
-	result := []endpointView{}
-	for _, endpoint := range snapshot.Endpoints {
-		view := endpointView{Endpoint: endpoint, Status: emptyStatus(), Usage: usageEnabled,
-			Traffic: traffic[endpoint.ID], Redacted: level < 2}
-		if status, found := links[endpoint.ID]; found {
+	result := []outboundView{}
+	for _, outbound := range snapshot.Outbounds {
+		view := outboundView{Outbound: outbound, Status: emptyStatus(), Usage: usageEnabled,
+			Traffic: traffic[outbound.ID], Redacted: level < 2}
+		if status, found := links[outbound.ID]; found {
 			view.Status = status
 		}
-		if !endpoint.Enabled {
+		if !outbound.Enabled {
 			view.Usage = usageDisabled
-		} else if !used[endpoint.ID] {
+		} else if !used[outbound.ID] {
 			view.Usage = usageUnused
 		}
 		if level < 2 {
-			view.Endpoint = redact(endpoint)
+			view.Outbound = redact(outbound)
 		}
 		if level < 1 {
 			state, since := view.Status.State, view.Status.Since
 			view.Status = emptyStatus()
 			view.Status.State, view.Status.Since = state, since
-			view.Status.Link, view.Status.Latency = links[endpoint.ID].Link, -1
-			view.Endpoint = config.Endpoint{ID: endpoint.ID, Name: endpoint.Name,
-				Group: endpoint.Group, Type: endpoint.Type, Enabled: endpoint.Enabled,
-				Statistics: endpoint.Statistics}
-			if found := links[endpoint.ID].Checked != 0; found {
-				view.Status.Latency = links[endpoint.ID].Latency
+			view.Status.Link, view.Status.Latency = links[outbound.ID].Link, -1
+			view.Outbound = config.Outbound{ID: outbound.ID, Name: outbound.Name,
+				Group: outbound.Group, Type: outbound.Type, Enabled: outbound.Enabled,
+				Statistics: outbound.Statistics}
+			if found := links[outbound.ID].Checked != 0; found {
+				view.Status.Latency = links[outbound.ID].Latency
 			}
 		}
 		result = append(result, view)
@@ -299,12 +299,12 @@ func (server *Server) getDashboard(_ *http.Request, current session) (any, error
 	if current.level == 0 {
 		refused, warnings = []router.Refused{}, []string{}
 	}
-	return map[string]any{"endpoints": views, "fallbacks": snapshot.Fallbacks, "refused": refused,
+	return map[string]any{"outbounds": views, "fallbacks": snapshot.Fallbacks, "refused": refused,
 		"router": server.mihomo.State(), "warnings": warnings, "failure": failure,
 		"total": traffic[""], "uptime": int64(time.Since(server.started).Seconds()),
-		"counts": map[string]int{"endpoints": len(views), "endpoints_enabled": enabled,
-			"endpoints_up": up, "fallbacks": len(snapshot.Fallbacks),
-			"filters": len(snapshot.Filters), "rules": lines},
+		"counts": map[string]int{"outbounds": len(views), "outbounds_enabled": enabled,
+			"outbounds_up": up, "fallbacks": len(snapshot.Fallbacks),
+			"routes": len(snapshot.Routes), "rules": lines},
 		"proxy_port": snapshot.Settings.MixedPort, "capture": server.capturing()}, nil
 }
 
@@ -333,8 +333,8 @@ func (server *Server) getTargets(_ *http.Request, _ session) (any, error) {
 	snapshot := server.store.Snapshot()
 	result := []targetView{{config.TargetDirect, "builtin", true},
 		{config.TargetReject, "builtin", true}}
-	for _, endpoint := range snapshot.Endpoints {
-		result = append(result, targetView{endpoint.ID, "endpoint", endpoint.Enabled})
+	for _, outbound := range snapshot.Outbounds {
+		result = append(result, targetView{outbound.ID, "outbound", outbound.Enabled})
 	}
 	for _, fallback := range snapshot.Fallbacks {
 		result = append(result, targetView{fallback.ID, "fallback", fallback.Enabled})
@@ -346,28 +346,28 @@ func (server *Server) getInterfaces(_ *http.Request, _ session) (any, error) {
 	return link.Interfaces()
 }
 
-func (server *Server) getEndpoints(_ *http.Request, current session) (any, error) {
+func (server *Server) getOutbounds(_ *http.Request, current session) (any, error) {
 	snapshot := server.store.Snapshot()
 	groups := []string{}
-	for _, endpoint := range snapshot.Endpoints {
-		found := endpoint.Group == ""
+	for _, outbound := range snapshot.Outbounds {
+		found := outbound.Group == ""
 		for _, group := range groups {
-			found = found || group == endpoint.Group
+			found = found || group == outbound.Group
 		}
 		if !found {
-			groups = append(groups, endpoint.Group)
+			groups = append(groups, outbound.Group)
 		}
 	}
-	return map[string]any{"endpoints": server.views(snapshot, current.level), "groups": groups}, nil
+	return map[string]any{"outbounds": server.views(snapshot, current.level), "groups": groups}, nil
 }
 
-func (server *Server) addEndpoint(request *http.Request, _ session) (any, error) {
-	body, result := config.Endpoint{}, config.Endpoint{}
+func (server *Server) addOutbound(request *http.Request, _ session) (any, error) {
+	body, result := config.Outbound{}, config.Outbound{}
 	if err := decode(request, &body); err != nil {
 		return nil, err
 	} else if err = server.store.Update(func(config *config.Config) error {
 		var err error
-		result, err = config.AddEndpoint(body)
+		result, err = config.AddOutbound(body)
 		return err
 	}); err != nil {
 		return nil, err
@@ -375,13 +375,13 @@ func (server *Server) addEndpoint(request *http.Request, _ session) (any, error)
 	return result, nil
 }
 
-func (server *Server) updateEndpoint(request *http.Request, _ session) (any, error) {
-	body, id := config.Endpoint{}, request.PathValue("id")
+func (server *Server) updateOutbound(request *http.Request, _ session) (any, error) {
+	body, id := config.Outbound{}, request.PathValue("id")
 	if err := decode(request, &body); err != nil {
 		return nil, err
 	}
 	return body, server.store.Update(func(config *config.Config) error {
-		if err := config.UpdateEndpoint(id, body); err != nil {
+		if err := config.UpdateOutbound(id, body); err != nil {
 			return err
 		} else if renamed := strings.TrimSpace(body.ID); renamed != "" {
 			server.tracker.Rename(id, renamed)
@@ -390,27 +390,27 @@ func (server *Server) updateEndpoint(request *http.Request, _ session) (any, err
 	})
 }
 
-func (server *Server) removeEndpoint(request *http.Request, _ session) (any, error) {
+func (server *Server) removeOutbound(request *http.Request, _ session) (any, error) {
 	return map[string]bool{"ok": true}, server.store.Update(func(config *config.Config) error {
-		return config.RemoveEndpoint(request.PathValue("id"))
+		return config.RemoveOutbound(request.PathValue("id"))
 	})
 }
 
-func (server *Server) moveEndpoint(request *http.Request, _ session) (any, error) {
+func (server *Server) moveOutbound(request *http.Request, _ session) (any, error) {
 	body := moveRequest{}
 	if err := decode(request, &body); err != nil {
 		return nil, err
 	}
 	return map[string]bool{"ok": true}, server.store.Update(func(config *config.Config) error {
-		return config.MoveEndpoint(request.PathValue("id"), body.Delta)
+		return config.MoveOutbound(request.PathValue("id"), body.Delta)
 	})
 }
 
-func (server *Server) restartEndpoint(request *http.Request, _ session) (any, error) {
+func (server *Server) restartOutbound(request *http.Request, _ session) (any, error) {
 	return map[string]bool{"ok": true}, server.manager.Restart(request.PathValue("id"))
 }
 
-func (server *Server) getEndpointLog(request *http.Request, _ session) (any, error) {
+func (server *Server) getOutboundLog(request *http.Request, _ session) (any, error) {
 	return map[string]any{"lines": server.manager.Log(request.PathValue("id"))}, nil
 }
 
@@ -470,21 +470,21 @@ func (server *Server) moveFallback(request *http.Request, _ session) (any, error
 	})
 }
 
-func (server *Server) getFilters(_ *http.Request, _ session) (any, error) {
+func (server *Server) getRoutes(_ *http.Request, _ session) (any, error) {
 	snapshot := server.store.Snapshot()
 	problems, failure := server.problems()
-	return map[string]any{"filters": snapshot.Filters, "directives": rules.Directives,
+	return map[string]any{"routes": snapshot.Routes, "directives": rules.Directives,
 		"warnings": rules.Check(router.Items(snapshot)), "problems": problems,
 		"failure": failure, "default_target": snapshot.Settings.DefaultTarget}, nil
 }
 
-func (server *Server) addFilter(request *http.Request, _ session) (any, error) {
-	body, result := config.Filter{}, config.Filter{}
+func (server *Server) addRoute(request *http.Request, _ session) (any, error) {
+	body, result := config.Route{}, config.Route{}
 	if err := decode(request, &body); err != nil {
 		return nil, err
 	} else if err = server.store.Update(func(config *config.Config) error {
 		var err error
-		result, err = config.AddFilter(body)
+		result, err = config.AddRoute(body)
 		return err
 	}); err != nil {
 		return nil, err
@@ -492,8 +492,8 @@ func (server *Server) addFilter(request *http.Request, _ session) (any, error) {
 	return result, nil
 }
 
-func (server *Server) previewFilter(request *http.Request, _ session) (any, error) {
-	body := config.Filter{}
+func (server *Server) previewRoute(request *http.Request, _ session) (any, error) {
+	body := config.Route{}
 	if err := decode(request, &body); err != nil {
 		return nil, err
 	}
@@ -519,29 +519,29 @@ func (server *Server) setDefaultTarget(request *http.Request, _ session) (any, e
 	})
 }
 
-func (server *Server) updateFilter(request *http.Request, _ session) (any, error) {
-	body := config.Filter{}
+func (server *Server) updateRoute(request *http.Request, _ session) (any, error) {
+	body := config.Route{}
 	if err := decode(request, &body); err != nil {
 		return nil, err
 	}
 	return body, server.store.Update(func(config *config.Config) error {
-		return config.UpdateFilter(request.PathValue("key"), body)
+		return config.UpdateRoute(request.PathValue("key"), body)
 	})
 }
 
-func (server *Server) removeFilter(request *http.Request, _ session) (any, error) {
+func (server *Server) removeRoute(request *http.Request, _ session) (any, error) {
 	return map[string]bool{"ok": true}, server.store.Update(func(config *config.Config) error {
-		return config.RemoveFilter(request.PathValue("key"))
+		return config.RemoveRoute(request.PathValue("key"))
 	})
 }
 
-func (server *Server) moveFilter(request *http.Request, _ session) (any, error) {
+func (server *Server) moveRoute(request *http.Request, _ session) (any, error) {
 	body := moveRequest{}
 	if err := decode(request, &body); err != nil {
 		return nil, err
 	}
 	return map[string]bool{"ok": true}, server.store.Update(func(config *config.Config) error {
-		return config.MoveFilter(request.PathValue("key"), body.Delta)
+		return config.MoveRoute(request.PathValue("key"), body.Delta)
 	})
 }
 
@@ -635,6 +635,6 @@ func (server *Server) importBackup(request *http.Request, current session) (any,
 	}
 	snapshot := server.store.Snapshot()
 	server.options.Logf("backup imported by '%v'", current.user.Name)
-	return map[string]int{"endpoints": len(snapshot.Endpoints),
-		"fallbacks": len(snapshot.Fallbacks), "filters": len(snapshot.Filters)}, nil
+	return map[string]int{"outbounds": len(snapshot.Outbounds),
+		"fallbacks": len(snapshot.Fallbacks), "routes": len(snapshot.Routes)}, nil
 }

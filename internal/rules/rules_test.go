@@ -33,16 +33,16 @@ func TestCheck_Domains(t *testing.T) {
 }
 
 func TestCheck_DomainsOrder(t *testing.T) {
-	narrow := Item{Key: "a", Label: "'Filter 1'", Target: "DIRECT",
+	narrow := Item{Key: "a", Label: "'Route 1'", Target: "DIRECT",
 		Rules: []Rule{{Directive: DomainSuffix, Value: "im-squadus.elvees.com"}}}
-	wide := Item{Key: "b", Label: "'Filter 2'", Target: "OpenVPN 1",
+	wide := Item{Key: "b", Label: "'Route 2'", Target: "OpenVPN 1",
 		Rules: []Rule{{Directive: DomainSuffix, Value: "elvees.com"}}}
 	require.Empty(t, Check([]Item{narrow, wide}))
 	{
 		result := Check([]Item{wide, narrow})
 		require.Len(t, result, 1)
-		require.Equal(t, "DOMAIN-SUFFIX 'elvees.com' in 'Filter 2' covers DOMAIN-SUFFIX "+
-			"'im-squadus.elvees.com' in 'Filter 1' (different targets: 'OpenVPN 1' and 'DIRECT')",
+		require.Equal(t, "DOMAIN-SUFFIX 'elvees.com' in 'Route 2' covers DOMAIN-SUFFIX "+
+			"'im-squadus.elvees.com' in 'Route 1' (different targets: 'OpenVPN 1' and 'DIRECT')",
 			result[0].Message)
 		require.Equal(t, []string{"b", "a"}, result[0].Keys)
 	}

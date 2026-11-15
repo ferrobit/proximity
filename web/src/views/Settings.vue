@@ -13,19 +13,19 @@
             <a-select v-model:value="form.log_level" :options="['silent', 'error', 'warning', 'info', 'debug'].map((value) => ({ value }))" /></a-form-item></a-col>
         </a-row>
         <a-form-item :extra="session.host_network
-          ? 'Linux host network: programs need no proxy settings, every outgoing connection is checked against the filters'
+          ? 'Linux host network: programs need no proxy settings, every outgoing connection is checked against the routes'
           : 'Available only when the container uses the host network (Linux, docker-compose.yml)'">
           <a-checkbox v-model:checked="form.capture" :disabled="!isAdmin() || !session.host_network">Route all outgoing connections of the host through Proximity</a-checkbox>
         </a-form-item>
-        <a-form-item extra="Enable when the host has IPv6 connectivity, otherwise IPv6 traffic bypasses the filters">
+        <a-form-item extra="Enable when the host has IPv6 connectivity, otherwise IPv6 traffic bypasses the routes">
           <a-checkbox v-model:checked="form.ipv6">IPv6</a-checkbox>
         </a-form-item>
-        <a-form-item extra="Periodically opens a TCP connection through HOST endpoints and to proxy servers to detect their state">
+        <a-form-item extra="Periodically opens a TCP connection through HOST outbounds and to proxy servers to detect their state">
           <a-checkbox v-model:checked="form.connectivity_checks">Enable connectivity checks</a-checkbox>
         </a-form-item>
         <a-row :gutter="16">
           <a-col :span="12"><a-form-item label="Probe target (host:port)" name="probe_target" :rules="[{ required: true, pattern: /^[^\s:]+:\d{1,5}$/, message: 'host:port expected' }]"
-            extra="Used to check HOST endpoints"><a-input v-model:value="form.probe_target" :disabled="!isAdmin() || !form.connectivity_checks" /></a-form-item></a-col>
+            extra="Used to check HOST outbounds"><a-input v-model:value="form.probe_target" :disabled="!isAdmin() || !form.connectivity_checks" /></a-form-item></a-col>
           <a-col :span="12"><a-form-item label="Check interval, seconds" name="check_interval" :rules="[{ required: true, type: 'number', min: 5, max: 3600, message: '5…3600' }]">
             <a-input-number v-model:value="form.check_interval" style="width: 100%" :disabled="!isAdmin() || !form.connectivity_checks" /></a-form-item></a-col>
         </a-row>
@@ -37,7 +37,7 @@
       <template v-if="canEdit()">
         <a-divider orientation="left"><DatabaseOutlined /> Backup &amp; Restore</a-divider>
         <p class="muted">
-          The file contains endpoints (with passwords and VPN keys), fallbacks, filters and settings. User accounts are not included.
+          The file contains outbounds (with passwords and VPN keys), fallbacks, routes and settings. User accounts are not included.
           <span v-if="!isAdmin()">Import by an operator keeps the current settings.</span>
         </p>
         <a-space wrap>
@@ -121,14 +121,14 @@ function importBackup(file) {
     }
     Modal.confirm({
       title: 'Import configuration?',
-      content: `Current endpoints, fallbacks and filters will be replaced with the content of '${file.name}'.`,
+      content: `Current outbounds, fallbacks and routes will be replaced with the content of '${file.name}'.`,
       okText: 'Import',
       okType: 'danger',
       async onOk() {
         importing.value = true
         try {
           const result = await api.post('/api/backup', data)
-          message.success(`Imported: ${result.endpoints} endpoints, ${result.fallbacks} fallbacks, ${result.filters} filters`)
+          message.success(`Imported: ${result.outbounds} outbounds, ${result.fallbacks} fallbacks, ${result.routes} routes`)
           await loadSession()
           await load()
           emit('refresh')

@@ -1,31 +1,31 @@
 <template>
   <div>
-    <h2 class="pane-title"><FilterOutlined /> Filters</h2>
+    <h2 class="pane-title"><SwapOutlined /> Routes</h2>
     <a-alert v-if="failure" type="error" show-icon style="margin-bottom: 12px" message="Router configuration is not applied" :description="failure" />
-    <a-alert v-if="problems.length" type="warning" show-icon style="margin-bottom: 12px" message="Some filters are not active">
+    <a-alert v-if="problems.length" type="warning" show-icon style="margin-bottom: 12px" message="Some routes are not active">
       <template #description><div v-for="line in problems" :key="line">{{ line }}</div></template>
     </a-alert>
     <a-alert v-if="warnings.length" type="warning" show-icon closable style="margin-bottom: 12px"
-      :message="`Inconsistent filters: ${warnings.length} warning${warnings.length > 1 ? 's' : ''}`">
+      :message="`Inconsistent routes: ${warnings.length} warning${warnings.length > 1 ? 's' : ''}`">
       <template #description>
         <div v-for="(warning, index) in shownWarnings" :key="index">{{ warning.message }}</div>
         <a v-if="warnings.length > 5" @click="allWarnings = !allWarnings">{{ allWarnings ? 'Show less' : `Show all ${warnings.length}` }}</a>
       </template>
     </a-alert>
     <div class="toolbar">
-      <a-button v-if="canEdit()" type="primary" @click="open(null)"><template #icon><PlusOutlined /></template>Add filter</a-button>
+      <a-button v-if="canEdit()" type="primary" @click="open(null)"><template #icon><PlusOutlined /></template>Add route</a-button>
       <a-button @click="load"><template #icon><ReloadOutlined /></template>Refresh</a-button>
       <a-button v-if="canEdit()" @click="showConfig"><template #icon><CodeOutlined /></template>Router configuration</a-button>
       <span class="spacer" />
-      <span class="muted">Filters are checked from top to bottom, the first match wins.</span>
+      <span class="muted">Routes are checked from top to bottom, the first match wins.</span>
     </div>
-    <a-table :columns="columns" :data-source="filters" row-key="key" size="middle" :pagination="false" :loading="loading"
+    <a-table :columns="columns" :data-source="routes" row-key="key" size="middle" :pagination="false" :loading="loading"
       :row-class-name="(record) => warned.has(record.key) ? 'row-warned' : ''">
       <template #bodyCell="{ column, record, index }">
         <template v-if="column.key === 'order'">
           <a-button-group size="small">
             <a-button :disabled="!canEdit() || index === 0" @click="move(record, -1)"><template #icon><ArrowUpOutlined /></template></a-button>
-            <a-button :disabled="!canEdit() || index === filters.length - 1" @click="move(record, 1)"><template #icon><ArrowDownOutlined /></template></a-button>
+            <a-button :disabled="!canEdit() || index === routes.length - 1" @click="move(record, 1)"><template #icon><ArrowDownOutlined /></template></a-button>
           </a-button-group>
         </template>
         <template v-else-if="column.key === 'number'">{{ index + 1 }}</template>
@@ -34,7 +34,7 @@
         </template>
         <template v-else-if="column.key === 'id'">
           <b>{{ record.id }}</b>
-          <a-tooltip v-if="record.provided" title="Read-only routes provided by the VPN connection. Enable to route them to this endpoint.">
+          <a-tooltip v-if="record.provided" title="Read-only routes provided by the VPN connection. Enable to send them to this outbound.">
             <a-tag color="gold" style="margin-left: 6px"><LockOutlined /> provided</a-tag>
           </a-tooltip>
           <a-tooltip v-if="warned.has(record.key)" title="See warnings above"><WarningOutlined style="margin-left: 6px; color: #faad14" /></a-tooltip>
@@ -54,7 +54,7 @@
           <a-space v-if="canEdit()">
             <a-tooltip :title="record.provided ? 'View' : 'Edit'"><a-button size="small" @click="open(record)">
               <template #icon><EyeOutlined v-if="record.provided" /><EditOutlined v-else /></template></a-button></a-tooltip>
-            <a-popconfirm v-if="!record.provided" title="Delete this filter?" @confirm="remove(record)">
+            <a-popconfirm v-if="!record.provided" title="Delete this route?" @confirm="remove(record)">
               <a-button size="small" danger><template #icon><DeleteOutlined /></template></a-button>
             </a-popconfirm>
           </a-space>
@@ -67,12 +67,13 @@
         </div>
       </template>
     </a-table>
+    <Fallbacks @changed="load" />
     <a-modal v-model:open="visible" :title="dialogTitle" width="680px" :confirm-loading="busy" destroy-on-close
       :ok-button-props="{ disabled: readOnly }" ok-text="Save" @ok="save">
       <a-form ref="formRef" layout="vertical" :model="form">
         <a-row :gutter="16">
-          <a-col :span="16"><a-form-item label="ID" name="id" :rules="[{ max: 64, message: 'Up to 64 characters' }]" extra="Unique among filters, allocated automatically when empty">
-            <a-input v-model:value="form.id" :disabled="readOnly" :placeholder="editing ? editing.id : 'Filter N'" /></a-form-item></a-col>
+          <a-col :span="16"><a-form-item label="ID" name="id" :rules="[{ max: 64, message: 'Up to 64 characters' }]" extra="Unique among routes, allocated automatically when empty">
+            <a-input v-model:value="form.id" :disabled="readOnly" :placeholder="editing ? editing.id : 'Route N'" /></a-form-item></a-col>
           <a-col :span="8"><a-form-item label="Enabled"><a-switch v-model:checked="form.enabled" :disabled="readOnly" /></a-form-item></a-col>
           <a-col :span="12"><a-form-item label="Directive" name="directive" :rules="[{ required: true }]">
             <a-select v-model:value="form.directive" :disabled="readOnly" show-search :options="directives.map((value) => ({ value }))" @change="preview" /></a-form-item></a-col>
@@ -100,10 +101,11 @@
 import { computed, onMounted, reactive, ref } from 'vue'
 import { message } from 'ant-design-vue'
 import {
-  ArrowDownOutlined, ArrowUpOutlined, CodeOutlined, DeleteOutlined, EditOutlined, EyeOutlined, FilterOutlined,
-  LockOutlined, PlusOutlined, ReloadOutlined, RightOutlined, WarningOutlined
+  ArrowDownOutlined, ArrowUpOutlined, CodeOutlined, DeleteOutlined, EditOutlined, EyeOutlined, LockOutlined,
+  PlusOutlined, ReloadOutlined, RightOutlined, SwapOutlined, WarningOutlined
 } from '@ant-design/icons-vue'
 import { api, canEdit, id } from '../api'
+import Fallbacks from './Fallbacks.vue'
 
 const hints = {
   'DOMAIN': 'Exact host name, for example: www.example.com',
@@ -132,7 +134,7 @@ const columns = [
   { title: 'Target', key: 'target' },
   { title: '', key: 'actions', width: 100 }
 ]
-const filters = ref([])
+const routes = ref([])
 const directives = ref([])
 const warnings = ref([])
 const problems = ref([])
@@ -153,12 +155,12 @@ const configText = ref('')
 let previewTimer = null
 
 const readOnly = computed(() => !!(editing.value && editing.value.provided))
-const dialogTitle = computed(() => !editing.value ? 'Add filter' : readOnly.value ? 'Provided filter (read-only)' : 'Edit filter')
+const dialogTitle = computed(() => !editing.value ? 'Add route' : readOnly.value ? 'Provided route (read-only)' : 'Edit route')
 const shownWarnings = computed(() => allWarnings.value ? warnings.value : warnings.value.slice(0, 5))
 const warned = computed(() => new Set(warnings.value.flatMap((item) => item.keys)))
 const targetOptions = computed(() => [
   { label: 'Built-in', options: targets.value.filter((item) => item.kind === 'builtin').map(option) },
-  { label: 'Endpoints', options: targets.value.filter((item) => item.kind === 'endpoint').map(option) },
+  { label: 'Outbounds', options: targets.value.filter((item) => item.kind === 'outbound').map(option) },
   { label: 'Fallbacks', options: targets.value.filter((item) => item.kind === 'fallback').map(option) }
 ])
 
@@ -176,8 +178,8 @@ function targetColor(target) {
 async function load() {
   loading.value = true
   try {
-    const data = await api.get('/api/filters')
-    filters.value = data.filters
+    const data = await api.get('/api/routes')
+    routes.value = data.routes
     directives.value = data.directives
     warnings.value = data.warnings
     problems.value = data.problems
@@ -213,7 +215,7 @@ function preview() {
       return
     }
     try {
-      previewLines.value = (await api.post('/api/filters/preview', { ...body(), target: form.target || 'TARGET' })).lines
+      previewLines.value = (await api.post('/api/routes/preview', { ...body(), target: form.target || 'TARGET' })).lines
       previewError.value = ''
     } catch (error) {
       previewError.value = error.message
@@ -236,16 +238,16 @@ async function save() {
   await formRef.value.validate()
   busy.value = true
   const done = await act(() => editing.value
-    ? api.put(`/api/filters/${id(editing.value.key)}`, body())
-    : api.post('/api/filters', body()))
+    ? api.put(`/api/routes/${id(editing.value.key)}`, body())
+    : api.post('/api/routes', body()))
   busy.value = false
   visible.value = !done
 }
 
-const toggle = (record, enabled) => act(() => api.put(`/api/filters/${id(record.key)}`, { ...record, enabled }))
-const move = (record, delta) => act(() => api.post(`/api/filters/${id(record.key)}/move`, { delta }))
-const remove = (record) => act(() => api.remove(`/api/filters/${id(record.key)}`))
-const setDefault = (target) => act(() => api.put('/api/filters/default', { target }))
+const toggle = (record, enabled) => act(() => api.put(`/api/routes/${id(record.key)}`, { ...record, enabled }))
+const move = (record, delta) => act(() => api.post(`/api/routes/${id(record.key)}/move`, { delta }))
+const remove = (record) => act(() => api.remove(`/api/routes/${id(record.key)}`))
+const setDefault = (target) => act(() => api.put('/api/routes/default', { target }))
 
 async function showConfig() {
   try {

@@ -33,23 +33,23 @@ func makeKey() (string, error) {
 func (config *Config) Clone() Config {
 	result := *config
 	result.Users = slices.Clone(config.Users)
-	result.Endpoints = slices.Clone(config.Endpoints)
+	result.Outbounds = slices.Clone(config.Outbounds)
 	result.Fallbacks = slices.Clone(config.Fallbacks)
-	result.Filters = slices.Clone(config.Filters)
-	for index := range result.Endpoints {
-		result.Endpoints[index] = result.Endpoints[index].Clone()
+	result.Routes = slices.Clone(config.Routes)
+	for index := range result.Outbounds {
+		result.Outbounds[index] = result.Outbounds[index].Clone()
 	}
 	for index := range result.Fallbacks {
-		result.Fallbacks[index].Endpoints = slices.Clone(result.Fallbacks[index].Endpoints)
+		result.Fallbacks[index].Outbounds = slices.Clone(result.Fallbacks[index].Outbounds)
 	}
-	for index := range result.Filters {
-		result.Filters[index].Params = slices.Clone(result.Filters[index].Params)
+	for index := range result.Routes {
+		result.Routes[index].Params = slices.Clone(result.Routes[index].Params)
 	}
 	return result
 }
 
 func (config *Config) TargetExists(target string) bool {
-	return target == TargetDirect || target == TargetReject || config.findEndpoint(target) >= 0 ||
+	return target == TargetDirect || target == TargetReject || config.findOutbound(target) >= 0 ||
 		config.findFallback(target) >= 0
 }
 
@@ -61,36 +61,36 @@ func (config *Config) Validate() error {
 			return fmt.Errorf("duplicate user '%v'", config.Users[index].Name)
 		}
 	}
-	for index := range config.Endpoints {
-		endpoint := &config.Endpoints[index]
-		if endpoint.normalize(); config.findEndpoint(endpoint.ID) != index {
-			return fmt.Errorf("duplicate endpoint ID '%v'", endpoint.ID)
-		} else if err := endpoint.validate(); err != nil {
-			return fmt.Errorf("failed to check endpoint '%v': %w", endpoint.ID, err)
+	for index := range config.Outbounds {
+		outbound := &config.Outbounds[index]
+		if outbound.normalize(); config.findOutbound(outbound.ID) != index {
+			return fmt.Errorf("duplicate outbound ID '%v'", outbound.ID)
+		} else if err := outbound.validate(); err != nil {
+			return fmt.Errorf("failed to check outbound '%v': %w", outbound.ID, err)
 		}
-		for _, other := range config.Endpoints[:index] {
-			if other.Slot == endpoint.Slot {
-				return fmt.Errorf("duplicate endpoint slot (%v)", endpoint.Slot)
+		for _, other := range config.Outbounds[:index] {
+			if other.Slot == outbound.Slot {
+				return fmt.Errorf("duplicate outbound slot (%v)", outbound.Slot)
 			}
 		}
 	}
 	for index := range config.Fallbacks {
 		fallback := &config.Fallbacks[index]
 		if fallback.normalize(); config.findFallback(fallback.ID) != index ||
-			config.findEndpoint(fallback.ID) >= 0 {
+			config.findOutbound(fallback.ID) >= 0 {
 			return fmt.Errorf("duplicate fallback ID '%v'", fallback.ID)
 		} else if err := fallback.validate(config); err != nil {
 			return fmt.Errorf("failed to check fallback '%v': %w", fallback.ID, err)
 		}
 	}
-	for index := range config.Filters {
-		filter := &config.Filters[index]
-		if filter.normalize(); config.findFilter(filter.Key) != index || filter.Key == "" {
-			return fmt.Errorf("duplicate filter key '%v'", filter.Key)
-		} else if config.findFilterID(filter.ID) != index {
-			return fmt.Errorf("duplicate filter ID '%v'", filter.ID)
-		} else if err := filter.validate(); err != nil {
-			return fmt.Errorf("failed to check filter %v: %w", index+1, err)
+	for index := range config.Routes {
+		route := &config.Routes[index]
+		if route.normalize(); config.findRoute(route.Key) != index || route.Key == "" {
+			return fmt.Errorf("duplicate route key '%v'", route.Key)
+		} else if config.findRouteID(route.ID) != index {
+			return fmt.Errorf("duplicate route ID '%v'", route.ID)
+		} else if err := route.validate(); err != nil {
+			return fmt.Errorf("failed to check route %v: %w", index+1, err)
 		}
 	}
 	if err := config.Settings.validate(config); err != nil {
@@ -107,66 +107,66 @@ func (config *Config) NextID(label string) string {
 	}
 }
 
-func (config *Config) NextFilterID() string {
+func (config *Config) NextRouteID() string {
 	for index := 1; ; index++ {
-		if id := fmt.Sprintf("Filter %v", index); config.findFilterID(id) < 0 {
+		if id := fmt.Sprintf("Route %v", index); config.findRouteID(id) < 0 {
 			return id
 		}
 	}
 }
 
-func (config *Config) AddEndpoint(endpoint Endpoint) (Endpoint, error) {
-	if TypeLabel(endpoint.Type) == "" {
-		return Endpoint{}, fmt.Errorf("unexpected endpoint type '%v'", endpoint.Type)
+func (config *Config) AddOutbound(outbound Outbound) (Outbound, error) {
+	if TypeLabel(outbound.Type) == "" {
+		return Outbound{}, fmt.Errorf("unexpected outbound type '%v'", outbound.Type)
 	}
-	if endpoint.normalize(); endpoint.ID == "" {
-		endpoint.ID = config.NextID(TypeLabel(endpoint.Type))
+	if outbound.normalize(); outbound.ID == "" {
+		outbound.ID = config.NextID(TypeLabel(outbound.Type))
 	}
-	if endpoint.Slot = config.freeSlot(); config.TargetExists(endpoint.ID) {
-		return Endpoint{}, fmt.Errorf("ID '%v' already exists", endpoint.ID)
-	} else if err := endpoint.validate(); err != nil {
-		return Endpoint{}, err
+	if outbound.Slot = config.freeSlot(); config.TargetExists(outbound.ID) {
+		return Outbound{}, fmt.Errorf("ID '%v' already exists", outbound.ID)
+	} else if err := outbound.validate(); err != nil {
+		return Outbound{}, err
 	}
-	config.Endpoints = append(config.Endpoints, endpoint)
-	return endpoint, nil
+	config.Outbounds = append(config.Outbounds, outbound)
+	return outbound, nil
 }
 
-func (config *Config) UpdateEndpoint(id string, endpoint Endpoint) error {
-	index := config.findEndpoint(id)
+func (config *Config) UpdateOutbound(id string, outbound Outbound) error {
+	index := config.findOutbound(id)
 	if index < 0 {
-		return fmt.Errorf("endpoint '%v' does not exist", id)
+		return fmt.Errorf("outbound '%v' does not exist", id)
 	}
-	current := config.Endpoints[index]
-	endpoint.Type, endpoint.Slot = current.Type, current.Slot
-	if endpoint.normalize(); endpoint.ID == "" {
-		endpoint.ID = id
+	current := config.Outbounds[index]
+	outbound.Type, outbound.Slot = current.Type, current.Slot
+	if outbound.normalize(); outbound.ID == "" {
+		outbound.ID = id
 	}
-	if endpoint.Type == "" {
-		return errors.New("endpoint type does not exist")
-	} else if endpoint.ID != id && config.TargetExists(endpoint.ID) {
-		return fmt.Errorf("ID '%v' already exists", endpoint.ID)
-	} else if err := endpoint.validate(); err != nil {
+	if outbound.Type == "" {
+		return errors.New("outbound type does not exist")
+	} else if outbound.ID != id && config.TargetExists(outbound.ID) {
+		return fmt.Errorf("ID '%v' already exists", outbound.ID)
+	} else if err := outbound.validate(); err != nil {
 		return err
 	}
-	config.Endpoints[index] = endpoint
-	config.renameTarget(id, endpoint.ID)
+	config.Outbounds[index] = outbound
+	config.renameTarget(id, outbound.ID)
 	return nil
 }
 
-func (config *Config) RemoveEndpoint(id string) error {
-	index := config.findEndpoint(id)
+func (config *Config) RemoveOutbound(id string) error {
+	index := config.findOutbound(id)
 	if index < 0 {
-		return fmt.Errorf("endpoint '%v' does not exist", id)
+		return fmt.Errorf("outbound '%v' does not exist", id)
 	}
-	config.Endpoints = slices.Delete(config.Endpoints, index, index+1)
+	config.Outbounds = slices.Delete(config.Outbounds, index, index+1)
 	for index := range config.Fallbacks {
 		fallback := &config.Fallbacks[index]
-		fallback.Endpoints = slices.DeleteFunc(fallback.Endpoints, func(member string) bool {
+		fallback.Outbounds = slices.DeleteFunc(fallback.Outbounds, func(member string) bool {
 			return member == id
 		})
 	}
-	config.Filters = slices.DeleteFunc(config.Filters, func(filter Filter) bool {
-		return filter.Provided == id
+	config.Routes = slices.DeleteFunc(config.Routes, func(route Route) bool {
+		return route.Provided == id
 	})
 	if config.Settings.DefaultTarget == id {
 		config.Settings.DefaultTarget = TargetDirect
@@ -174,8 +174,8 @@ func (config *Config) RemoveEndpoint(id string) error {
 	return nil
 }
 
-func (config *Config) MoveEndpoint(id string, delta int) error {
-	return moveItem(config.Endpoints, config.findEndpoint(id), delta)
+func (config *Config) MoveOutbound(id string, delta int) error {
+	return moveItem(config.Outbounds, config.findOutbound(id), delta)
 }
 
 func (config *Config) AddFallback(fallback Fallback) (Fallback, error) {
@@ -225,75 +225,75 @@ func (config *Config) MoveFallback(id string, delta int) error {
 	return moveItem(config.Fallbacks, config.findFallback(id), delta)
 }
 
-func (config *Config) AddFilter(filter Filter) (Filter, error) {
+func (config *Config) AddRoute(route Route) (Route, error) {
 	key, err := makeKey()
 	if err != nil {
-		return Filter{}, err
+		return Route{}, err
 	}
-	filter.Key, filter.Provided = key, ""
-	if err = config.prepareFilter(&filter, -1); err != nil {
-		return Filter{}, err
+	route.Key, route.Provided = key, ""
+	if err = config.prepareRoute(&route, -1); err != nil {
+		return Route{}, err
 	}
-	config.Filters = append(config.Filters, filter)
-	return filter, nil
+	config.Routes = append(config.Routes, route)
+	return route, nil
 }
 
-func (config *Config) UpdateFilter(key string, filter Filter) error {
-	index := config.findFilter(key)
+func (config *Config) UpdateRoute(key string, route Route) error {
+	index := config.findRoute(key)
 	if index < 0 {
-		return fmt.Errorf("filter '%v' does not exist", key)
-	} else if current := config.Filters[index]; current.Provided != "" {
-		config.Filters[index].Enabled = filter.Enabled
+		return fmt.Errorf("route '%v' does not exist", key)
+	} else if current := config.Routes[index]; current.Provided != "" {
+		config.Routes[index].Enabled = route.Enabled
 		return nil
 	}
-	filter.Key, filter.Provided = key, ""
-	if err := config.prepareFilter(&filter, index); err != nil {
+	route.Key, route.Provided = key, ""
+	if err := config.prepareRoute(&route, index); err != nil {
 		return err
 	}
-	config.Filters[index] = filter
+	config.Routes[index] = route
 	return nil
 }
 
-func (config *Config) RemoveFilter(key string) error {
-	index := config.findFilter(key)
+func (config *Config) RemoveRoute(key string) error {
+	index := config.findRoute(key)
 	if index < 0 {
-		return fmt.Errorf("filter '%v' does not exist", key)
-	} else if config.Filters[index].Provided != "" {
-		return errors.New("provided filter is read-only")
+		return fmt.Errorf("route '%v' does not exist", key)
+	} else if config.Routes[index].Provided != "" {
+		return errors.New("provided route is read-only")
 	}
-	config.Filters = slices.Delete(config.Filters, index, index+1)
+	config.Routes = slices.Delete(config.Routes, index, index+1)
 	return nil
 }
 
-func (config *Config) MoveFilter(key string, delta int) error {
-	return moveItem(config.Filters, config.findFilter(key), delta)
+func (config *Config) MoveRoute(key string, delta int) error {
+	return moveItem(config.Routes, config.findRoute(key), delta)
 }
 
-func (config *Config) SetRoutes(id string, routes []string) (bool, error) {
-	index := slices.IndexFunc(config.Filters, func(filter Filter) bool {
-		return filter.Provided == id
+func (config *Config) SetRoutes(id string, networks []string) (bool, error) {
+	index := slices.IndexFunc(config.Routes, func(route Route) bool {
+		return route.Provided == id
 	})
-	if len(routes) == 0 && index < 0 {
+	if len(networks) == 0 && index < 0 {
 		return false, nil
-	} else if len(routes) == 0 {
-		config.Filters = slices.Delete(config.Filters, index, index+1)
+	} else if len(networks) == 0 {
+		config.Routes = slices.Delete(config.Routes, index, index+1)
 		return true, nil
-	} else if index >= 0 && slices.Equal(config.Filters[index].Params, routes) {
+	} else if index >= 0 && slices.Equal(config.Routes[index].Params, networks) {
 		return false, nil
 	} else if index >= 0 {
-		config.Filters[index].Params = slices.Clone(routes)
+		config.Routes[index].Params = slices.Clone(networks)
 		return true, nil
 	}
 	key, err := makeKey()
 	if err != nil {
 		return false, err
 	}
-	filter := Filter{Key: key, ID: providedPrefix + id, Directive: rules.IPCIDR, Target: id,
-		Params: slices.Clone(routes), Provided: id}
-	if config.findFilterID(filter.ID) >= 0 {
-		filter.ID = config.NextFilterID()
+	route := Route{Key: key, ID: providedPrefix + id, Directive: rules.IPCIDR, Target: id,
+		Params: slices.Clone(networks), Provided: id}
+	if config.findRouteID(route.ID) >= 0 {
+		route.ID = config.NextRouteID()
 	}
-	config.Filters = append(config.Filters, filter)
+	config.Routes = append(config.Routes, route)
 	return true, nil
 }
 
@@ -343,11 +343,11 @@ func (config *Config) FindUser(name string) (User, bool) {
 	return User{}, false
 }
 
-func (config *Config) FindEndpoint(id string) (Endpoint, bool) {
-	if index := config.findEndpoint(id); index >= 0 {
-		return config.Endpoints[index], true
+func (config *Config) FindOutbound(id string) (Outbound, bool) {
+	if index := config.findOutbound(id); index >= 0 {
+		return config.Outbounds[index], true
 	}
-	return Endpoint{}, false
+	return Outbound{}, false
 }
 
 func (config *Config) checkAdministrator() error {
@@ -364,22 +364,22 @@ func (config *Config) renameTarget(previous string, current string) {
 		return
 	}
 	for index := range config.Fallbacks {
-		for position, member := range config.Fallbacks[index].Endpoints {
+		for position, member := range config.Fallbacks[index].Outbounds {
 			if member == previous {
-				config.Fallbacks[index].Endpoints[position] = current
+				config.Fallbacks[index].Outbounds[position] = current
 			}
 		}
 	}
-	for index := range config.Filters {
-		filter := &config.Filters[index]
-		if filter.Target == previous {
-			filter.Target = current
+	for index := range config.Routes {
+		route := &config.Routes[index]
+		if route.Target == previous {
+			route.Target = current
 		}
-		if filter.Provided != previous {
+		if route.Provided != previous {
 			continue
-		} else if filter.Provided = current; filter.ID == providedPrefix+previous &&
-			config.findFilterID(providedPrefix+current) < 0 {
-			filter.ID = providedPrefix + current
+		} else if route.Provided = current; route.ID == providedPrefix+previous &&
+			config.findRouteID(providedPrefix+current) < 0 {
+			route.ID = providedPrefix + current
 		}
 	}
 	if config.Settings.DefaultTarget == previous {
@@ -387,24 +387,24 @@ func (config *Config) renameTarget(previous string, current string) {
 	}
 }
 
-func (config *Config) prepareFilter(filter *Filter, index int) error {
-	if filter.normalize(); filter.ID == "" && index >= 0 {
-		filter.ID = config.Filters[index].ID
-	} else if filter.ID == "" {
-		filter.ID = config.NextFilterID()
+func (config *Config) prepareRoute(route *Route, index int) error {
+	if route.normalize(); route.ID == "" && index >= 0 {
+		route.ID = config.Routes[index].ID
+	} else if route.ID == "" {
+		route.ID = config.NextRouteID()
 	}
-	if found := config.findFilterID(filter.ID); found >= 0 && found != index {
-		return fmt.Errorf("filter ID '%v' already exists", filter.ID)
-	} else if !config.TargetExists(filter.Target) {
-		return fmt.Errorf("target '%v' does not exist", filter.Target)
-	} else if len(filter.ID) > 64 {
-		return errors.New("filter ID is too long")
+	if found := config.findRouteID(route.ID); found >= 0 && found != index {
+		return fmt.Errorf("route ID '%v' already exists", route.ID)
+	} else if !config.TargetExists(route.Target) {
+		return fmt.Errorf("target '%v' does not exist", route.Target)
+	} else if len(route.ID) > 64 {
+		return errors.New("route ID is too long")
 	}
-	_, params, err := rules.ParseText(filter.Directive, filter.Params)
+	_, params, err := rules.ParseText(route.Directive, route.Params)
 	if err != nil {
 		return fmt.Errorf("failed to check rule parameters: %w", err)
 	}
-	filter.Params = params
+	route.Params = params
 	return nil
 }
 
@@ -414,26 +414,43 @@ func (config *Config) upgrade() error {
 }
 
 func (config *Config) migrate() {
-	if config.Version < 2 {
+	if config.adopt(); config.Version < 2 {
 		config.Settings.ConnectivityChecks, config.Settings.Capture = true, true
 		for index := range config.Fallbacks {
 			config.Fallbacks[index].HealthCheck = true
 		}
 	}
-	for index := range config.Filters {
-		filter := &config.Filters[index]
-		if filter.ID = strings.TrimSpace(filter.ID); filter.ID == "" ||
-			config.findFilterID(filter.ID) != index {
-			filter.ID = config.NextFilterID()
+	for index := range config.Routes {
+		route := &config.Routes[index]
+		if route.ID = strings.TrimSpace(route.ID); route.ID == "" ||
+			config.findRouteID(route.ID) != index {
+			route.ID = config.NextRouteID()
 		}
 	}
 	config.Version = currentVersion
 }
 
+func (config *Config) adopt() {
+	if len(config.Outbounds) == 0 && config.Legacy.Endpoints != nil {
+		config.Outbounds = config.Legacy.Endpoints
+	}
+	if len(config.Routes) == 0 && config.Legacy.Filters != nil {
+		config.Routes = config.Legacy.Filters
+	}
+	config.Legacy = Legacy{}
+	for index := range config.Fallbacks {
+		fallback := &config.Fallbacks[index]
+		if len(fallback.Outbounds) == 0 && fallback.Legacy != nil {
+			fallback.Outbounds = fallback.Legacy
+		}
+		fallback.Legacy = nil
+	}
+}
+
 func (config *Config) freeSlot() int {
 	for slot := 1; ; slot++ {
-		if !slices.ContainsFunc(config.Endpoints, func(endpoint Endpoint) bool {
-			return endpoint.Slot == slot
+		if !slices.ContainsFunc(config.Outbounds, func(outbound Outbound) bool {
+			return outbound.Slot == slot
 		}) {
 			return slot
 		}
@@ -446,9 +463,9 @@ func (config *Config) findUser(name string) int {
 	})
 }
 
-func (config *Config) findEndpoint(id string) int {
-	return slices.IndexFunc(config.Endpoints, func(endpoint Endpoint) bool {
-		return endpoint.ID == id
+func (config *Config) findOutbound(id string) int {
+	return slices.IndexFunc(config.Outbounds, func(outbound Outbound) bool {
+		return outbound.ID == id
 	})
 }
 
@@ -458,42 +475,42 @@ func (config *Config) findFallback(id string) int {
 	})
 }
 
-func (config *Config) findFilter(key string) int {
-	return slices.IndexFunc(config.Filters, func(filter Filter) bool {
-		return filter.Key == key
+func (config *Config) findRoute(key string) int {
+	return slices.IndexFunc(config.Routes, func(route Route) bool {
+		return route.Key == key
 	})
 }
 
-func (config *Config) findFilterID(id string) int {
-	return slices.IndexFunc(config.Filters, func(filter Filter) bool {
-		return filter.ID == id
+func (config *Config) findRouteID(id string) int {
+	return slices.IndexFunc(config.Routes, func(route Route) bool {
+		return route.ID == id
 	})
 }
 
-func (endpoint Endpoint) Clone() Endpoint {
-	if endpoint.Host != nil {
-		host := *endpoint.Host
-		endpoint.Host = &host
+func (outbound Outbound) Clone() Outbound {
+	if outbound.Host != nil {
+		host := *outbound.Host
+		outbound.Host = &host
 	}
-	if endpoint.Socks5 != nil {
-		socks := *endpoint.Socks5
-		endpoint.Socks5 = &socks
+	if outbound.Socks5 != nil {
+		socks := *outbound.Socks5
+		outbound.Socks5 = &socks
 	}
-	if endpoint.HTTP != nil {
-		proxy := *endpoint.HTTP
-		endpoint.HTTP = &proxy
+	if outbound.HTTP != nil {
+		proxy := *outbound.HTTP
+		outbound.HTTP = &proxy
 	}
-	if endpoint.OpenVPN != nil {
-		options := *endpoint.OpenVPN
-		endpoint.OpenVPN = &options
+	if outbound.OpenVPN != nil {
+		options := *outbound.OpenVPN
+		outbound.OpenVPN = &options
 	}
-	if endpoint.AmneziaWG != nil {
-		options := *endpoint.AmneziaWG
-		endpoint.AmneziaWG = &options
+	if outbound.AmneziaWG != nil {
+		options := *outbound.AmneziaWG
+		outbound.AmneziaWG = &options
 	}
-	if endpoint.Monitoring != nil {
-		monitoring := *endpoint.Monitoring
-		endpoint.Monitoring = &monitoring
+	if outbound.Monitoring != nil {
+		monitoring := *outbound.Monitoring
+		outbound.Monitoring = &monitoring
 	}
-	return endpoint
+	return outbound
 }

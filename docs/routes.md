@@ -1,13 +1,13 @@
-# Filters
+# Routes
 
-Filters decide which endpoint or fallback handles each outgoing connection. Proximity
+Routes decide which outbound or fallback handles each outgoing connection. Proximity
 turns them into [mihomo rules](https://wiki.metacubex.one/en/config/rules/), checks them
 for mistakes and applies them immediately.
 
-![Filters page](images/filters.png)
+![Routes page](images/routes.png)
 
 - [How matching works](#how-matching-works)
-- [Fields of a filter](#fields-of-a-filter)
+- [Fields of a route](#fields-of-a-route)
 - [Directives](#directives)
 - [Normalization](#normalization)
 - [Comments](#comments)
@@ -19,27 +19,27 @@ for mistakes and applies them immediately.
 
 ## How matching works
 
-1. Filters are checked **from top to bottom**. Inside a filter, its lines are checked in
+1. Routes are checked **from top to bottom**. Inside a route, its lines are checked in
    order too.
 2. The **first match wins**; nothing below it is checked for that connection.
 3. A connection that matches nothing goes to the **Everything else (MATCH)** target
    shown under the table.
-4. Disabled filters (switch **On** is off) and filters whose target is disabled or missing
-   are skipped. The Filters page and the Dashboard show a warning for skipped filters.
+4. Disabled routes (switch **On** is off) and routes whose target is disabled or missing
+   are skipped. The Routes page and the Dashboard show a warning for skipped routes.
 
 Order is changed with the ↑ ↓ buttons. The new order is saved and applied at once.
 
-## Fields of a filter
+## Fields of a route
 
 | Field | Meaning |
 |---|---|
-| **ID** | Optional name, unique among filters. Empty → `Filter <N>` |
+| **ID** | Optional name, unique among routes. Empty → `Route <N>` |
 | **Directive** | The kind of condition: `DOMAIN-SUFFIX`, `IP-CIDR`, `GEOIP`, … |
-| **Target** | An endpoint, a fallback, `DIRECT` or `REJECT` |
+| **Target** | An outbound, a fallback, `DIRECT` or `REJECT` |
 | **Rule parameters** | One condition per line; `#` lines are comments |
-| **Enabled** | Switch the filter on or off without deleting it |
+| **Enabled** | Switch the route on or off without deleting it |
 
-![Filter editor with preview](images/filter-dialog.png)
+![Route editor with preview](images/route-dialog.png)
 
 The editor shows a live **preview**: the normalized parameters and the exact rule lines
 that will be sent to mihomo. Invalid lines are reported with their line number before you
@@ -98,7 +98,7 @@ Rejected input (error with the line number):
 - ports outside `1–65535`, reversed ranges like `9000-8000`;
 - a port on `SRC-IP-CIDR`;
 - `NETWORK` other than `tcp` / `udp`;
-- a filter that contains only comments (`rule parameters do not exist`).
+- a route that contains only comments (`rule parameters do not exist`).
 
 ## Comments
 
@@ -119,7 +119,7 @@ wiki.corp.example
 
 ## Consistency warnings
 
-Proximity lets you save any valid filter, but warns at the top of the page when a rule can
+Proximity lets you save any valid route, but warns at the top of the page when a rule can
 never take effect:
 
 | Situation | Example | Warning |
@@ -147,30 +147,30 @@ rows get a ⚠ mark and an orange bar.
 ## Routes provided by a VPN
 
 When an OpenVPN server pushes routes (or the configuration contains `route` lines),
-Proximity creates a read-only filter **Routes of &lt;endpoint&gt;** marked `provided`:
+Proximity creates a read-only route **Routes of &lt;outbound&gt;** marked `provided`:
 
-- directive `IP-CIDR`, target — the VPN endpoint itself;
+- directive `IP-CIDR`, target — the VPN outbound itself;
 - **disabled by default**: the routes are only shown until you turn the switch on;
-- the parameters can't be edited (👁 opens a read-only view), but the filter can be moved
+- the parameters can't be edited (👁 opens a read-only view), but the route can be moved
   up and down like any other;
 - the list is updated automatically when the VPN reconnects with different routes.
 
 Enable it when you want "everything the VPN would normally route" to go through this
-endpoint, without copying networks by hand.
+outbound, without copying networks by hand.
 
 ## Targets
 
 | Target | Meaning |
 |---|---|
-| Endpoint, e.g. `OpenVPN 1` | Use this endpoint |
-| Fallback, e.g. `Proxies` | Use the group: first good endpoint, or mihomo health check |
-| `DIRECT` | Connect directly from the container, bypassing endpoints |
+| Outbound, e.g. `OpenVPN 1` | Use this outbound |
+| Fallback, e.g. `Proxies` | Use the group: first good outbound, or mihomo health check |
+| `DIRECT` | Connect directly from the container, bypassing outbounds |
 | `REJECT` | Refuse the connection |
 
 The default target (**Everything else**) can be any of these as well. If it points to a
-disabled endpoint, Proximity falls back to `DIRECT` and shows a warning.
+disabled outbound, Proximity falls back to `DIRECT` and shows a warning.
 
-On rename of an endpoint or fallback, all filter targets and the default target are
+On rename of an outbound or fallback, all route targets and the default target are
 updated automatically.
 
 ## DNS: which server resolves the name

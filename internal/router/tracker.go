@@ -37,9 +37,10 @@ type Refused struct {
 }
 
 type Sample struct {
-	Time      int64               `json:"time"`
-	Total     [2]int64            `json:"total"`
-	Endpoints map[string][2]int64 `json:"endpoints"`
+	Time        int64               `json:"time"`
+	Total       [2]int64            `json:"total"`
+	Connections int                 `json:"connections"`
+	Outbounds   map[string][2]int64 `json:"outbounds"`
 }
 
 type trackerState struct {
@@ -126,12 +127,12 @@ func rateOf(bytes [2]int64, seconds float64) [2]int64 {
 	return [2]int64{int64(float64(bytes[0]) / seconds), int64(float64(bytes[1]) / seconds)}
 }
 
-func (tracker *Tracker) SetCollected(endpoints []config.Endpoint) {
+func (tracker *Tracker) SetCollected(outbounds []config.Outbound) {
 	tracker.mutex.Lock()
 	defer tracker.mutex.Unlock()
 	tracker.collected = map[string]bool{}
-	for _, endpoint := range endpoints {
-		tracker.collected[endpoint.ID] = endpoint.Statistics && endpoint.Enabled
+	for _, outbound := range outbounds {
+		tracker.collected[outbound.ID] = outbound.Statistics && outbound.Enabled
 	}
 	for id := range tracker.traffic {
 		if _, found := tracker.collected[id]; !found && id != totalKey {
@@ -162,11 +163,11 @@ func (tracker *Tracker) Rename(previous string, current string) {
 		delete(tracker.bucket, previous)
 	}
 	for index, sample := range tracker.history {
-		if rate, found := sample.Endpoints[previous]; found && previous != current {
-			endpoints := maps.Clone(sample.Endpoints)
-			delete(endpoints, previous)
-			endpoints[current] = rate
-			tracker.history[index].Endpoints = endpoints
+		if rate, found := sample.Outbounds[previous]; found && previous != current {
+			outbounds := maps.Clone(sample.Outbounds)
+			delete(outbounds, previous)
+			outbounds[current] = rate
+			tracker.history[index].Outbounds = outbounds
 		}
 	}
 }
@@ -346,10 +347,11 @@ func (tracker *Tracker) Save() error {
 }
 
 func (tracker *Tracker) sample(now time.Time, seconds float64) {
-	result := Sample{Time: now.Unix(), Endpoints: map[string][2]int64{}}
+	result := Sample{Time: now.Unix(), Connections: tracker.traffic[totalKey].Connections,
+		Outbounds: map[string][2]int64{}}
 	for id, collected := range tracker.collected {
 		if collected {
-			result.Endpoints[id] = rateOf(tracker.bucket[id], seconds)
+			result.Outbounds[id] = rateOf(tracker.bucket[id], seconds)
 		}
 	}
 	result.Total = rateOf(tracker.bucket[totalKey], seconds)

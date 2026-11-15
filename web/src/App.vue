@@ -7,8 +7,8 @@
           <span class="brand-name">Proximity</span>
         </div>
         <div class="header-stats" v-if="overview">
-          <a-tooltip title="Endpoints in good state / enabled">
-            <span class="stat"><ApiOutlined /> {{ overview.counts.endpoints_up }}/{{ overview.counts.endpoints_enabled }}</span>
+          <a-tooltip title="Outbounds in good state / enabled">
+            <span class="stat"><ExportOutlined /> {{ overview.counts.outbounds_up }}/{{ overview.counts.outbounds_enabled }}</span>
           </a-tooltip>
           <a-tooltip title="Upload rate">
             <span class="stat"><ArrowUpOutlined /> {{ rate(overview.total.upload_rate) }}</span>
@@ -117,29 +117,30 @@
 import { computed, onMounted, onUnmounted, reactive, ref } from 'vue'
 import { message, theme as antTheme } from 'ant-design-vue'
 import {
-  ApiOutlined, ArrowDownOutlined, ArrowUpOutlined, BranchesOutlined, BulbOutlined, DashboardOutlined,
-  FilterOutlined, GatewayOutlined, KeyOutlined, LoginOutlined, LogoutOutlined, SettingOutlined, SwapOutlined,
-  TeamOutlined, UserOutlined
+  ArrowDownOutlined, ArrowUpOutlined, BulbOutlined, DashboardOutlined, ExportOutlined, GatewayOutlined,
+  ImportOutlined, KeyOutlined, LoginOutlined, LogoutOutlined, SettingOutlined, SwapOutlined, TeamOutlined,
+  UserOutlined
 } from '@ant-design/icons-vue'
 import { api, events, loadSession, metrics, session } from './api'
 import { rate } from './format'
 import Logo from './components/Logo.vue'
 import LoginForm from './components/LoginForm.vue'
 import Dashboard from './views/Dashboard.vue'
-import Endpoints from './views/Endpoints.vue'
-import Fallbacks from './views/Fallbacks.vue'
-import Filters from './views/Filters.vue'
+import Outbounds from './views/Outbounds.vue'
+import Routes from './views/Routes.vue'
+import Inbounds from './views/Inbounds.vue'
 import Users from './views/Users.vue'
 import Settings from './views/Settings.vue'
 
 const sections = [
   { key: 'dashboard', title: 'Dashboard', icon: DashboardOutlined, view: Dashboard, level: 0 },
-  { key: 'endpoints', title: 'Endpoints', icon: ApiOutlined, view: Endpoints, level: 1 },
-  { key: 'fallbacks', title: 'Fallbacks', icon: BranchesOutlined, view: Fallbacks, level: 1 },
-  { key: 'filters', title: 'Filters', icon: FilterOutlined, view: Filters, level: 1 },
+  { key: 'outbounds', title: 'Outbounds', icon: ExportOutlined, view: Outbounds, level: 1 },
+  { key: 'routes', title: 'Routes', icon: SwapOutlined, view: Routes, level: 1 },
+  { key: 'inbounds', title: 'Inbounds', icon: ImportOutlined, view: Inbounds, level: 1 },
   { key: 'users', title: 'Users', icon: TeamOutlined, view: Users, level: 3 },
   { key: 'settings', title: 'Settings', icon: SettingOutlined, view: Settings, level: 1 }
 ]
+const aliases = { endpoints: 'outbounds', filters: 'routes', fallbacks: 'routes' }
 const roleColors = { administrator: 'red', operator: 'blue', user: 'green' }
 const year = new Date().getFullYear()
 const dark = ref(localStorage.getItem('proximity-theme') === 'dark')
@@ -176,7 +177,8 @@ function navigate(key) {
 }
 
 function readHash() {
-  const key = window.location.hash.replace(/^#\/?/, '')
+  const hash = window.location.hash.replace(/^#\/?/, '')
+  const key = aliases[hash] || hash
   section.value = visibleSections.value.some((item) => item.key === key) ? key : 'dashboard'
 }
 

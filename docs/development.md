@@ -18,9 +18,9 @@ proximity/
 ├── internal/
 │   ├── auth/               password hashing, session tokens, bootstrap administrator
 │   ├── config/             model, validation, renames, JSON store, backup
-│   ├── link/               endpoint drivers, monitoring, routing tables, transparent capture
+│   ├── link/               outbound drivers, monitoring, routing tables, transparent capture
 │   ├── router/             mihomo config generator, mihomo process, traffic tracker
-│   ├── rules/              filter parsing, normalization, consistency checks
+│   ├── rules/              route parsing, normalization, consistency checks
 │   ├── server/             HTTP API and control loop
 │   └── wgconf/             WireGuard / AmneziaWG config parser, vpn:// import
 ├── web/                    Vue 3 + Ant Design Vue UI (Vite); dist/ is embedded into the binary
@@ -101,8 +101,10 @@ Run the Go binary on port 8899 at the same time. Main files:
 |---|---|
 | `src/App.vue` | layout, header statistics, navigation, sign-in and first-run dialogs, theme |
 | `src/api.js` | fetch wrapper, session state, role helpers |
-| `src/views/*.vue` | one view per section; `EndpointDialog.vue` is the endpoint editor |
+| `src/views/*.vue` | one view per section: `Routes.vue` shows `Fallbacks.vue` at the bottom, `Inbounds.vue` is a placeholder; `OutboundDialog.vue` is the outbound editor |
 | `src/components/TrafficChart.vue` | dependency-free SVG throughput chart |
+| `src/components/ConnectionsChart.vue` | dependency-free SVG chart of active connections |
+| `src/components/history.js` | shared `/api/history` loader for both Dashboard charts |
 | `src/components/LogView.vue` | auto-refreshing, auto-scrolling log view |
 
 ## Tests
@@ -133,7 +135,7 @@ root and without network access. Assertions use `testify/require`.
 
 - `gofmt` only; no other formatters.
 - Errors are wrapped at every level: `fmt.Errorf("failed to <verb> <object> '%v': %w", name, err)`.
-- Full-word identifiers (`index`, `endpoint`, `result`), no single-letter names.
+- Full-word identifiers (`index`, `outbound`, `result`), no single-letter names.
 - No comments except `// NOTE:` and `// TODO:` where the reason is not obvious.
 - Tests: `Test<API>_<Case>`, `require` from testify, sub-cases as plain `{ … }` blocks.
 
@@ -167,6 +169,6 @@ new ones after an upgrade.
 3. Bump `VERSION` in `Makefile`, `Dockerfile` and the default `PROXIMITY_VERSION` in the
    compose files.
 4. Update the *Project status* section in `README.md` and screenshots if the UI changed.
-5. `make up` on a clean settings folder: first-run dialog, one endpoint of each type,
+5. `make up` on a clean settings folder: first-run dialog, one outbound of each type,
    transparent mode on Linux.
 6. Tag the release.

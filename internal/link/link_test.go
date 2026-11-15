@@ -110,7 +110,7 @@ func makeListener(t *testing.T) string {
 func waitState(t *testing.T, manager *Manager, id string, state string) Status {
 	require.Eventually(t, func() bool {
 		return manager.Status()[id].State == state
-	}, 15*time.Second, 20*time.Millisecond, "endpoint '%v' state '%v'", id, state)
+	}, 15*time.Second, 20*time.Millisecond, "outbound '%v' state '%v'", id, state)
 	return manager.Status()[id]
 }
 
@@ -217,11 +217,11 @@ func TestManager_AmneziaFailure(t *testing.T) {
 	manager, err := NewManager(Options{Directory: filepath.Join(directory, "run"), Tools: tools})
 	require.NoError(t, err)
 	defer manager.Close()
-	endpoint := config.Endpoint{ID: "AWG", Type: config.TypeAmneziaWG, Enabled: true, Slot: 4,
+	outbound := config.Outbound{ID: "AWG", Type: config.TypeAmneziaWG, Enabled: true, Slot: 4,
 		AmneziaWG: &config.AmneziaWGOptions{Config: sampleTunnel},
 		Monitoring: &config.Monitoring{Interval: 5, Timeout: 1, Retries: 1, ReconnectDelay: 1,
 			ReconnectAttempts: 1, Target: "127.0.0.1:1"}}
-	manager.Apply([]config.Endpoint{endpoint}, config.Settings{CheckInterval: 5})
+	manager.Apply([]config.Outbound{outbound}, config.Settings{CheckInterval: 5})
 	require.False(t, manager.Capture(true, false))
 	status := waitState(t, manager, "AWG", StateReconnecting)
 	require.Contains(t, status.Message, "reconnect attempt 1 of 1")
@@ -233,8 +233,8 @@ func TestManager_AmneziaFailure(t *testing.T) {
 		"starting '"+tools.AmneziaGo+"' on device 'proximity_a4'")
 	require.Empty(t, manager.Counters())
 	{
-		endpoint.AmneziaWG = &config.AmneziaWGOptions{Config: "broken"}
-		manager.Apply([]config.Endpoint{endpoint}, config.Settings{CheckInterval: 5})
+		outbound.AmneziaWG = &config.AmneziaWGOptions{Config: "broken"}
+		manager.Apply([]config.Outbound{outbound}, config.Settings{CheckInterval: 5})
 		status := waitState(t, manager, "AWG", StateFailed)
 		require.Contains(t, status.Message, "wgconf.Parse failed")
 	}
@@ -259,12 +259,12 @@ func TestManager_OpenVPN(t *testing.T) {
 		}})
 	require.NoError(t, err)
 	defer manager.Close()
-	endpoint := config.Endpoint{ID: "VPN", Type: config.TypeOpenVPN, Enabled: true, Slot: 7,
+	outbound := config.Outbound{ID: "VPN", Type: config.TypeOpenVPN, Enabled: true, Slot: 7,
 		OpenVPN: &config.OpenVPNOptions{Config: sampleOpenVPN, Username: "alice",
 			Password: "wonderland", OTPKey: "GEZDGNBVGY3TQOJQ", OTPMode: config.OTPAppend},
 		Monitoring: &config.Monitoring{Enabled: true, Interval: 5, Timeout: 1, Retries: 1,
 			ReconnectDelay: 1, ReconnectAttempts: 0, Target: "127.0.0.1:1"}}
-	manager.Apply([]config.Endpoint{endpoint}, config.Settings{CheckInterval: 5})
+	manager.Apply([]config.Outbound{outbound}, config.Settings{CheckInterval: 5})
 	status := waitState(t, manager, "VPN", StateUp)
 	require.Equal(t, "proximity_o7", status.Device)
 	require.Equal(t, "10.88.0.1", status.Gateway)
@@ -321,16 +321,16 @@ func TestManager_OpenVPN(t *testing.T) {
 		require.Empty(t, status.Address)
 	}
 	{
-		endpoint.OpenVPN = &config.OpenVPNOptions{Config: sampleOpenVPN, Username: "denied",
+		outbound.OpenVPN = &config.OpenVPNOptions{Config: sampleOpenVPN, Username: "denied",
 			Password: "x", OTPMode: config.OTPChallenge}
-		manager.Apply([]config.Endpoint{endpoint}, config.Settings{CheckInterval: 5})
+		manager.Apply([]config.Outbound{outbound}, config.Settings{CheckInterval: 5})
 		status := waitState(t, manager, "VPN", StateFailed)
 		require.Equal(t, "authentication failed", status.Message)
 	}
 	{
-		endpoint.OpenVPN = &config.OpenVPNOptions{Config: sampleOpenVPN, Username: "bob",
+		outbound.OpenVPN = &config.OpenVPNOptions{Config: sampleOpenVPN, Username: "bob",
 			OTPMode: config.OTPChallenge}
-		manager.Apply([]config.Endpoint{endpoint}, config.Settings{CheckInterval: 5})
+		manager.Apply([]config.Outbound{outbound}, config.Settings{CheckInterval: 5})
 		status := waitState(t, manager, "VPN", StateFailed)
 		require.Equal(t, "password is required by server", status.Message)
 	}
@@ -375,28 +375,28 @@ func TestManager_Capture(t *testing.T) {
 			"-4 route replace default dev lo table 51000\n"))
 	}
 	{
-		endpoint := config.Endpoint{ID: "VPN", Type: config.TypeOpenVPN, Enabled: true, Slot: 7,
+		outbound := config.Outbound{ID: "VPN", Type: config.TypeOpenVPN, Enabled: true, Slot: 7,
 			OpenVPN: &config.OpenVPNOptions{Config: sampleOpenVPN, Username: "alice",
 				Password: "wonderland", OTPKey: "GEZDGNBVGY3TQOJQ", OTPMode: config.OTPChallenge},
 			Monitoring: &config.Monitoring{Interval: 5, Timeout: 1, Retries: 1, ReconnectDelay: 1,
 				Target: "127.0.0.1:1"}}
-		manager.Apply([]config.Endpoint{endpoint}, config.Settings{CheckInterval: 5, Capture: true})
+		manager.Apply([]config.Outbound{outbound}, config.Settings{CheckInterval: 5, Capture: true})
 		waitState(t, manager, "VPN", StateUp)
 		arguments, err := os.ReadFile(filepath.Join(directory, "openvpn.log"))
 		require.NoError(t, err)
 		require.Contains(t, string(arguments), "--mark 51000")
 		since := manager.Status()["VPN"].Since
-		endpoint.ID, endpoint.Name = "Office", "renamed"
-		manager.Apply([]config.Endpoint{endpoint}, config.Settings{CheckInterval: 5, Capture: true})
+		outbound.ID, outbound.Name = "Office", "renamed"
+		manager.Apply([]config.Outbound{outbound}, config.Settings{CheckInterval: 5, Capture: true})
 		require.NotContains(t, manager.Status(), "VPN")
 		require.Equal(t, StateUp, manager.Status()["Office"].State)
 		require.Equal(t, since, manager.Status()["Office"].Since)
 		require.NotEmpty(t, manager.Log("Office"))
 		require.Empty(t, manager.Log("VPN"))
-		require.EqualError(t, manager.Restart("VPN"), "endpoint 'VPN' is not running")
+		require.EqualError(t, manager.Restart("VPN"), "outbound 'VPN' is not running")
 		require.NoError(t, manager.Restart("Office"))
 		waitState(t, manager, "Office", StateUp)
-		manager.Apply([]config.Endpoint{endpoint}, config.Settings{CheckInterval: 5})
+		manager.Apply([]config.Outbound{outbound}, config.Settings{CheckInterval: 5})
 		waitState(t, manager, "Office", StateUp)
 		arguments, err = os.ReadFile(filepath.Join(directory, "openvpn.log"))
 		require.NoError(t, err)
@@ -424,32 +424,32 @@ func TestManager_HostAttempts(t *testing.T) {
 	manager, err := NewManager(Options{Directory: filepath.Join(directory, "run"), Tools: tools})
 	require.NoError(t, err)
 	defer manager.Close()
-	endpoint := config.Endpoint{ID: "M", Type: config.TypeHost, Enabled: true, Slot: 5,
+	outbound := config.Outbound{ID: "M", Type: config.TypeHost, Enabled: true, Slot: 5,
 		Host: &config.HostOptions{Mode: config.HostInterface, Interface: "missing0", Attempts: 2,
 			ReconnectTimeout: 1}}
 	settings := config.Settings{ProbeTarget: "127.0.0.1:1", CheckInterval: 5,
 		ConnectivityChecks: true}
-	manager.Apply([]config.Endpoint{endpoint}, settings)
+	manager.Apply([]config.Outbound{outbound}, settings)
 	status := waitState(t, manager, "M", StateReconnecting)
 	require.Equal(t, "reconnect attempt 1 of 1: interface 'missing0' does not exist",
 		status.Message)
 	status = waitState(t, manager, "M", StateFailed)
 	require.Equal(t, "interface 'missing0' does not exist", status.Message)
 	{
-		endpoint.Host = &config.HostOptions{Mode: config.HostDefault, Attempts: 1,
+		outbound.Host = &config.HostOptions{Mode: config.HostDefault, Attempts: 1,
 			ReconnectTimeout: 1}
-		manager.Apply([]config.Endpoint{endpoint}, settings)
+		manager.Apply([]config.Outbound{outbound}, settings)
 		status := waitState(t, manager, "M", StateFailed)
 		require.Contains(t, status.Message, "failed to connect to '127.0.0.1:1'")
 		settings.ProbeTarget = makeListener(t)
-		manager.Apply([]config.Endpoint{endpoint}, settings)
+		manager.Apply([]config.Outbound{outbound}, settings)
 		status = waitState(t, manager, "M", StateUp)
 		require.NotZero(t, status.Checked)
 		require.GreaterOrEqual(t, status.Latency, 0)
 	}
 	{
 		settings.ProbeTarget, settings.ConnectivityChecks = "127.0.0.1:1", false
-		manager.Apply([]config.Endpoint{endpoint}, settings)
+		manager.Apply([]config.Outbound{outbound}, settings)
 		status := waitState(t, manager, "M", StateUp)
 		require.Zero(t, status.Checked)
 		require.Equal(t, -1, status.Latency)
@@ -466,7 +466,7 @@ func TestManager_Proxies(t *testing.T) {
 	manager, err := NewManager(Options{Directory: filepath.Join(directory, "run"), Tools: tools})
 	require.NoError(t, err)
 	settings := config.Settings{ProbeTarget: target, CheckInterval: 5, ConnectivityChecks: true}
-	endpoints := []config.Endpoint{
+	outbounds := []config.Outbound{
 		{ID: "S", Type: config.TypeSocks5, Enabled: true, Slot: 1,
 			Socks5: &config.Socks5Options{Server: host, Port: number}},
 		{ID: "H", Type: config.TypeHTTP, Enabled: true, Slot: 2,
@@ -477,7 +477,7 @@ func TestManager_Proxies(t *testing.T) {
 			Host: &config.HostOptions{Mode: config.HostInterface, Interface: "lo",
 				Gateway: "127.0.0.1", Attempts: 3, ReconnectTimeout: 1}},
 		{ID: "X", Type: config.TypeHost, Slot: 4, Host: &config.HostOptions{}}}
-	manager.Apply(endpoints, settings)
+	manager.Apply(outbounds, settings)
 	status := waitState(t, manager, "S", StateUp)
 	require.Equal(t, target, status.Gateway)
 	require.NotZero(t, status.Checked)
@@ -497,11 +497,11 @@ func TestManager_Proxies(t *testing.T) {
 	{
 		require.NoError(t, manager.Restart("S"))
 		waitState(t, manager, "S", StateUp)
-		require.EqualError(t, manager.Restart("missing"), "endpoint 'missing' is not running")
+		require.EqualError(t, manager.Restart("missing"), "outbound 'missing' is not running")
 	}
 	{
-		endpoints[0].Enabled, endpoints[2].Name = false, "renamed"
-		manager.Apply(endpoints[:3], settings)
+		outbounds[0].Enabled, outbounds[2].Name = false, "renamed"
+		manager.Apply(outbounds[:3], settings)
 		require.NotContains(t, manager.Status(), "S")
 		require.NotContains(t, manager.Status(), "L")
 		require.Contains(t, manager.Status(), "D")
@@ -586,22 +586,22 @@ func TestSanitizeOpenVPN_Directives(t *testing.T) {
 
 func TestSignature_Changes(t *testing.T) {
 	settings := config.Settings{ProbeTarget: "1.1.1.1:443", CheckInterval: 30}
-	endpoint := config.Endpoint{ID: "S", Type: config.TypeSocks5, Enabled: true, Slot: 1,
+	outbound := config.Outbound{ID: "S", Type: config.TypeSocks5, Enabled: true, Slot: 1,
 		Socks5: &config.Socks5Options{Server: "10.0.0.1", Port: 1080}}
-	signature := makeSignature(endpoint, settings, 0)
-	renamed := endpoint
+	signature := makeSignature(outbound, settings, 0)
+	renamed := outbound
 	renamed.ID, renamed.Name, renamed.Group, renamed.Statistics = "id", "name", "group", true
 	require.Equal(t, signature, makeSignature(renamed, settings, 0))
-	require.NotEqual(t, signature, makeSignature(endpoint, settings, CaptureMark))
-	changed := endpoint.Clone()
+	require.NotEqual(t, signature, makeSignature(outbound, settings, CaptureMark))
+	changed := outbound.Clone()
 	changed.Socks5.Port = 1081
 	require.NotEqual(t, signature, makeSignature(changed, settings, 0))
 	settings.CheckInterval = 60
-	require.NotEqual(t, signature, makeSignature(endpoint, settings, 0))
+	require.NotEqual(t, signature, makeSignature(outbound, settings, 0))
 	settings.CheckInterval, settings.ConnectivityChecks = 30, true
-	require.NotEqual(t, signature, makeSignature(endpoint, settings, 0))
+	require.NotEqual(t, signature, makeSignature(outbound, settings, 0))
 	{
-		tunnel := config.Endpoint{ID: "T", Type: config.TypeOpenVPN, Enabled: true, Slot: 2,
+		tunnel := config.Outbound{ID: "T", Type: config.TypeOpenVPN, Enabled: true, Slot: 2,
 			OpenVPN:    &config.OpenVPNOptions{Config: sampleOpenVPN},
 			Monitoring: &config.Monitoring{Enabled: true, Interval: 30}}
 		signature := makeSignature(tunnel, settings, 0)
