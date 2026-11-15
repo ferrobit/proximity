@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"strconv"
 	"strings"
 	"time"
 
@@ -113,6 +114,7 @@ func (server *Server) register() {
 	server.handle("POST /api/logout", 0, server.logout)
 	server.handle("POST /api/password", 1, server.changePassword)
 	server.handle("GET /api/dashboard", 0, server.getDashboard)
+	server.handle("GET /api/history", 0, server.getHistory)
 	server.handle("DELETE /api/refused", 2, server.clearRefused)
 	server.handle("GET /api/targets", 1, server.getTargets)
 	server.handle("GET /api/interfaces", 1, server.getInterfaces)
@@ -304,6 +306,22 @@ func (server *Server) getDashboard(_ *http.Request, current session) (any, error
 			"endpoints_up": up, "fallbacks": len(snapshot.Fallbacks),
 			"filters": len(snapshot.Filters), "rules": lines},
 		"proxy_port": snapshot.Settings.MixedPort, "capture": server.capturing()}, nil
+}
+
+func (server *Server) getHistory(request *http.Request, current session) (any, error) {
+	if current.level == 0 && !server.store.Snapshot().Settings.AnonymousDashboard {
+		return nil, fail(http.StatusUnauthorized, "authentication required")
+	}
+	since := int64(0)
+	if text := request.URL.Query().Get("since"); text != "" {
+		if value, err := strconv.ParseInt(text, 10, 64); err != nil {
+			return nil, fail(http.StatusBadRequest, "cannot parse %q as time", text)
+		} else {
+			since = value
+		}
+	}
+	return map[string]any{"step": int64(router.HistoryStep.Seconds()),
+		"samples": server.tracker.History(since)}, nil
 }
 
 func (server *Server) clearRefused(_ *http.Request, _ session) (any, error) {

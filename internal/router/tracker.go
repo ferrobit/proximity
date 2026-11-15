@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"maps"
 	"net"
 	"os"
 	"regexp"
@@ -35,6 +36,12 @@ type Refused struct {
 	source string
 }
 
+type Sample struct {
+	Time      int64               `json:"time"`
+	Total     [2]int64            `json:"total"`
+	Endpoints map[string][2]int64 `json:"endpoints"`
+}
+
 type trackerState struct {
 	Traffic map[string]Traffic `json:"traffic"`
 	Refused []Refused          `json:"refused"`
@@ -51,10 +58,15 @@ type Tracker struct {
 	refused   map[string]*Refused
 	collected map[string]bool
 	polled    time.Time
+	history   []Sample
+	bucket    map[string][2]int64
+	sampled   time.Time
 	dirty     bool
 }
 
 const maxRefused = 500
+const maxHistory = 720
+const HistoryStep = 5 * time.Second
 const totalKey = ""
 const unknownOwner = "?"
 const usingMarker = " using "
@@ -75,7 +87,7 @@ var reasons = []struct {
 func NewTracker(path string) *Tracker {
 	result := &Tracker{path: path, traffic: map[string]Traffic{}, seen: map[string]Connection{},
 		refused: map[string]*Refused{}, collected: map[string]bool{}, started: map[string]int{},
-		polled: time.Now()}
+		polled: time.Now(), bucket: map[string][2]int64{}, sampled: time.Now()}
 	state := trackerState{}
 	if data, err := os.ReadFile(path); err == nil && json.Unmarshal(data, &state) == nil {
 		for id, traffic := range state.Traffic {
@@ -110,6 +122,10 @@ func classify(text string) string {
 	return "error"
 }
 
+func rateOf(bytes [2]int64, seconds float64) [2]int64 {
+	return [2]int64{int64(float64(bytes[0]) / seconds), int64(float64(bytes[1]) / seconds)}
+}
+
 func (tracker *Tracker) SetCollected(endpoints []config.Endpoint) {
 	tracker.mutex.Lock()
 	defer tracker.mutex.Unlock()
@@ -140,6 +156,18 @@ func (tracker *Tracker) Rename(previous string, current string) {
 	if counter, found := tracker.counters[previous]; found && previous != current {
 		tracker.counters[current] = counter
 		delete(tracker.counters, previous)
+	}
+	if bytes, found := tracker.bucket[previous]; found && previous != current {
+		tracker.bucket[current] = bytes
+		delete(tracker.bucket, previous)
+	}
+	for index, sample := range tracker.history {
+		if rate, found := sample.Endpoints[previous]; found && previous != current {
+			endpoints := maps.Clone(sample.Endpoints)
+			delete(endpoints, previous)
+			endpoints[current] = rate
+			tracker.history[index].Endpoints = endpoints
+		}
 	}
 }
 
@@ -210,6 +238,11 @@ func (tracker *Tracker) Update(connections Connections, counters map[string][2]i
 		traffic.Connections = delta.Connections
 		tracker.traffic[id] = traffic
 		tracker.dirty = tracker.dirty || delta.Upload != 0 || delta.Download != 0
+		bytes := tracker.bucket[id]
+		tracker.bucket[id] = [2]int64{bytes[0] + delta.Upload, bytes[1] + delta.Download}
+	}
+	if passed := now.Sub(tracker.sampled); passed >= HistoryStep {
+		tracker.sample(now, passed.Seconds())
 	}
 }
 
@@ -272,6 +305,18 @@ func (tracker *Tracker) Snapshot() (map[string]Traffic, []Refused) {
 	return traffic, refused
 }
 
+func (tracker *Tracker) History(since int64) []Sample {
+	tracker.mutex.Lock()
+	defer tracker.mutex.Unlock()
+	result := []Sample{}
+	for _, sample := range tracker.history {
+		if sample.Time > since {
+			result = append(result, sample)
+		}
+	}
+	return result
+}
+
 func (tracker *Tracker) Clear() {
 	tracker.mutex.Lock()
 	defer tracker.mutex.Unlock()
@@ -298,6 +343,20 @@ func (tracker *Tracker) Save() error {
 	}
 	tracker.dirty = false
 	return nil
+}
+
+func (tracker *Tracker) sample(now time.Time, seconds float64) {
+	result := Sample{Time: now.Unix(), Endpoints: map[string][2]int64{}}
+	for id, collected := range tracker.collected {
+		if collected {
+			result.Endpoints[id] = rateOf(tracker.bucket[id], seconds)
+		}
+	}
+	result.Total = rateOf(tracker.bucket[totalKey], seconds)
+	if tracker.history = append(tracker.history, result); len(tracker.history) > maxHistory {
+		tracker.history = tracker.history[len(tracker.history)-maxHistory:]
+	}
+	tracker.bucket, tracker.sampled = map[string][2]int64{}, now
 }
 
 func (tracker *Tracker) share(deltas map[string]Traffic, weights map[string]int, upload int64,

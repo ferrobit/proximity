@@ -231,6 +231,11 @@ func TestServer_Access(t *testing.T) {
 		require.Equal(t, false, body["anonymous_dashboard"])
 		code, _, _ = call(t, server, nil, http.MethodGet, "/api/dashboard", nil)
 		require.Equal(t, http.StatusUnauthorized, code)
+		code, _, _ = call(t, server, nil, http.MethodGet, "/api/history", nil)
+		require.Equal(t, http.StatusUnauthorized, code)
+		code, body, _ = call(t, server, admin, http.MethodGet, "/api/history?since=1", nil)
+		require.Equal(t, http.StatusOK, code)
+		require.Equal(t, []any{}, body["samples"])
 		settings.LogLevel = "loud"
 		code, body, _ = call(t, server, admin, http.MethodPut, "/api/settings", settings)
 		require.Equal(t, http.StatusBadRequest, code)
@@ -376,7 +381,14 @@ func TestServer_Endpoints(t *testing.T) {
 		require.Equal(t, http.StatusForbidden, code)
 	}
 	{
-		code, body, _ := call(t, server, nil, http.MethodGet, "/api/dashboard", nil)
+		code, body, _ := call(t, server, nil, http.MethodGet, "/api/history", nil)
+		require.Equal(t, http.StatusOK, code)
+		require.Equal(t, 5.0, body["step"])
+		require.Equal(t, []any{}, body["samples"])
+		code, body, _ = call(t, server, nil, http.MethodGet, "/api/history?since=bad", nil)
+		require.Equal(t, http.StatusBadRequest, code)
+		require.Equal(t, `cannot parse "bad" as time`, body["error"])
+		code, body, _ = call(t, server, nil, http.MethodGet, "/api/dashboard", nil)
 		require.Equal(t, http.StatusOK, code)
 		views := body["endpoints"].([]any)
 		second := views[1].(map[string]any)

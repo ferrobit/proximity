@@ -274,3 +274,5 @@ Fix known issues:
 
 * Support for fake-IP and DNS-hijack under mihomo configuration.
 
+* On Dashboard above Endpoints table add an interactive graph showing
+  throughput of the each endpoint and total values.

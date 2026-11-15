@@ -3,6 +3,7 @@ package router
 import (
 	"path/filepath"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/require"
 
@@ -46,6 +47,40 @@ func TestChainOwner_Lines(t *testing.T) {
 		require.False(t, found)
 		_, found = chainOwner("[TCP] a --> b using X error: late")
 		require.False(t, found)
+	}
+}
+
+func TestHistory_Samples(t *testing.T) {
+	tracker := NewTracker("")
+	tracker.SetCollected(makeCollected())
+	items := []Connection{{ID: "1", Upload: 100, Download: 1000, Chains: []string{"A"}},
+		{ID: "2", Upload: 10, Download: 20, Chains: []string{"C"}}}
+	tracker.Update(Connections{Items: items, Upload: 110, Download: 1020}, nil)
+	require.Empty(t, tracker.History(0))
+	tracker.sampled = time.Now().Add(-HistoryStep)
+	tracker.Update(Connections{Items: items, Upload: 110, Download: 1020}, nil)
+	result := tracker.History(0)
+	require.Len(t, result, 1)
+	require.InDelta(t, 20, result[0].Endpoints["A"][0], 1)
+	require.InDelta(t, 200, result[0].Endpoints["A"][1], 1)
+	require.Equal(t, [2]int64{0, 0}, result[0].Endpoints["B"])
+	require.NotContains(t, result[0].Endpoints, "C")
+	require.InDelta(t, 22, result[0].Total[0], 1)
+	require.InDelta(t, 204, result[0].Total[1], 1)
+	require.Empty(t, tracker.History(result[0].Time))
+	{
+		tracker.Rename("A", "Z")
+		renamed := tracker.History(0)
+		require.Contains(t, renamed[0].Endpoints, "Z")
+		require.NotContains(t, renamed[0].Endpoints, "A")
+		require.Contains(t, result[0].Endpoints, "A")
+	}
+	{
+		for range maxHistory + 5 {
+			tracker.sampled = time.Now().Add(-HistoryStep)
+			tracker.Update(Connections{Items: items, Upload: 110, Download: 1020}, nil)
+		}
+		require.Len(t, tracker.History(0), maxHistory)
 	}
 }
 

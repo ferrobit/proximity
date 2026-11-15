@@ -43,6 +43,7 @@
             <div class="muted">{{ overview.capture ? 'transparent: all host traffic' : 'proxy port only' }}</div></a-card>
         </a-col>
       </a-row>
+      <TrafficChart :overview="overview" />
       <a-card size="small">
         <template #title><ApiOutlined /> Endpoints</template>
         <a-table :columns="endpointColumns" :data-source="overview.endpoints" row-key="id" size="small" :pagination="false" :scroll="{ x: 900 }">
@@ -128,6 +129,7 @@ import {
 import { api, canEdit, session } from '../api'
 import { ago, bytes, duration, rate, reasonColors, typeColors, typeLabels, usageColors } from '../format'
 import StateTag from '../components/StateTag.vue'
+import TrafficChart from '../components/TrafficChart.vue'
 
 const props = defineProps({ overview: { type: Object, default: null } })
 const emit = defineEmits(['refresh'])

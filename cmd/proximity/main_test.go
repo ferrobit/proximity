@@ -1,6 +1,7 @@
 package main
 
 import (
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -56,4 +57,40 @@ func TestRun_Arguments(t *testing.T) {
 		require.ErrorContains(t, run([]string{"-config", filepath.Join(blocker, "config")}),
 			"server.New failed")
 	}
+}
+
+type JMPBuf struct {
+}
+
+func (buf *JMPBuf) Set() bool {
+	return true
+}
+
+func (buf *JMPBuf) Jump() {
+	// for debug purpose can execute GC
+}
+
+var one, two JMPBuf
+
+func Exported() {
+	if one.Set() {
+		fmt.Println("one: set")
+		Internal()
+	} else {
+		fmt.Println("one: jumped")
+		two.Jump()
+	}
+}
+
+func Internal() {
+	// allocate some memory
+	s := "some_string"
+	p := &s // should keep tracked by GC
+	fmt.Println("internal: enter")
+	if two.Set() {
+		one.Jump()
+	} else {
+		fmt.Println("two: jumped")
+	}
+	fmt.Println("internal: " + *p)
 }
