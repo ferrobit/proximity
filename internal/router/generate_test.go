@@ -8,6 +8,7 @@ import (
 
 	"proximity/internal/config"
 	"proximity/internal/link"
+	"proximity/internal/rules"
 )
 
 const sampleKey = "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA="
@@ -214,6 +215,12 @@ func TestItems_EnabledOnly(t *testing.T) {
 	require.Equal(t, "OpenVPN 1", result[1].Target)
 	require.Equal(t, "10.0.0.0/8", result[2].Rules[0].Value)
 	require.Equal(t, snapshot.Filters[5].Key, result[5].Key)
+	{
+		snapshot.Filters[0].Params = []string{"# corporate", "corp.test", "# old.test"}
+		result := Items(snapshot)
+		require.Equal(t, []rules.Rule{{Directive: rules.DomainSuffix, Value: "corp.test"}},
+			result[0].Rules)
+	}
 }
 
 func TestOwner_Variants(t *testing.T) {

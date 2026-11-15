@@ -507,6 +507,12 @@ func TestServer_Filters(t *testing.T) {
 			"IP-CIDR,192.168.0.1/32,HOST 1"}, body["lines"])
 		require.Equal(t, []any{"10.1.2.3/32:8080", "192.168.0.1/32"}, body["params"])
 		code, body, _ = call(t, server, admin, http.MethodPost, "/api/filters/preview",
+			config.Filter{Directive: "DOMAIN", Target: "HOST 1",
+				Params: []string{"# corporate", "Wiki.Corp.Test", " # off.test"}})
+		require.Equal(t, http.StatusOK, code)
+		require.Equal(t, []any{"DOMAIN,wiki.corp.test,HOST 1"}, body["lines"])
+		require.Equal(t, []any{"# corporate", "wiki.corp.test", "# off.test"}, body["params"])
+		code, body, _ = call(t, server, admin, http.MethodPost, "/api/filters/preview",
 			config.Filter{Directive: "DOMAIN", Params: []string{"bad domain"}})
 		require.Equal(t, http.StatusBadRequest, code)
 		require.Contains(t, body["error"], "failed to parse line 1")

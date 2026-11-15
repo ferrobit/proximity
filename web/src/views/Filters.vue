@@ -42,9 +42,9 @@
         <template v-else-if="column.key === 'directive'"><a-tag color="blue">{{ record.directive }}</a-tag></template>
         <template v-else-if="column.key === 'params'">
           <div class="mono">
-            <div v-for="line in record.params.slice(0, 4)" :key="line">{{ line }}</div>
+            <div v-for="(line, index) in record.params.slice(0, 4)" :key="index" :class="{ muted: line.startsWith('#') }">{{ line }}</div>
             <a-tooltip v-if="record.params.length > 4">
-              <template #title><div v-for="line in record.params.slice(4, 40)" :key="line">{{ line }}</div></template>
+              <template #title><div v-for="(line, index) in record.params.slice(4, 40)" :key="index">{{ line }}</div></template>
               <span class="muted">… and {{ record.params.length - 4 }} more</span>
             </a-tooltip>
           </div>
@@ -79,7 +79,7 @@
           <a-col :span="12"><a-form-item label="Target" name="target" :rules="[{ required: true, message: 'Select target' }]">
             <a-select v-model:value="form.target" :disabled="readOnly" show-search :options="targetOptions" @change="preview" /></a-form-item></a-col>
         </a-row>
-        <a-form-item label="Rule parameters (one per line)" name="text" :rules="[{ required: true, message: 'Enter at least one parameter' }]" :extra="hints[form.directive]">
+        <a-form-item label="Rule parameters (one per line, lines starting with # are comments)" name="text" :rules="[{ required: true, message: 'Enter at least one parameter' }]" :extra="hints[form.directive]">
           <a-textarea v-model:value="form.text" class="mono" :rows="8" :disabled="readOnly" spellcheck="false" @change="preview" />
         </a-form-item>
         <a-alert v-if="previewError" type="error" show-icon :message="previewError" />

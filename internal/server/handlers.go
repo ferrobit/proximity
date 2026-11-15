@@ -479,14 +479,13 @@ func (server *Server) previewFilter(request *http.Request, _ session) (any, erro
 	if err := decode(request, &body); err != nil {
 		return nil, err
 	}
-	parsed, err := rules.Parse(body.Directive, body.Params)
+	parsed, params, err := rules.ParseText(body.Directive, body.Params)
 	if err != nil {
 		return nil, err
 	}
-	lines, params := []string{}, []string{}
+	lines := []string{}
 	for _, rule := range parsed {
 		lines = append(lines, rule.Lines(body.Target, nil)...)
-		params = append(params, rule.Text())
 	}
 	return map[string]any{"lines": lines, "params": params}, nil
 }

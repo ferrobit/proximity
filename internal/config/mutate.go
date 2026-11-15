@@ -400,14 +400,11 @@ func (config *Config) prepareFilter(filter *Filter, index int) error {
 	} else if len(filter.ID) > 64 {
 		return errors.New("filter ID is too long")
 	}
-	parsed, err := rules.Parse(filter.Directive, filter.Params)
+	_, params, err := rules.ParseText(filter.Directive, filter.Params)
 	if err != nil {
 		return fmt.Errorf("failed to check rule parameters: %w", err)
 	}
-	filter.Params = filter.Params[:0]
-	for _, rule := range parsed {
-		filter.Params = append(filter.Params, rule.Text())
-	}
+	filter.Params = params
 	return nil
 }
 

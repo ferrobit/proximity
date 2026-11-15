@@ -100,10 +100,49 @@ func TestCheck_Networks(t *testing.T) {
 	}
 }
 
+func TestIsComment_Lines(t *testing.T) {
+	require.True(t, IsComment("# corp"))
+	require.True(t, IsComment(" \t#corp"))
+	require.True(t, IsComment("#"))
+	require.False(t, IsComment("corp.test # note"))
+	require.False(t, IsComment(""))
+}
+
 func TestIsDirective_Names(t *testing.T) {
 	require.True(t, IsDirective("GEOSITE"))
 	require.False(t, IsDirective("IP-CIDR6"))
 	require.False(t, IsDirective(""))
+}
+
+func TestParseText_Comments(t *testing.T) {
+	{
+		parsed, text, err := ParseText(Domain, []string{"  # Corporate hosts", "Wiki.Corp.Test", "",
+			"\t#disabled.test", "https://git.corp.test/x", "#"})
+		require.NoError(t, err)
+		require.Equal(t, []Rule{{Directive: Domain, Value: "wiki.corp.test"},
+			{Directive: Domain, Value: "git.corp.test"}}, parsed)
+		require.Equal(t, []string{"# Corporate hosts", "wiki.corp.test", "#disabled.test",
+			"git.corp.test", "#"}, text)
+	}
+	{
+		parsed, text, err := ParseText(IPCIDR, []string{"# office", "10.1.2.3:443, no-resolve"})
+		require.NoError(t, err)
+		require.Len(t, parsed, 1)
+		require.Equal(t, []string{"# office", "10.1.2.3/32:443,no-resolve"}, text)
+	}
+	{
+		result, err := Parse(GeoIP, []string{"# countries", "ru", " # cn"})
+		require.NoError(t, err)
+		require.Equal(t, []Rule{{Directive: GeoIP, Value: "RU"}}, result)
+	}
+	{
+		_, _, err := ParseText(Domain, []string{"# first", "bad domain"})
+		require.ErrorContains(t, err, "failed to parse line 2 'bad domain'")
+		_, _, err = ParseText(Domain, []string{"# first", " # second", ""})
+		require.EqualError(t, err, "rule parameters do not exist")
+		_, _, err = ParseText("NOPE", []string{"# first"})
+		require.EqualError(t, err, "unexpected directive 'NOPE'")
+	}
 }
 
 func TestParse_Domain(t *testing.T) {

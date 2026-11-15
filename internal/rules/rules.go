@@ -61,6 +61,7 @@ const (
 
 const maxWarnings = 100
 const noResolveSuffix = ",no-resolve"
+const commentPrefix = "#"
 
 var Directives = []string{Domain, DomainSuffix, DomainKeyword, DomainWildcard, DomainRegex,
 	GeoSite, GeoIP, IPCIDR, IPASN, SourceIPCIDR, TargetPort, SourcePort, Network, ProcessName,
@@ -75,23 +76,35 @@ var hostPortPattern = regexp.MustCompile(`^(.*):(\d+)$`)
 var bracketPattern = regexp.MustCompile(`^\[([^\]]+)\](/\d+)?(?::(\d+))?$`)
 
 func Parse(directive string, lines []string) ([]Rule, error) {
+	result, _, err := ParseText(directive, lines)
+	return result, err
+}
+
+func ParseText(directive string, lines []string) ([]Rule, []string, error) {
 	if !IsDirective(directive) {
-		return nil, fmt.Errorf("unexpected directive '%v'", directive)
+		return nil, nil, fmt.Errorf("unexpected directive '%v'", directive)
 	}
-	result := []Rule{}
+	parsed, result := []Rule{}, []string{}
 	for index, line := range lines {
 		if line = strings.TrimSpace(line); line == "" {
 			continue
+		} else if IsComment(line) {
+			result = append(result, line)
 		} else if rule, err := parseLine(directive, line); err != nil {
-			return nil, fmt.Errorf("failed to parse line %v '%v': %w", index+1, line, err)
+			return nil, nil, fmt.Errorf("failed to parse line %v '%v': %w", index+1, line, err)
 		} else {
-			result = append(result, rule)
+			parsed = append(parsed, rule)
+			result = append(result, rule.Text())
 		}
 	}
-	if len(result) == 0 {
-		return nil, errors.New("rule parameters do not exist")
+	if len(parsed) == 0 {
+		return nil, nil, errors.New("rule parameters do not exist")
 	}
-	return result, nil
+	return parsed, result, nil
+}
+
+func IsComment(line string) bool {
+	return strings.HasPrefix(strings.TrimSpace(line), commentPrefix)
 }
 
 func IsDirective(directive string) bool {

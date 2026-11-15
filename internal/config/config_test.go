@@ -225,6 +225,17 @@ func TestAddFilter_Normalizes(t *testing.T) {
 			Target: "SOCKS5 1", Enabled: true, Params: []string{"10.1.2.3/32", "8.8.8.8/32:53"}},
 			filter)
 	}
+	{
+		filter, err := config.AddFilter(Filter{Directive: "IP-CIDR", Target: "SOCKS5 1",
+			Params: []string{"  # office ", " 10.1.2.3 ", "", "\t#dns", "8.8.8.8:53"}})
+		require.NoError(t, err)
+		require.Equal(t, []string{"# office", "10.1.2.3/32", "#dns", "8.8.8.8/32:53"}, filter.Params)
+		require.NoError(t, config.Validate())
+		require.NoError(t, config.RemoveFilter(filter.Key))
+		_, err = config.AddFilter(Filter{Directive: "DOMAIN", Target: "DIRECT",
+			Params: []string{"# only comment"}})
+		require.ErrorContains(t, err, "rule parameters do not exist")
+	}
 	for _, item := range []struct {
 		filter  Filter
 		message string
