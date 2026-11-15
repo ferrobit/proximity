@@ -11,36 +11,35 @@
       </a-alert>
       <a-row :gutter="[16, 16]">
         <a-col :xs="12" :md="8" :xl="4">
-          <a-card size="small"><a-statistic title="Endpoints" :value="overview.counts.endpoints_up" :suffix="`/ ${overview.counts.endpoints}`">
+          <a-card size="small" class="stat-card"><a-statistic title="Endpoints" :value="overview.counts.endpoints_up" :suffix="`/ ${overview.counts.endpoints}`">
             <template #prefix><ApiOutlined /></template></a-statistic>
             <div class="muted">{{ overview.counts.endpoints_enabled }} enabled</div></a-card>
         </a-col>
         <a-col :xs="12" :md="8" :xl="4">
-          <a-card size="small"><a-statistic title="Fallbacks" :value="overview.counts.fallbacks">
+          <a-card size="small" class="stat-card"><a-statistic title="Fallbacks" :value="overview.counts.fallbacks">
             <template #prefix><BranchesOutlined /></template></a-statistic>
             <div class="muted">proxy groups</div></a-card>
         </a-col>
         <a-col :xs="12" :md="8" :xl="4">
-          <a-card size="small"><a-statistic title="Filters" :value="overview.counts.filters">
+          <a-card size="small" class="stat-card"><a-statistic title="Filters" :value="overview.counts.filters">
             <template #prefix><FilterOutlined /></template></a-statistic>
             <div class="muted">{{ overview.counts.rules }} active rules</div></a-card>
         </a-col>
         <a-col :xs="12" :md="8" :xl="4">
-          <a-card size="small"><a-statistic title="Uploaded" :value="bytes(overview.total.upload)">
+          <a-card size="small" class="stat-card"><a-statistic title="Uploaded" :value="bytes(overview.total.upload)">
             <template #prefix><ArrowUpOutlined /></template></a-statistic>
             <div class="muted">{{ rate(overview.total.upload_rate) }}</div></a-card>
         </a-col>
         <a-col :xs="12" :md="8" :xl="4">
-          <a-card size="small"><a-statistic title="Downloaded" :value="bytes(overview.total.download)">
+          <a-card size="small" class="stat-card"><a-statistic title="Downloaded" :value="bytes(overview.total.download)">
             <template #prefix><ArrowDownOutlined /></template></a-statistic>
             <div class="muted">{{ rate(overview.total.download_rate) }}</div></a-card>
         </a-col>
         <a-col :xs="12" :md="8" :xl="4">
-          <a-card size="small"><a-statistic title="Router" :value="overview.router.running ? 'running' : 'stopped'"
+          <a-card size="small" class="stat-card"><a-statistic title="Router" :value="overview.router.running ? 'running' : 'stopped'"
             :value-style="{ color: overview.router.running ? '#3f8600' : '#cf1322' }">
             <template #prefix><DeploymentUnitOutlined /></template></a-statistic>
-            <div class="muted">mihomo {{ overview.router.version }} · port {{ overview.proxy_port }} · up {{ duration(overview.uptime) }}</div>
-            <div class="muted">{{ overview.capture ? 'transparent: all host traffic' : 'proxy port only' }}</div></a-card>
+            <div class="muted">up {{ duration(overview.uptime) }}</div></a-card>
         </a-col>
       </a-row>
       <TrafficChart :overview="overview" />

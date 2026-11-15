@@ -217,13 +217,15 @@ func (driver *amneziaDriver) start(ctx context.Context) error {
 }
 
 func (driver *amneziaDriver) ready(socket string) bool {
-	// NOTE: Until amneziawg-go creates UAPI socket awg falls back to kernel module and fails.
+	// NOTE: Until amneziawg-go listens on UAPI socket awg falls back to kernel module and fails.
 	if linkState(driver.device) == "absent" {
 		return false
-	} else if _, err := os.Stat(socket); err != nil {
+	} else if connection, err := net.DialTimeout("unix", socket, time.Second); err != nil {
 		return false
+	} else {
+		connection.Close()
+		return true
 	}
-	return true
 }
 
 func (driver *amneziaDriver) install(ctx context.Context, path string) error {

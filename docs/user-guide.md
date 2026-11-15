@@ -39,8 +39,8 @@ All lists refresh themselves; the **Refresh** buttons force an immediate reload.
 
 **Cards** at the top: endpoints (good / total, enabled), fallbacks, filters (and the number
 of active router rules), total uploaded and downloaded bytes with the current rate, and
-the router: mihomo version, proxy port, uptime and mode (`transparent: all host traffic`
-or `proxy port only`).
+the router state with its uptime. The capture mode is shown in the header
+(`transparent`).
 
 **Throughput** — an interactive chart of the upload and download rate of every endpoint
 that collects statistics, plus a dashed **Total** line.

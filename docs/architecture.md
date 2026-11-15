@@ -228,9 +228,9 @@ endpoint on its **Monitoring** tab.
   `S1`, `S2`, `H1`–`H4`); `vpn://` keys exported by the Amnezia app are converted to a
   normal `.conf`; the UI can also decode a QR code from an image (in the browser, with jsQR).
 - `amneziawg-go proximity_a<slot>` is started (log level verbose, its output goes to the
-  connection log). Proximity waits until both the interface and the control socket
-  `/var/run/amneziawg/proximity_a<slot>.sock` exist (otherwise `awg` would try the
-  kernel module and fail), then applies the configuration with `awg setconf`, addresses and MTU
+  connection log). Proximity waits until the interface exists and the control socket
+  `/var/run/amneziawg/proximity_a<slot>.sock` accepts connections (otherwise `awg`
+  would remove the socket, try the kernel module and fail), then applies the configuration with `awg setconf`, addresses and MTU
   (default 1280) are set, and the default route goes into the tunnel's table.
 - The connection log ends with the output of `awg show` for the device.
 
