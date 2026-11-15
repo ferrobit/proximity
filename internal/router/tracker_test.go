@@ -104,6 +104,31 @@ func TestObserve_Limit(t *testing.T) {
 	require.Equal(t, "reset", refused[0].Reason)
 }
 
+func TestRename_Traffic(t *testing.T) {
+	tracker := NewTracker("")
+	tracker.SetCollected(makeCollected())
+	items := []Connection{{ID: "1", Upload: 10, Download: 20, Chains: []string{"T"}}}
+	tracker.Update(Connections{Items: items, Upload: 10, Download: 20},
+		map[string][2]int64{"T": {100, 200}})
+	tracker.Update(Connections{Items: items, Upload: 10, Download: 20},
+		map[string][2]int64{"T": {150, 260}})
+	tracker.Rename("T", "Tunnel")
+	tracker.Rename("missing", "other")
+	tracker.Rename("A", "A")
+	traffic, _ := tracker.Snapshot()
+	require.NotContains(t, traffic, "T")
+	require.NotContains(t, traffic, "other")
+	require.Equal(t, int64(50), traffic["Tunnel"].Upload)
+	require.Equal(t, int64(60), traffic["Tunnel"].Download)
+	items[0].Chains = []string{"Tunnel"}
+	tracker.Update(Connections{Items: items, Upload: 10, Download: 20},
+		map[string][2]int64{"Tunnel": {170, 290}})
+	traffic, _ = tracker.Snapshot()
+	require.Equal(t, int64(70), traffic["Tunnel"].Upload)
+	require.Equal(t, int64(90), traffic["Tunnel"].Download)
+	require.Equal(t, 1, traffic["Tunnel"].Connections)
+}
+
 func TestSave_Reload(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "state.json")
 	tracker := NewTracker(path)

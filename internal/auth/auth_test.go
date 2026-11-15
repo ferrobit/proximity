@@ -1,8 +1,6 @@
 package auth
 
 import (
-	"os"
-	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -13,12 +11,16 @@ import (
 )
 
 func TestBootstrap_Environment(t *testing.T) {
-	directory := t.TempDir()
-	store, err := config.Open(directory)
+	store, err := config.Open(t.TempDir())
 	require.NoError(t, err)
 	t.Setenv("PROXIMITY_ADMIN_USER", "root")
+	t.Setenv("PROXIMITY_ADMIN_PASSWORD", "")
+	message, err := Bootstrap(store)
+	require.NoError(t, err)
+	require.Empty(t, message)
+	require.Empty(t, store.Snapshot().Users)
 	t.Setenv("PROXIMITY_ADMIN_PASSWORD", "secret123")
-	message, err := Bootstrap(store, directory)
+	message, err = Bootstrap(store)
 	require.NoError(t, err)
 	require.Equal(t, "created administrator 'root' with password from environment", message)
 	snapshot := store.Snapshot()
@@ -26,47 +28,42 @@ func TestBootstrap_Environment(t *testing.T) {
 	require.True(t, found)
 	require.Equal(t, config.RoleAdministrator, user.Role)
 	require.True(t, VerifyPassword(user.PasswordHash, "secret123"))
-	require.NoFileExists(t, filepath.Join(directory, initialPasswordFile))
 	{
-		message, err := Bootstrap(store, directory)
+		message, err := Bootstrap(store)
 		require.NoError(t, err)
 		require.Empty(t, message)
 		require.Len(t, store.Snapshot().Users, 1)
 	}
+	{
+		store, err := config.Open(t.TempDir())
+		require.NoError(t, err)
+		t.Setenv("PROXIMITY_ADMIN_USER", "")
+		_, err = Bootstrap(store)
+		require.NoError(t, err)
+		require.Equal(t, "admin", store.Snapshot().Users[0].Name)
+		t.Setenv("PROXIMITY_ADMIN_PASSWORD", "short")
+		_, err = Bootstrap(store)
+		require.NoError(t, err)
+	}
 }
 
-func TestBootstrap_Generated(t *testing.T) {
-	directory := t.TempDir()
-	store, err := config.Open(directory)
+func TestCreateAdministrator_Problems(t *testing.T) {
+	store, err := config.Open(t.TempDir())
 	require.NoError(t, err)
-	t.Setenv("PROXIMITY_ADMIN_USER", "")
-	t.Setenv("PROXIMITY_ADMIN_PASSWORD", "")
-	message, err := Bootstrap(store, directory)
-	require.NoError(t, err)
-	require.Contains(t, message, "created administrator 'admin' with password '")
-	data, err := os.ReadFile(filepath.Join(directory, initialPasswordFile))
-	require.NoError(t, err)
-	lines := strings.Split(strings.TrimSpace(string(data)), "\n")
-	require.Len(t, lines, 2)
-	require.Equal(t, "admin", lines[0])
-	require.Len(t, lines[1], 16)
-	require.Contains(t, message, "'"+lines[1]+"'")
+	require.ErrorContains(t, CreateAdministrator(store, "admin", "short"),
+		"failed to hash password of 'admin': invalid password length (5)")
+	require.ErrorContains(t, CreateAdministrator(store, "Bad Name", "secret123"),
+		"failed to create administrator 'Bad Name': invalid user name 'Bad Name'")
+	require.Empty(t, store.Snapshot().Users)
+	require.NoError(t, CreateAdministrator(store, "owner", "secret123"))
 	snapshot := store.Snapshot()
-	user, found := snapshot.FindUser("admin")
+	user, found := snapshot.FindUser("owner")
 	require.True(t, found)
-	require.True(t, VerifyPassword(user.PasswordHash, lines[1]))
-	{
-		directory := t.TempDir()
-		store, err := config.Open(directory)
-		require.NoError(t, err)
-		t.Setenv("PROXIMITY_ADMIN_PASSWORD", "short")
-		_, err = Bootstrap(store, directory)
-		require.ErrorContains(t, err, "failed to hash password of 'admin'")
-		t.Setenv("PROXIMITY_ADMIN_USER", "Bad Name")
-		t.Setenv("PROXIMITY_ADMIN_PASSWORD", "secret123")
-		_, err = Bootstrap(store, directory)
-		require.ErrorContains(t, err, "failed to create administrator 'Bad Name'")
-	}
+	require.Equal(t, config.RoleAdministrator, user.Role)
+	require.True(t, VerifyPassword(user.PasswordHash, "secret123"))
+	require.ErrorContains(t, CreateAdministrator(store, "second", "secret123"),
+		"failed to create administrator 'second': administrator already exists")
+	require.Len(t, store.Snapshot().Users, 1)
 }
 
 func TestHashPassword_Verify(t *testing.T) {

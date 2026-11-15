@@ -8,8 +8,8 @@
           <a-row :gutter="16">
             <a-col :span="12">
               <a-form-item label="ID" name="id" :rules="[{ pattern: idPattern, message: 'Letters, digits, space, _ . - (up to 48)' }]"
-                extra="Unique, allocated automatically when empty">
-                <a-input v-model:value="form.id" :disabled="!!endpoint" :placeholder="`${shortLabels[kind]} N`" />
+                :extra="endpoint ? 'Unique among endpoints and fallbacks; references are updated on rename' : 'Unique, allocated automatically when empty'">
+                <a-input v-model:value="form.id" :placeholder="endpoint ? endpoint.id : `${shortLabels[kind]} N`" />
               </a-form-item>
             </a-col>
             <a-col :span="12">
@@ -45,6 +45,20 @@
                 <a-form-item label="Gateway (optional)" :name="['host', 'gateway']" :rules="[{ pattern: ipPattern, message: 'Enter IP address' }]"
                   extra="Needed when the interface has no default route">
                   <a-input v-model:value="form.host.gateway" placeholder="192.168.1.1" />
+                </a-form-item>
+              </a-col>
+            </a-row>
+            <a-row :gutter="16">
+              <a-col :span="12">
+                <a-form-item label="Connection attempts" :name="['host', 'attempts']" :rules="range(1, 100)"
+                  extra="Failed attempts in a row before the endpoint falls to the failed state">
+                  <a-input-number v-model:value="form.host.attempts" style="width: 100%" />
+                </a-form-item>
+              </a-col>
+              <a-col :span="12">
+                <a-form-item label="Reconnection timeout, seconds" :name="['host', 'reconnect_timeout']" :rules="range(1, 3600)"
+                  extra="Pause between connection attempts">
+                  <a-input-number v-model:value="form.host.reconnect_timeout" style="width: 100%" />
                 </a-form-item>
               </a-col>
             </a-row>
@@ -188,7 +202,7 @@ const interfaceOptions = computed(() => interfaces.value.map((item) => ({
 function defaults(kind) {
   return {
     id: '', name: '', group: '', type: kind, enabled: true, statistics: true,
-    host: { mode: 'default', interface: undefined, gateway: '' },
+    host: { mode: 'default', interface: undefined, gateway: '', attempts: 3, reconnect_timeout: 10 },
     socks5: { server: '', port: 1080, username: '', password: '', tls: false, skip_cert_verify: false, udp: true },
     http: { server: '', port: 3128, single: true, https_server: '', https_port: 3128, ftp_server: '', ftp_port: 3128, username: '', password: '', tls: false, skip_cert_verify: false },
     openvpn: { config: '', username: '', password: '', otp_key: '', otp_mode: 'challenge', key_password: '', use_dns: true },
@@ -281,7 +295,7 @@ async function save() {
   const body = { id: form.id, name: form.name, group: form.group, type: props.kind, enabled: form.enabled, statistics: form.statistics }
   body[props.kind] = { ...form[props.kind] }
   if (props.kind === 'host' && body.host.mode !== 'interface') {
-    body.host = { mode: 'default', interface: '', gateway: '' }
+    body.host = { ...body.host, mode: 'default', interface: '', gateway: '' }
   }
   if (tunnel.value) {
     body.monitoring = { ...form.monitoring }

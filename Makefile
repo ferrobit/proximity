@@ -1,8 +1,8 @@
-VERSION ?= 1.0.0
+VERSION ?= 1.1.0
 BINARY ?= bin/proximity
 COMPOSE ?= scripts/proximity.sh
 
-.PHONY: all web build test cover vet image up down restart logs password clean
+.PHONY: all web build test cover vet image up down restart logs clean
 
 all: web build
 
@@ -36,9 +36,6 @@ restart:
 
 logs:
 	$(COMPOSE) logs -f --tail 200
-
-password:
-	docker exec proximity cat /config/initial_admin_password.txt
 
 clean:
 	rm -rf bin web/node_modules

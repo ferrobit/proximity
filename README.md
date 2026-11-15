@@ -15,29 +15,50 @@ scripts/proximity.sh up -d --build      # Linux и macOS
 | Что | Где |
 |---|---|
 | Веб-интерфейс | http://localhost:8899 |
-| Прокси для программ хоста (HTTP и SOCKS5 на одном порту) | `127.0.0.1:7899` |
-| Настройки (том `/config`) | Linux: `~/.config/proximity`, macOS: `~/Library/Application Support/proximity`, Windows: `%APPDATA%\proximity` |
-
-Проверка: `curl -x http://127.0.0.1:7899 https://example.com`.
+| Прокси (HTTP и SOCKS5 на одном порту) | `127.0.0.1:7899` |
+| Настройки, Linux | `~/.config/proximity` |
+| Настройки, macOS | `~/Library/Application Support/Proximity` |
+| Настройки, Windows | `%APPDATA%\Proximity` |
 
 ### Первый вход
 
-При первом старте создаётся администратор `admin`. Пароль — случайный, он печатается
-в журнал контейнера и лежит в файле `initial_admin_password.txt` в папке настроек:
+При первом открытии интерфейс показывает диалог «Create Administrator Account»:
+имя, пароль и повтор пароля (роль — всегда Administrator). Пароль нигде не генерируется.
+Для автоматической установки можно заранее задать `PROXIMITY_ADMIN_USER`
+и `PROXIMITY_ADMIN_PASSWORD` — тогда диалог не появится.
 
-```bash
-docker logs proximity 2>&1 | grep "created administrator"
-```
+## Режимы сети
 
-Свой логин и пароль можно задать заранее переменными `PROXIMITY_ADMIN_USER`
-и `PROXIMITY_ADMIN_PASSWORD`.
+| Режим | Файл | Что делает |
+|---|---|---|
+| Linux (по умолчанию) | `docker-compose.yml` | контейнер в сети хоста; **весь исходящий трафик хоста** идёт через Proximity, программам не нужны настройки прокси |
+| macOS, Windows | `docker-compose.bridge.yml` | отдельная сеть `proximity_lan`; программы указывают прокси `127.0.0.1:7899` |
+
+Скрипт `scripts/proximity.sh` выбирает файл сам. На Linux без захвата трафика:
+`PROXIMITY_NETWORK=bridge scripts/proximity.sh up -d --build`.
+
+### Как устроен захват трафика на Linux
+
+* mihomo создаёт интерфейс `proximity_tun`. Proximity добавляет правила `ip rule`
+  (приоритеты 5150–5170) и таблицу 51000 с маршрутом в этот интерфейс.
+* Захватываются только новые исходящие соединения. Локальная сеть, сети Docker и входящие
+  соединения (SSH, сам интерфейс Proximity) идут как раньше.
+* Домен для фильтров DOMAIN берётся из самого соединения (TLS SNI, заголовок HTTP Host, QUIC).
+* Имена программы хоста разрешают сами, обычным DNS хоста. Имя, которое знает только
+  DNS внутри VPN, так не разрешится: для таких адресов укажите программе прокси
+  `127.0.0.1:7899` — тогда имя разрешит Proximity через DNS туннеля.
+* Собственный трафик mihomo и туннелей помечен меткой 51000 и в захват не попадает.
+* При остановке контейнера правила удаляются. Если процесс убит — интерфейс исчезает
+  вместе с маршрутом, и трафик идёт обычным путём.
+* Выключается в Settings → [Router] → «Route all outgoing connections…».
+* IPv6 захватывается только при включённом флажке IPv6 в Settings.
 
 ## Роли
 
 | Роль | Права |
 |---|---|
 | Administrator | всё, включая пользователей и настройки |
-| Operator | правка Endpoints, Fallbacks, Filters |
+| Operator | правка Endpoints, Fallbacks, Filters; экспорт и импорт конфигурации |
 | User | только просмотр (секреты скрыты) |
 | Anonymous | только Dashboard (отключается в Settings) |
 
@@ -51,30 +72,29 @@ docker logs proximity 2>&1 | grep "created administrator"
 | OpenVPN | процесс `openvpn` на интерфейсе `proximity_o<N>` + `direct` с `routing-mark` |
 | AmneziaWG | `amneziawg-go` на интерфейсе `proximity_a<N>` + `direct` с `routing-mark` |
 
-* У каждого туннеля своя таблица маршрутов (`51000 + N`) и правило `ip rule fwmark`.
-  Основная таблица контейнера не меняется: `redirect-gateway` от VPN ничего не ломает.
+* У каждого туннеля своя таблица маршрутов (`51000 + N`), правило по метке и правило
+  по адресу туннеля. Основная таблица не меняется.
 * Если туннель упал, в его таблице остаётся `blackhole` — трафик не утекает мимо VPN.
 * OpenVPN запускается в псевдотерминале; Proximity сам отвечает на запросы логина,
   пароля и одноразового кода (TOTP, как `oathtool --totp -b`).
 * Маршруты, которые выдал VPN, появляются в Filters как фильтр «provided»
   (только чтение, выключен). Его можно включить и двигать.
-* Статистика и список «Unreachable routes» берутся из API mihomo (`/connections`, `/logs`).
+* HOST endpoint: после «Connection attempts» неудач подряд (пауза — «Reconnection timeout»)
+  переходит в `failed`, но проверки продолжаются — при появлении связи он сам вернётся в `good`.
+* Fallback без «Enable health check» берёт первый endpoint в состоянии `good`
+  (по данным Proximity). С флажком — mihomo сам опрашивает URL через каждый endpoint.
 
-## Сеть
+## Идентификаторы
 
-* По умолчанию — мост `proximity_lan`. Работает на Linux, macOS и Windows.
-  HOST-endpoint видит только интерфейсы контейнера.
-* Режим хоста (только Linux): `PROXIMITY_NETWORK=host scripts/proximity.sh up -d --build`.
-  Тогда доступны настоящие интерфейсы хоста и фильтры `PROCESS-NAME`. Таблицы
-  `51001…60999` и интерфейсы `proximity_o*` / `proximity_a*` создаются прямо на хосте.
-  Для туннелей нужен `sysctl net.ipv4.conf.all.rp_filter=2` (или 0).
-* Порт прокси опубликован только на `127.0.0.1`. Открыть в локальную сеть:
-  `PROXIMITY_PROXY_BIND=0.0.0.0`. Порт в Settings должен совпадать с опубликованным.
+* ID endpoint'ов, fallback'ов и фильтров можно менять. При переименовании ссылки
+  (состав fallback'ов, цели фильтров, цель по умолчанию) обновляются сами, туннель не рвётся.
+* ID уникален внутри раздела. Endpoint и fallback дополнительно не могут называться
+  одинаково: оба — цели фильтров.
+* Пустой ID фильтра заменяется на `Filter <N>`.
 
 ## Фильтры
 
 Каждая строка параметров — одно правило mihomo `<Directive>,<параметр>,<Target>`.
-Преобразования при сохранении:
 
 | Ввод | Результат |
 |---|---|
@@ -86,8 +106,16 @@ docker logs proximity 2>&1 | grep "created administrator"
 | `1.2.3.4:443` | `AND,((IP-CIDR,1.2.3.4/32),(DST-PORT,443)),Target` |
 | `5.5.5.5,no-resolve` | `IP-CIDR,5.5.5.5/32,Target,no-resolve` |
 
-Противоречия (дубли, пересечения сетей, домен внутри суффикса) не запрещены —
-они показываются предупреждением вверху раздела.
+Предупреждение появляется, только когда верхнее правило полностью перекрывает нижнее
+(нижнее никогда не сработает) или правила совпадают. Порядок «частное выше общего» —
+норма: `im-squadus.elvees.com → DIRECT`, ниже `elvees.com → OpenVPN 1`.
+
+## Резервная копия
+
+Settings → [Backup & Restore]: «Export configuration» сохраняет один файл JSON
+(endpoints с паролями и ключами VPN, fallbacks, filters, settings), «Import configuration»
+заменяет текущие. Учётные записи в файл не входят. При импорте оператором настройки
+(Settings) остаются прежними.
 
 ## Сборка и тесты
 
@@ -96,12 +124,6 @@ make web      # собрать интерфейс (Node.js 22)
 make build    # собрать bin/proximity
 make cover    # тесты с покрытием
 make up       # собрать образ и запустить контейнер
-```
-
-Запуск без Docker (нужны `mihomo`, `ip`; для VPN — `openvpn`, `amneziawg-go`, `awg`):
-
-```bash
-sudo ./bin/proximity -listen :8899 -config ./config -run /run/proximity
 ```
 
 Версии компонентов задаются аргументами сборки в `Dockerfile`: `MIHOMO_IMAGE`,
@@ -114,7 +136,6 @@ sudo ./bin/proximity -listen :8899 -config ./config -run /run/proximity
 | `proximity.json` | пользователи, endpoints, fallbacks, filters, settings |
 | `state.json` | счётчики трафика и список недоступных адресов |
 | `mihomo/config.yaml` | сгенерированная конфигурация mihomo (JSON — это допустимый YAML) |
-| `initial_admin_password.txt` | первый пароль администратора |
 
 Пароли endpoint'ов и конфигурации VPN лежат в `proximity.json` открытым текстом:
 папку настроек нужно беречь.

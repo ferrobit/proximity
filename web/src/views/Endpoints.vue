@@ -61,8 +61,8 @@
       </template>
     </a-table>
     <EndpointDialog v-model:open="visible" :endpoint="current" :kind="kind" :groups="groups" @saved="load" />
-    <a-modal v-model:open="logVisible" :title="`Connection log: ${logTitle}`" width="820px" :footer="null">
-      <pre class="mono log-view">{{ logLines.join('\n') || 'No messages yet' }}</pre>
+    <a-modal v-model:open="logVisible" :title="`Connection log: ${logTitle}`" width="900px" :footer="null" destroy-on-close>
+      <LogView :path="`/api/endpoints/${id(logTitle)}/log`" />
     </a-modal>
   </div>
 </template>
@@ -78,6 +78,7 @@ import {
 import { api, canEdit, id } from '../api'
 import { typeColors, typeLabels } from '../format'
 import StateTag from '../components/StateTag.vue'
+import LogView from '../components/LogView.vue'
 import EndpointDialog from './EndpointDialog.vue'
 
 const typeIcons = { host: GlobalOutlined, socks5: SendOutlined, http: CloudServerOutlined, openvpn: LockOutlined, amneziawg: SafetyCertificateOutlined }
@@ -100,7 +101,6 @@ const current = ref(null)
 const kind = ref('host')
 const logVisible = ref(false)
 const logTitle = ref('')
-const logLines = ref([])
 let timer = null
 
 async function load(quiet) {
@@ -153,14 +153,9 @@ const move = (record, delta) => act(() => api.post(`/api/endpoints/${id(record.i
 const remove = (record) => act(() => api.remove(`/api/endpoints/${id(record.id)}`))
 const restart = (record) => act(() => api.post(`/api/endpoints/${id(record.id)}/restart`), 'Reconnect requested')
 
-async function showLog(record) {
-  try {
-    logTitle.value = record.id
-    logLines.value = (await api.get(`/api/endpoints/${id(record.id)}/log`)).lines
-    logVisible.value = true
-  } catch (error) {
-    message.error(error.message)
-  }
+function showLog(record) {
+  logTitle.value = record.id
+  logVisible.value = true
 }
 
 onMounted(() => {

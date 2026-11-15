@@ -98,7 +98,7 @@ func runFake(arguments []string) int {
 func makeDocument(t *testing.T, socket string, level string, port int) []byte {
 	snapshot := config.Default()
 	snapshot.Settings.LogLevel, snapshot.Settings.MixedPort = level, port
-	data, _, err := Generate(snapshot, nil, socket)
+	data, _, err := Generate(snapshot, nil, Options{Socket: socket})
 	require.NoError(t, err)
 	return data
 }

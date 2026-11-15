@@ -112,6 +112,9 @@ func (driver *openvpnDriver) start(ctx context.Context) error {
 		"--dev", driver.device, "--dev-type", kind, "--route-noexec", "--script-security", "2",
 		"--up", script, "--route-up", script, "--auth-retry", "interact", "--auth-nocache",
 		"--verb", "3", "--ignore-unknown-option", "block-outside-dns", "register-dns")
+	if driver.runner.bypass != 0 {
+		command.Args = append(command.Args, "--mark", strconv.Itoa(driver.runner.bypass))
+	}
 	terminal, err := startTerminal(command)
 	if err != nil {
 		return err
@@ -144,6 +147,7 @@ func (driver *openvpnDriver) start(ctx context.Context) error {
 func (driver *openvpnDriver) install(kind string) error {
 	table, gateway := strconv.Itoa(driver.table), driver.values["route_vpn_gateway"]
 	driver.tools.loosenFilter(driver.device)
+	driver.tools.sourceRules(driver.table, []string{driver.values["ifconfig_local"]})
 	route := []string{"-4", "route", "replace", "default", "dev", driver.device, "table", table}
 	if kind == "tap" && gateway != "" {
 		route = append(route, "via", gateway)

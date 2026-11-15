@@ -36,7 +36,7 @@ func makeSnapshot(t *testing.T) config.Config {
 		require.NoError(t, err)
 	}
 	for _, fallback := range []config.Fallback{
-		{Enabled: true, Endpoints: []string{"SOCKS5 1", "HTTP 1", "AmneziaWG 1"}},
+		{Enabled: true, HealthCheck: true, Endpoints: []string{"SOCKS5 1", "HTTP 1", "AmneziaWG 1"}},
 		{Enabled: true, Endpoints: []string{"AmneziaWG 1"}},
 		{Endpoints: []string{"HOST 1"}}} {
 		_, err := result.AddFallback(fallback)
@@ -63,7 +63,7 @@ func TestGenerate_Document(t *testing.T) {
 	snapshot := makeSnapshot(t)
 	links := map[string]link.Status{"OpenVPN 1": {DNS: []string{"10.99.0.1", "fd00::1"},
 		Domains: []string{"vpn.test", ""}}, "AmneziaWG 1": {DNS: []string{"10.0.0.53"}}}
-	data, warnings, err := Generate(snapshot, links, "/run/proximity/mihomo.sock")
+	data, warnings, err := Generate(snapshot, links, Options{Socket: "/run/proximity/mihomo.sock"})
 	require.NoError(t, err)
 	result := document{}
 	require.NoError(t, json.Unmarshal(data, &result))
@@ -74,6 +74,9 @@ func TestGenerate_Document(t *testing.T) {
 	require.Equal(t, "warning", result.LogLevel)
 	require.Equal(t, "/run/proximity/mihomo.sock", result.Controller)
 	require.Equal(t, "strict", result.FindProcess)
+	require.Zero(t, result.RoutingMark)
+	require.Nil(t, result.Tun)
+	require.Nil(t, result.Sniffer)
 	{
 		expected := []map[string]any{
 			{"name": "HOST 1", "type": "direct", "udp": true},
@@ -111,8 +114,8 @@ func TestGenerate_Document(t *testing.T) {
 	}
 	{
 		require.Equal(t, []string{"fallback 'Fallback 2' is skipped: no enabled endpoints",
-			"filter #5 is skipped: target 'AmneziaWG 1' is disabled or does not exist",
-			"filter #6 is skipped: target 'Fallback 2' is disabled or does not exist",
+			"filter 'Filter 4' is skipped: target 'AmneziaWG 1' is disabled or does not exist",
+			"filter 'Filter 5' is skipped: target 'Fallback 2' is disabled or does not exist",
 			"default target 'Fallback 3' is disabled, using 'DIRECT'"}, warnings)
 	}
 }
@@ -121,7 +124,7 @@ func TestGenerate_Minimal(t *testing.T) {
 	snapshot := config.Default()
 	snapshot.Filters = []config.Filter{{Key: "k", Directive: "DOMAIN", Target: "DIRECT",
 		Enabled: true, Params: []string{"bad domain"}}}
-	data, warnings, err := Generate(snapshot, nil, "socket")
+	data, warnings, err := Generate(snapshot, nil, Options{Socket: "socket"})
 	require.NoError(t, err)
 	result := document{}
 	require.NoError(t, json.Unmarshal(data, &result))
@@ -133,12 +136,61 @@ func TestGenerate_Minimal(t *testing.T) {
 	require.Contains(t, warnings[0], "filter #1 is skipped: failed to parse line 1")
 }
 
+func TestGenerate_Capture(t *testing.T) {
+	snapshot := config.Default()
+	data, _, err := Generate(snapshot, nil, Options{Socket: "socket", Capture: true,
+		ProxyBind: "127.0.0.1"})
+	require.NoError(t, err)
+	result := document{}
+	require.NoError(t, json.Unmarshal(data, &result))
+	require.Equal(t, "127.0.0.1", result.BindAddress)
+	require.True(t, result.AllowLan)
+	require.Equal(t, 51000, result.RoutingMark)
+	require.Equal(t, &tunSection{Enable: true, Device: "proximity_tun", Stack: "gvisor"},
+		result.Tun)
+	require.True(t, result.Sniffer.Enable)
+	require.False(t, result.Sniffer.OverrideDest)
+	require.Equal(t, sniffPorts{Ports: []string{"443", "8443"}}, result.Sniffer.Sniff["TLS"])
+	require.Equal(t, sniffPorts{Ports: []string{"80", "8080-8880"}}, result.Sniffer.Sniff["HTTP"])
+	require.Contains(t, result.Sniffer.Sniff, "QUIC")
+}
+
+func TestGenerate_SelectGroups(t *testing.T) {
+	snapshot := makeSnapshot(t)
+	snapshot.Fallbacks[0].HealthCheck = false
+	links := map[string]link.Status{"SOCKS5 1": {State: link.StateDown},
+		"HTTP 1": {State: link.StateUp}}
+	data, _, err := Generate(snapshot, links, Options{Socket: "socket"})
+	require.NoError(t, err)
+	result := document{}
+	require.NoError(t, json.Unmarshal(data, &result))
+	require.Len(t, result.Groups, 3)
+	require.Equal(t, proxyGroup{Name: "Fallback 1", Type: "select", Proxies: []string{"HTTP 1"}},
+		result.Groups[0])
+	require.Equal(t, proxyGroup{Name: "Fallback 1~https", Type: "select",
+		Proxies: []string{"HTTP 1~https"}}, result.Groups[1])
+	require.NotContains(t, string(data), `"url"`)
+	{
+		links["HTTP 1"] = link.Status{State: link.StateFailed}
+		data, _, err := Generate(snapshot, links, Options{Socket: "socket"})
+		require.NoError(t, err)
+		require.NoError(t, json.Unmarshal(data, &result))
+		require.Equal(t, []string{"SOCKS5 1", "HTTP 1"}, result.Groups[0].Proxies)
+	}
+	{
+		data, _, err := Generate(snapshot, nil, Options{Socket: "socket"})
+		require.NoError(t, err)
+		require.NoError(t, json.Unmarshal(data, &result))
+		require.Equal(t, []string{"SOCKS5 1", "HTTP 1"}, result.Groups[0].Proxies)
+	}
+}
+
 func TestItems_EnabledOnly(t *testing.T) {
 	snapshot := makeSnapshot(t)
 	result := Items(snapshot)
 	require.Len(t, result, 6)
 	require.Equal(t, "'corp'", result[0].Label)
-	require.Equal(t, "#2", result[1].Label)
+	require.Equal(t, "'Filter 1'", result[1].Label)
 	require.Equal(t, "OpenVPN 1", result[1].Target)
 	require.Equal(t, "10.0.0.0/8", result[2].Rules[0].Value)
 	require.Equal(t, snapshot.Filters[5].Key, result[5].Key)

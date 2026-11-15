@@ -11,7 +11,6 @@ import (
 	"errors"
 	"fmt"
 	"os"
-	"path/filepath"
 	"strconv"
 	"strings"
 	"time"
@@ -29,8 +28,6 @@ const hashScheme = "pbkdf2-sha256"
 const hashIterations = 600000
 const hashLength = 32
 const minPasswordLength = 6
-const passwordAlphabet = "abcdefghijkmnopqrstuvwxyzABCDEFGHJKLMNPQRSTUVWXYZ23456789"
-const initialPasswordFile = "initial_admin_password.txt"
 
 func HashPassword(password string) (string, error) {
 	if len(password) < minPasswordLength {
@@ -113,55 +110,38 @@ func Level(role string) int {
 	}
 }
 
-func Bootstrap(store *config.Store, directory string) (string, error) {
-	if len(store.Snapshot().Users) != 0 {
+func Bootstrap(store *config.Store) (string, error) {
+	name, password := os.Getenv("PROXIMITY_ADMIN_USER"), os.Getenv("PROXIMITY_ADMIN_PASSWORD")
+	if len(store.Snapshot().Users) != 0 || password == "" {
 		return "", nil
-	}
-	name, password, generated := os.Getenv("PROXIMITY_ADMIN_USER"),
-		os.Getenv("PROXIMITY_ADMIN_PASSWORD"), false
-	if name == "" {
+	} else if name == "" {
 		name = "admin"
 	}
-	if password == "" {
-		random, err := randomPassword(16)
-		if err != nil {
-			return "", err
-		}
-		password, generated = random, true
+	if err := CreateAdministrator(store, name, password); err != nil {
+		return "", err
 	}
+	return fmt.Sprintf("created administrator '%v' with password from environment", name), nil
+}
+
+func CreateAdministrator(store *config.Store, name string, password string) error {
 	hash, err := HashPassword(password)
 	if err != nil {
-		return "", fmt.Errorf("failed to hash password of '%v': %w", name, err)
+		return fmt.Errorf("failed to hash password of '%v': %w", name, err)
 	}
 	user := config.User{Name: name, Role: config.RoleAdministrator, PasswordHash: hash}
 	if err = store.Update(func(config *config.Config) error {
+		if len(config.Users) != 0 {
+			return errors.New("administrator already exists")
+		}
 		return config.AddUser(user)
 	}); err != nil {
-		return "", fmt.Errorf("failed to create administrator '%v': %w", name, err)
-	} else if !generated {
-		return fmt.Sprintf("created administrator '%v' with password from environment", name), nil
+		return fmt.Errorf("failed to create administrator '%v': %w", name, err)
 	}
-	path := filepath.Join(directory, initialPasswordFile)
-	if err = config.WriteFile(path, []byte(name+"\n"+password+"\n")); err != nil {
-		return "", err
-	}
-	return fmt.Sprintf("created administrator '%v' with password '%v' (saved to %v)", name,
-		password, path), nil
+	return nil
 }
 
 func sign(secret string, body string) string {
 	digest := hmac.New(sha256.New, []byte(secret))
 	digest.Write([]byte(body))
 	return base64.RawURLEncoding.EncodeToString(digest.Sum(nil))
-}
-
-func randomPassword(length int) (string, error) {
-	buffer := make([]byte, length)
-	if _, err := rand.Read(buffer); err != nil {
-		return "", fmt.Errorf("failed to read random data: %w", err)
-	}
-	for index, value := range buffer {
-		buffer[index] = passwordAlphabet[int(value)%len(passwordAlphabet)]
-	}
-	return string(buffer), nil
 }

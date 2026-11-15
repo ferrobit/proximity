@@ -11,6 +11,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"strconv"
 	"strings"
 	"syscall"
@@ -38,6 +39,7 @@ type hostDriver struct {
 
 type proxyDriver struct {
 	target string
+	bypass int
 }
 
 type amneziaDriver struct {
@@ -56,6 +58,8 @@ type amneziaDriver struct {
 const amneziaTimeout = 10 * time.Second
 const amneziaDefaultMTU = 1280
 
+var amneziaPattern = regexp.MustCompile(`^(DEBUG: )?\(\S+\) \d{4}/\d\d/\d\d \d\d:\d\d:\d\d `)
+
 func makeDriver(runner *runner) driver {
 	endpoint, tools := runner.endpoint, runner.manager.options.Tools
 	slot := strconv.Itoa(endpoint.Slot)
@@ -64,10 +68,10 @@ func makeDriver(runner *runner) driver {
 		return &hostDriver{runner: runner, tools: tools, options: *endpoint.Host,
 			table: Table(endpoint.Slot)}
 	case config.TypeSocks5:
-		return &proxyDriver{target: net.JoinHostPort(endpoint.Socks5.Server,
-			strconv.Itoa(endpoint.Socks5.Port))}
+		return &proxyDriver{bypass: runner.bypass, target: net.JoinHostPort(
+			endpoint.Socks5.Server, strconv.Itoa(endpoint.Socks5.Port))}
 	case config.TypeHTTP:
-		return &proxyDriver{target: net.JoinHostPort(endpoint.HTTP.Server,
+		return &proxyDriver{bypass: runner.bypass, target: net.JoinHostPort(endpoint.HTTP.Server,
 			strconv.Itoa(endpoint.HTTP.Port))}
 	case config.TypeOpenVPN:
 		return makeOpenVPNDriver(runner)
@@ -96,6 +100,7 @@ func (driver *hostDriver) start(_ context.Context) error {
 		"dev", driver.options.Interface, "table", strconv.Itoa(driver.table)); err != nil {
 		return fmt.Errorf("failed to add default route to table (%v): %w", driver.table, err)
 	}
+	driver.tools.sourceRules(driver.table, deviceAddresses(driver.options.Interface))
 	return nil
 }
 
@@ -105,9 +110,9 @@ func (driver *hostDriver) check(ctx context.Context, timeout time.Duration) (tim
 	if driver.marked() {
 		return dialProbe(ctx, target, driver.table, "", timeout)
 	} else if driver.options.Mode == config.HostInterface {
-		return dialProbe(ctx, target, 0, driver.options.Interface, timeout)
+		return dialProbe(ctx, target, driver.runner.bypass, driver.options.Interface, timeout)
 	}
-	return dialProbe(ctx, target, 0, "", timeout)
+	return dialProbe(ctx, target, driver.runner.bypass, "", timeout)
 }
 
 func (driver *hostDriver) exited() <-chan error {
@@ -135,7 +140,7 @@ func (driver *proxyDriver) start(_ context.Context) error {
 
 func (driver *proxyDriver) check(ctx context.Context, timeout time.Duration) (time.Duration,
 	error) {
-	return dialProbe(ctx, driver.target, 0, "", timeout)
+	return dialProbe(ctx, driver.target, driver.bypass, "", timeout)
 }
 
 func (driver *proxyDriver) exited() <-chan error {
@@ -166,8 +171,9 @@ func (driver *amneziaDriver) start(ctx context.Context) error {
 	}
 	driver.parsed = parsed
 	driver.tools.removeDevice(driver.device)
+	driver.runner.logf("starting '%v' on device '%v'", driver.tools.AmneziaGo, driver.device)
 	command := exec.Command(driver.tools.AmneziaGo, "--foreground", driver.device)
-	command.Env = append(os.Environ(), "LOG_LEVEL=error", "WG_PROCESS_FOREGROUND=1")
+	command.Env = append(os.Environ(), "LOG_LEVEL=verbose", "WG_PROCESS_FOREGROUND=1")
 	command.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
 	reader, writer := io.Pipe()
 	command.Stdout, command.Stderr = writer, writer
@@ -179,7 +185,7 @@ func (driver *amneziaDriver) start(ctx context.Context) error {
 	go func() {
 		scanner := bufio.NewScanner(reader)
 		for scanner.Scan() {
-			driver.runner.logf("%v", scanner.Text())
+			driver.runner.logf("%v", amneziaPattern.ReplaceAllString(scanner.Text(), ""))
 		}
 	}()
 	go func() {
@@ -217,6 +223,13 @@ func (driver *amneziaDriver) install(ctx context.Context, path string) error {
 		path); err != nil {
 		return &fatalError{err}
 	}
+	driver.runner.logf("configuration is applied to device '%v'", driver.device)
+	if driver.runner.bypass != 0 {
+		if _, err := driver.tools.run(ctx, driver.tools.AmneziaWG, "set", driver.device, "fwmark",
+			strconv.Itoa(driver.runner.bypass)); err != nil {
+			return fmt.Errorf("failed to set transport mark (%v): %w", driver.runner.bypass, err)
+		}
+	}
 	families := map[string]bool{}
 	for _, address := range driver.parsed.Addresses() {
 		family := "-4"
@@ -235,10 +248,19 @@ func (driver *amneziaDriver) install(ctx context.Context, path string) error {
 		return fmt.Errorf("failed to enable device '%v': %w", driver.device, err)
 	}
 	driver.tools.loosenFilter(driver.device)
+	driver.tools.sourceRules(driver.table, driver.parsed.Addresses())
 	for family := range families {
 		if _, err := driver.tools.ip(family, "route", "replace", "default", "dev", driver.device,
 			"table", table); err != nil && family == "-4" {
 			return fmt.Errorf("failed to add default route to table (%v): %w", driver.table, err)
+		}
+	}
+	driver.runner.logf("device '%v' is up: address %v, MTU %v, routing table %v", driver.device,
+		strings.Join(driver.parsed.Addresses(), ", "), mtu, table)
+	if output, err := driver.tools.run(ctx, driver.tools.AmneziaWG, "show",
+		driver.device); err == nil {
+		for _, line := range strings.Split(output, "\n") {
+			driver.runner.logf("%v", strings.TrimRight(line, " "))
 		}
 	}
 	return nil
@@ -246,7 +268,12 @@ func (driver *amneziaDriver) install(ctx context.Context, path string) error {
 
 func (driver *amneziaDriver) check(ctx context.Context, timeout time.Duration) (time.Duration,
 	error) {
-	return dialProbe(ctx, driver.target, driver.table, "", timeout)
+	latency, err := dialProbe(ctx, driver.target, driver.table, "", timeout)
+	if err == nil {
+		driver.runner.logf("check '%v' through the tunnel: %v ms", driver.target,
+			latency.Milliseconds())
+	}
+	return latency, err
 }
 
 func (driver *amneziaDriver) exited() <-chan error {

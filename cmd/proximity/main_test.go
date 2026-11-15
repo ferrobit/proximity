@@ -28,6 +28,8 @@ func TestCheckHealth_Status(t *testing.T) {
 	}
 	{
 		require.ErrorContains(t, checkHealth("no-port"), `cannot parse "no-port" as listen address`)
+		require.ErrorContains(t, checkHealth("0.0.0.0:1"), "failed to get session state")
+		require.ErrorContains(t, checkHealth(":1"), "failed to get session state")
 		require.ErrorContains(t, checkHealth("127.0.0.1:1"), "failed to get session state")
 	}
 }

@@ -20,8 +20,10 @@ type Settings struct {
 	LogLevel           string `json:"log_level"`
 	IPv6               bool   `json:"ipv6"`
 	AnonymousDashboard bool   `json:"anonymous_dashboard"`
+	ConnectivityChecks bool   `json:"connectivity_checks"`
 	ProbeTarget        string `json:"probe_target"`
 	CheckInterval      int    `json:"check_interval"`
+	Capture            bool   `json:"capture"`
 }
 
 type User struct {
@@ -32,9 +34,11 @@ type User struct {
 }
 
 type HostOptions struct {
-	Mode      string `json:"mode"`
-	Interface string `json:"interface"`
-	Gateway   string `json:"gateway"`
+	Mode             string `json:"mode"`
+	Interface        string `json:"interface"`
+	Gateway          string `json:"gateway"`
+	Attempts         int    `json:"attempts"`
+	ReconnectTimeout int    `json:"reconnect_timeout"`
 }
 
 type Socks5Options struct {
@@ -103,11 +107,12 @@ type Endpoint struct {
 }
 
 type Fallback struct {
-	ID        string   `json:"id"`
-	Enabled   bool     `json:"enabled"`
-	Endpoints []string `json:"endpoints"`
-	URL       string   `json:"url"`
-	Interval  int      `json:"interval"`
+	ID          string   `json:"id"`
+	Enabled     bool     `json:"enabled"`
+	Endpoints   []string `json:"endpoints"`
+	HealthCheck bool     `json:"health_check"`
+	URL         string   `json:"url"`
+	Interval    int      `json:"interval"`
 }
 
 type Filter struct {
@@ -160,8 +165,11 @@ const (
 	OTPAppend    = "append"
 )
 
-const currentVersion = 1
+const currentVersion = 2
 const maxSlot = 9999
+const defaultAttempts = 3
+const defaultReconnectTimeout = 10
+const providedPrefix = "Routes of "
 const defaultHealthURL = "https://www.gstatic.com/generate_204"
 const defaultProbeTarget = "1.1.1.1:443"
 
@@ -178,7 +186,8 @@ var interfacePattern = regexp.MustCompile(`^[A-Za-z0-9_.@-]{1,15}$`)
 func Default() Config {
 	return Config{Version: currentVersion, Settings: Settings{MixedPort: 7899, BindAddress: "*",
 		DefaultTarget: TargetDirect, LogLevel: "warning", AnonymousDashboard: true,
-		ProbeTarget: defaultProbeTarget, CheckInterval: 30}, Users: []User{},
+		ConnectivityChecks: true, ProbeTarget: defaultProbeTarget, CheckInterval: 30,
+		Capture: true}, Users: []User{},
 		Endpoints: []Endpoint{}, Fallbacks: []Fallback{}, Filters: []Filter{}}
 }
 
@@ -269,6 +278,12 @@ func (endpoint *Endpoint) normalize() {
 	} else if endpoint.Host == nil {
 		endpoint.Host = &HostOptions{Mode: HostDefault}
 	}
+	if endpoint.Host != nil && endpoint.Host.Attempts == 0 {
+		endpoint.Host.Attempts = defaultAttempts
+	}
+	if endpoint.Host != nil && endpoint.Host.ReconnectTimeout == 0 {
+		endpoint.Host.ReconnectTimeout = defaultReconnectTimeout
+	}
 	if endpoint.Type != TypeSocks5 {
 		endpoint.Socks5 = nil
 	} else if endpoint.Socks5 == nil {
@@ -347,7 +362,12 @@ func (endpoint *Endpoint) validate() error {
 }
 
 func (host *HostOptions) validate() error {
-	if host.Mode == HostDefault {
+	if err := validateRange("connection attempts", host.Attempts, 1, 100); err != nil {
+		return err
+	} else if err = validateRange("reconnection timeout", host.ReconnectTimeout, 1,
+		3600); err != nil {
+		return err
+	} else if host.Mode == HostDefault {
 		return nil
 	} else if host.Mode != HostInterface {
 		return fmt.Errorf("unexpected host mode '%v'", host.Mode)
@@ -463,8 +483,8 @@ func (filter *Filter) normalize() {
 }
 
 func (filter *Filter) validate() error {
-	if len(filter.ID) > 64 {
-		return errors.New("filter ID is too long")
+	if filter.ID == "" || len(filter.ID) > 64 {
+		return fmt.Errorf("invalid filter ID length (%v)", len(filter.ID))
 	} else if _, err := rules.Parse(filter.Directive, filter.Params); err != nil {
 		return fmt.Errorf("failed to check rule parameters: %w", err)
 	}

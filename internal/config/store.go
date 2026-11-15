@@ -58,7 +58,7 @@ func internalOpen(directory string) (*Store, error) {
 		return nil, fmt.Errorf("failed to read file '%v': %w", store.path, err)
 	} else if err = json.Unmarshal(data, &store.config); err != nil {
 		return nil, fmt.Errorf("failed to decode file '%v': %w", store.path, err)
-	} else if err = store.config.Validate(); err != nil {
+	} else if err = store.config.upgrade(); err != nil {
 		return nil, fmt.Errorf("failed to check file '%v': %w", store.path, err)
 	}
 	return store, nil

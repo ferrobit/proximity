@@ -18,6 +18,7 @@ import (
 
 	"proximity/internal/config"
 	"proximity/internal/link"
+	"proximity/internal/router"
 	"proximity/web"
 )
 
@@ -127,7 +128,8 @@ func TestServer_Access(t *testing.T) {
 	code, body, _ := call(t, server, nil, http.MethodGet, "/api/session", nil)
 	require.Equal(t, http.StatusOK, code)
 	require.Equal(t, map[string]any{"user": "", "role": "anonymous", "level": 0.0,
-		"version": "test", "anonymous_dashboard": true}, body)
+		"version": "test", "anonymous_dashboard": true, "setup": false, "host_network": false},
+		body)
 	code, body, _ = call(t, server, nil, http.MethodGet, "/api/endpoints", nil)
 	require.Equal(t, http.StatusUnauthorized, code)
 	require.Equal(t, "authentication required", body["error"])
@@ -155,14 +157,14 @@ func TestServer_Access(t *testing.T) {
 		require.Equal(t, "administrator", body["role"])
 		require.Equal(t, 3.0, body["level"])
 		code, _, _ = call(t, server, admin, http.MethodPost, "/api/users",
-			userRequest{Name: "viewer", Role: config.RoleUser, Password: "viewer123"})
+			userRequest{Name: "viewer", Role: config.RoleUser, Password: "viewer123", Confirm: "viewer123"})
 		require.Equal(t, http.StatusOK, code)
 		code, body, _ = call(t, server, admin, http.MethodPost, "/api/users",
-			userRequest{Name: "viewer", Role: config.RoleUser, Password: "viewer123"})
+			userRequest{Name: "viewer", Role: config.RoleUser, Password: "viewer123", Confirm: "viewer123"})
 		require.Equal(t, http.StatusBadRequest, code)
 		require.Equal(t, "user 'viewer' already exists", body["error"])
 		code, _, _ = call(t, server, admin, http.MethodPost, "/api/users",
-			userRequest{Name: "short", Role: config.RoleUser, Password: "1"})
+			userRequest{Name: "short", Role: config.RoleUser, Password: "1", Confirm: "1"})
 		require.Equal(t, http.StatusBadRequest, code)
 		code, body, _ = call(t, server, admin, http.MethodGet, "/api/users", nil)
 		require.Equal(t, http.StatusOK, code)
@@ -184,14 +186,14 @@ func TestServer_Access(t *testing.T) {
 		code, _, _ = call(t, server, viewer, http.MethodGet, "/api/users", nil)
 		require.Equal(t, http.StatusForbidden, code)
 		code, body, _ = call(t, server, viewer, http.MethodPost, "/api/password",
-			passwordRequest{Current: "wrong", Password: "viewer456"})
+			passwordRequest{Current: "wrong", Password: "viewer456", Confirm: "viewer456"})
 		require.Equal(t, "current password is invalid", body["error"])
 		require.Equal(t, http.StatusBadRequest, code)
 		code, _, _ = call(t, server, viewer, http.MethodPost, "/api/password",
-			passwordRequest{Current: "viewer123", Password: "1"})
+			passwordRequest{Current: "viewer123", Password: "1", Confirm: "1"})
 		require.Equal(t, http.StatusBadRequest, code)
 		code, _, cleared := call(t, server, viewer, http.MethodPost, "/api/password",
-			passwordRequest{Current: "viewer123", Password: "viewer456"})
+			passwordRequest{Current: "viewer123", Password: "viewer456", Confirm: "viewer456"})
 		require.Equal(t, http.StatusOK, code)
 		require.Equal(t, -1, cleared.MaxAge)
 		code, body, _ = call(t, server, viewer, http.MethodGet, "/api/session", nil)
@@ -201,10 +203,10 @@ func TestServer_Access(t *testing.T) {
 	}
 	{
 		code, _, _ := call(t, server, admin, http.MethodPut, "/api/users/viewer",
-			userRequest{Role: config.RoleOperator, Password: "viewer789"})
+			userRequest{Role: config.RoleOperator, Password: "viewer789", Confirm: "viewer789"})
 		require.Equal(t, http.StatusOK, code)
 		code, _, _ = call(t, server, admin, http.MethodPut, "/api/users/viewer",
-			userRequest{Password: "1"})
+			userRequest{Password: "1", Confirm: "1"})
 		require.Equal(t, http.StatusBadRequest, code)
 		code, _, _ = call(t, server, viewer, http.MethodGet, "/api/endpoints", nil)
 		require.Equal(t, http.StatusUnauthorized, code)
@@ -236,6 +238,81 @@ func TestServer_Access(t *testing.T) {
 		code, _, cleared := call(t, server, admin, http.MethodPost, "/api/logout", nil)
 		require.Equal(t, http.StatusOK, code)
 		require.Equal(t, -1, cleared.MaxAge)
+	}
+}
+
+func TestServer_Backup(t *testing.T) {
+	server := makeServer(t)
+	admin := login(t, server, "admin", "secret123")
+	code, _, _ := call(t, server, admin, http.MethodPost, "/api/endpoints", config.Endpoint{
+		Type: config.TypeSocks5, Enabled: true, Socks5: &config.Socks5Options{Server: "10.0.0.1",
+			Port: 1080, Password: "pass"}})
+	require.Equal(t, http.StatusOK, code)
+	code, _, _ = call(t, server, admin, http.MethodPost, "/api/filters", config.Filter{
+		Directive: "DOMAIN", Target: "SOCKS5 1", Enabled: true, Params: []string{"a.test"}})
+	require.Equal(t, http.StatusOK, code)
+	code, _, _ = call(t, server, admin, http.MethodPost, "/api/users",
+		userRequest{Name: "operator", Role: config.RoleOperator, Password: "operator1",
+			Confirm: "operator1"})
+	require.Equal(t, http.StatusOK, code)
+	code, _, _ = call(t, server, admin, http.MethodPost, "/api/users",
+		userRequest{Name: "viewer", Role: config.RoleUser, Password: "viewer123",
+			Confirm: "viewer123"})
+	require.Equal(t, http.StatusOK, code)
+	code, exported, _ := call(t, server, admin, http.MethodGet, "/api/backup", nil)
+	require.Equal(t, http.StatusOK, code)
+	require.Equal(t, config.BackupFormat, exported["format"])
+	require.Equal(t, 2.0, exported["version"])
+	require.Len(t, exported["endpoints"], 1)
+	require.Len(t, exported["filters"], 1)
+	require.NotContains(t, exported, "users")
+	require.NotContains(t, exported, "secret")
+	{
+		viewer := login(t, server, "viewer", "viewer123")
+		code, _, _ := call(t, server, viewer, http.MethodGet, "/api/backup", nil)
+		require.Equal(t, http.StatusForbidden, code)
+		code, _, _ = call(t, server, viewer, http.MethodPost, "/api/backup", exported)
+		require.Equal(t, http.StatusForbidden, code)
+		code, _, _ = call(t, server, nil, http.MethodGet, "/api/backup", nil)
+		require.Equal(t, http.StatusUnauthorized, code)
+	}
+	{
+		code, _, _ := call(t, server, admin, http.MethodDelete, "/api/endpoints/SOCKS5%201", nil)
+		require.Equal(t, http.StatusOK, code)
+		require.Empty(t, server.store.Snapshot().Endpoints)
+		settings := exported["settings"].(map[string]any)
+		settings["mixed_port"], settings["log_level"] = 7000.0, "debug"
+		operator := login(t, server, "operator", "operator1")
+		code, body, _ := call(t, server, operator, http.MethodPost, "/api/backup", exported)
+		require.Equal(t, http.StatusOK, code, body)
+		require.Equal(t, map[string]any{"endpoints": 1.0, "fallbacks": 0.0, "filters": 1.0}, body)
+		snapshot := server.store.Snapshot()
+		require.Equal(t, "SOCKS5 1", snapshot.Endpoints[0].ID)
+		require.Equal(t, "pass", snapshot.Endpoints[0].Socks5.Password)
+		require.Equal(t, "SOCKS5 1", snapshot.Filters[0].Target)
+		require.Equal(t, 7899, snapshot.Settings.MixedPort)
+		require.Len(t, snapshot.Users, 3)
+		code, _, _ = call(t, server, admin, http.MethodPost, "/api/backup", exported)
+		require.Equal(t, http.StatusOK, code)
+		snapshot = server.store.Snapshot()
+		require.Equal(t, 7000, snapshot.Settings.MixedPort)
+		require.Equal(t, "debug", snapshot.Settings.LogLevel)
+		require.Len(t, snapshot.Users, 3)
+	}
+	{
+		exported["format"] = "other"
+		code, body, _ := call(t, server, admin, http.MethodPost, "/api/backup", exported)
+		require.Equal(t, http.StatusBadRequest, code)
+		require.Equal(t, "failed to import backup: unexpected backup format 'other'", body["error"])
+		exported["format"] = config.BackupFormat
+		exported["fallbacks"] = []any{map[string]any{"id": "Chain", "endpoints": []any{"missing"}}}
+		code, body, _ = call(t, server, admin, http.MethodPost, "/api/backup", exported)
+		require.Equal(t, http.StatusBadRequest, code)
+		require.Equal(t, "failed to import backup: failed to check fallback 'Chain': "+
+			"endpoint 'missing' does not exist", body["error"])
+		code, _, _ = call(t, server, admin, http.MethodPost, "/api/backup", 5)
+		require.Equal(t, http.StatusBadRequest, code)
+		require.Equal(t, "SOCKS5 1", server.store.Snapshot().Filters[0].Target)
 	}
 }
 
@@ -281,7 +358,7 @@ func TestServer_Endpoints(t *testing.T) {
 	}
 	{
 		code, _, _ := call(t, server, admin, http.MethodPost, "/api/users",
-			userRequest{Name: "viewer", Role: config.RoleUser, Password: "viewer123"})
+			userRequest{Name: "viewer", Role: config.RoleUser, Password: "viewer123", Confirm: "viewer123"})
 		require.Equal(t, http.StatusOK, code)
 		viewer := login(t, server, "viewer", "viewer123")
 		code, body, _ := call(t, server, viewer, http.MethodGet, "/api/endpoints", nil)
@@ -470,7 +547,7 @@ func TestServer_Filters(t *testing.T) {
 		warnings := body["warnings"].([]any)
 		require.Len(t, warnings, 2)
 		require.Contains(t, warnings[0].(map[string]any)["message"],
-			"DOMAIN-SUFFIX 'corp.test' in 'corp' covers DOMAIN 'wiki.corp.test' in #3")
+			"DOMAIN-SUFFIX 'corp.test' in 'corp' covers DOMAIN 'wiki.corp.test' in 'Filter 1'")
 	}
 	{
 		code, body, _ := call(t, server, admin, http.MethodGet, "/api/router/config", nil)
@@ -502,6 +579,69 @@ func TestServer_Filters(t *testing.T) {
 	}
 }
 
+func TestServer_Rename(t *testing.T) {
+	server := makeServer(t)
+	admin := login(t, server, "admin", "secret123")
+	for _, endpoint := range []config.Endpoint{
+		{Type: config.TypeHost, Enabled: true, Statistics: true},
+		{Type: config.TypeHost, Enabled: true, Statistics: true}} {
+		code, _, _ := call(t, server, admin, http.MethodPost, "/api/endpoints", endpoint)
+		require.Equal(t, http.StatusOK, code)
+	}
+	code, _, _ := call(t, server, admin, http.MethodPost, "/api/fallbacks",
+		config.Fallback{Enabled: true, Endpoints: []string{"HOST 1", "HOST 2"}})
+	require.Equal(t, http.StatusOK, code)
+	code, body, _ := call(t, server, admin, http.MethodPost, "/api/filters", config.Filter{
+		Directive: "DOMAIN", Target: "HOST 1", Enabled: true, Params: []string{"a.test"}})
+	require.Equal(t, http.StatusOK, code)
+	require.Equal(t, "Filter 1", body["id"])
+	key := body["key"].(string)
+	server.synchronize()
+	server.tracker.Update(router.Connections{Items: []router.Connection{{ID: "1", Upload: 10,
+		Download: 20, Chains: []string{"HOST 1"}}}, Upload: 10, Download: 20}, nil)
+	{
+		code, _, _ := call(t, server, admin, http.MethodPut, "/api/endpoints/HOST%201",
+			config.Endpoint{ID: " Uplink ", Enabled: true, Statistics: true})
+		require.Equal(t, http.StatusOK, code)
+		snapshot := server.store.Snapshot()
+		require.Equal(t, "Uplink", snapshot.Endpoints[0].ID)
+		require.Equal(t, []string{"Uplink", "HOST 2"}, snapshot.Fallbacks[0].Endpoints)
+		require.Equal(t, "Uplink", snapshot.Filters[0].Target)
+		traffic, _ := server.tracker.Snapshot()
+		require.Equal(t, int64(10), traffic["Uplink"].Upload)
+		require.NotContains(t, traffic, "HOST 1")
+		code, body, _ := call(t, server, admin, http.MethodPut, "/api/endpoints/Uplink",
+			config.Endpoint{ID: "HOST 2", Enabled: true})
+		require.Equal(t, http.StatusBadRequest, code)
+		require.Equal(t, "ID 'HOST 2' already exists", body["error"])
+		code, body, _ = call(t, server, admin, http.MethodPut, "/api/endpoints/Uplink",
+			config.Endpoint{ID: "Fallback 1", Enabled: true})
+		require.Equal(t, "ID 'Fallback 1' already exists", body["error"])
+		require.Equal(t, http.StatusBadRequest, code)
+	}
+	{
+		code, _, _ := call(t, server, admin, http.MethodPut, "/api/fallbacks/Fallback%201",
+			config.Fallback{ID: "Chain", Enabled: true, Endpoints: []string{"Uplink"}})
+		require.Equal(t, http.StatusOK, code)
+		code, body, _ := call(t, server, admin, http.MethodPut, "/api/fallbacks/Chain",
+			config.Fallback{ID: "Uplink", Enabled: true, Endpoints: []string{"Uplink"}})
+		require.Equal(t, http.StatusBadRequest, code)
+		require.Equal(t, "ID 'Uplink' already exists", body["error"])
+		code, _, _ = call(t, server, admin, http.MethodPut, "/api/filters/"+key, config.Filter{
+			ID: "Work", Directive: "DOMAIN", Target: "Chain", Enabled: true,
+			Params: []string{"a.test"}})
+		require.Equal(t, http.StatusOK, code)
+		code, body, _ = call(t, server, admin, http.MethodPost, "/api/filters", config.Filter{
+			ID: "Work", Directive: "DOMAIN", Target: "Chain", Params: []string{"b.test"}})
+		require.Equal(t, http.StatusBadRequest, code)
+		require.Equal(t, "filter ID 'Work' already exists", body["error"])
+		snapshot := server.store.Snapshot()
+		require.Equal(t, "Chain", snapshot.Fallbacks[0].ID)
+		require.Equal(t, "Work", snapshot.Filters[0].ID)
+		require.Equal(t, "Chain", snapshot.Filters[0].Target)
+	}
+}
+
 func TestServer_Routes(t *testing.T) {
 	server := makeServer(t)
 	admin := login(t, server, "admin", "secret123")
@@ -528,6 +668,77 @@ func TestServer_Routes(t *testing.T) {
 		code, body, _ := call(t, server, admin, http.MethodDelete, "/api/filters/"+key, nil)
 		require.Equal(t, http.StatusBadRequest, code)
 		require.Equal(t, "provided filter is read-only", body["error"])
+	}
+}
+
+func TestServer_Setup(t *testing.T) {
+	directory := t.TempDir()
+	tool := filepath.Join(directory, "ip")
+	require.NoError(t, os.WriteFile(tool, []byte("#!/bin/bash\nexit 1\n"), 0o700))
+	t.Setenv("PROXIMITY_ADMIN_PASSWORD", "")
+	server, err := New(Options{Version: "test", ConfigPath: filepath.Join(directory, "config"),
+		RunPath: filepath.Join(directory, "run"), MihomoBinary: "/bin/false", HostNetwork: true,
+		Tools: link.Tools{IP: tool}, Logf: t.Logf})
+	require.NoError(t, err)
+	t.Cleanup(server.manager.Close)
+	code, body, _ := call(t, server, nil, http.MethodGet, "/api/session", nil)
+	require.Equal(t, http.StatusOK, code)
+	require.Equal(t, true, body["setup"])
+	require.Equal(t, true, body["host_network"])
+	require.NoFileExists(t, filepath.Join(directory, "config", "initial_admin_password.txt"))
+	{
+		code, body, cookie := call(t, server, nil, http.MethodPost, "/api/setup",
+			setupRequest{Username: "owner", Password: "secret123", Confirm: "secret124"})
+		require.Equal(t, http.StatusBadRequest, code)
+		require.Equal(t, "passwords do not match", body["error"])
+		require.Nil(t, cookie)
+		code, body, _ = call(t, server, nil, http.MethodPost, "/api/setup",
+			setupRequest{Username: "owner", Password: "1", Confirm: "1"})
+		require.Equal(t, http.StatusBadRequest, code)
+		require.Contains(t, body["error"], "invalid password length (1)")
+		code, body, _ = call(t, server, nil, http.MethodPost, "/api/setup",
+			setupRequest{Username: "Bad Name", Password: "secret123", Confirm: "secret123"})
+		require.Equal(t, http.StatusBadRequest, code)
+		require.Contains(t, body["error"], "invalid user name 'Bad Name'")
+		code, _, _ = call(t, server, nil, http.MethodPost, "/api/setup", 5)
+		require.Equal(t, http.StatusBadRequest, code)
+		require.Empty(t, server.store.Snapshot().Users)
+	}
+	{
+		code, _, cookie := call(t, server, nil, http.MethodPost, "/api/setup",
+			setupRequest{Username: "owner", Password: "secret123", Confirm: "secret123"})
+		require.Equal(t, http.StatusOK, code)
+		require.NotNil(t, cookie)
+		code, body, _ := call(t, server, cookie, http.MethodGet, "/api/session", nil)
+		require.Equal(t, http.StatusOK, code)
+		require.Equal(t, "owner", body["user"])
+		require.Equal(t, "administrator", body["role"])
+		require.Equal(t, false, body["setup"])
+		code, body, _ = call(t, server, nil, http.MethodPost, "/api/setup",
+			setupRequest{Username: "second", Password: "secret123", Confirm: "secret123"})
+		require.Equal(t, http.StatusForbidden, code)
+		require.Equal(t, "administrator already exists", body["error"])
+		login(t, server, "owner", "secret123")
+		code, body, _ = call(t, server, cookie, http.MethodPost, "/api/users",
+			userRequest{Name: "viewer", Role: config.RoleUser, Password: "viewer123",
+				Confirm: "other"})
+		require.Equal(t, http.StatusBadRequest, code)
+		require.Equal(t, "passwords do not match", body["error"])
+		code, body, _ = call(t, server, cookie, http.MethodPut, "/api/users/owner",
+			userRequest{Password: "viewer123"})
+		require.Equal(t, "passwords do not match", body["error"])
+		require.Equal(t, http.StatusBadRequest, code)
+		code, body, _ = call(t, server, cookie, http.MethodPost, "/api/password",
+			passwordRequest{Current: "secret123", Password: "secret456", Confirm: "secret457"})
+		require.Equal(t, "passwords do not match", body["error"])
+		require.Equal(t, http.StatusBadRequest, code)
+	}
+	{
+		server.synchronize()
+		require.False(t, server.capturing())
+		code, body, _ := call(t, server, nil, http.MethodGet, "/api/dashboard", nil)
+		require.Equal(t, http.StatusOK, code)
+		require.Equal(t, false, body["capture"])
 	}
 }
 

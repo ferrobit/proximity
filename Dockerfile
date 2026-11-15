@@ -28,7 +28,7 @@ RUN git clone --depth 1 --branch ${AWG_TOOLS_VERSION} \
     cp /src/amneziawg-tools/src/wg /out/awg
 
 FROM ${GO_IMAGE} AS build
-ARG VERSION=1.0.0
+ARG VERSION=1.1.0
 WORKDIR /src
 COPY go.mod go.sum ./
 RUN go mod download

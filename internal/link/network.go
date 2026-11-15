@@ -132,6 +132,25 @@ func computeOTP(key string, now time.Time) (string, error) {
 	return fmt.Sprintf("%06d", code%1000000), nil
 }
 
+func deviceAddresses(device string) []string {
+	result := []string{}
+	item, err := net.InterfaceByName(device)
+	if err != nil {
+		return result
+	}
+	addresses, err := item.Addrs()
+	if err != nil {
+		return result
+	}
+	for _, address := range addresses {
+		if prefix, err := netip.ParsePrefix(address.String()); err == nil &&
+			!prefix.Addr().IsLinkLocalUnicast() {
+			result = append(result, prefix.Addr().String())
+		}
+	}
+	return result
+}
+
 func linkState(device string) string {
 	data, err := os.ReadFile("/sys/class/net/" + device + "/operstate")
 	if err != nil {
@@ -240,11 +259,29 @@ func (tools Tools) teardownTable(table int) {
 func (tools Tools) removeRules(name string) {
 	for _, family := range []string{"-4", "-6"} {
 		for range 16 {
-			if _, err := tools.ip(family, "rule", "del", "priority", rulePriority, "fwmark", name,
-				"lookup", name); err != nil {
+			if _, err := tools.ip(family, "rule", "del", "priority", rulePriority, "lookup",
+				name); err != nil {
 				break
 			}
 		}
+	}
+}
+
+func (tools Tools) sourceRules(table int, addresses []string) {
+	for _, address := range addresses {
+		prefix, err := netip.ParsePrefix(address)
+		if host, failure := netip.ParseAddr(address); err != nil && failure != nil {
+			continue
+		} else if err != nil {
+			prefix = netip.PrefixFrom(host, host.BitLen())
+		}
+		family := "-4"
+		if prefix.Addr().Is6() {
+			family = "-6"
+		}
+		source := netip.PrefixFrom(prefix.Addr(), prefix.Addr().BitLen()).String()
+		_, _ = tools.ip(family, "rule", "add", "priority", rulePriority, "from", source, "lookup",
+			strconv.Itoa(table))
 	}
 }
 
@@ -305,6 +342,8 @@ func (tools Tools) cleanup() error {
 			tools.teardownTable(table)
 		}
 	}
+	capture := captureState{}
+	capture.remove(tools)
 	if _, err = exec.LookPath(tools.IP); err != nil {
 		return errors.New("ip tool does not exist")
 	}

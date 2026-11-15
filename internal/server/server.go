@@ -28,6 +28,8 @@ type Options struct {
 	GeodataPath  string
 	Executable   string
 	MihomoBinary string
+	HostNetwork  bool
+	ProxyBind    string
 	Tools        link.Tools
 	Logf         func(format string, arguments ...any)
 }
@@ -43,6 +45,7 @@ type Server struct {
 	mutex    sync.Mutex
 	warnings []string
 	failure  string
+	captured bool
 	routes   *http.ServeMux
 }
 
@@ -80,7 +83,7 @@ func internalNew(options Options) (*Server, error) {
 	if err != nil {
 		return nil, err
 	}
-	if message, err := auth.Bootstrap(store, options.ConfigPath); err != nil {
+	if message, err := auth.Bootstrap(store); err != nil {
 		return nil, err
 	} else if message != "" {
 		options.Logf("%v", message)
@@ -90,7 +93,8 @@ func internalNew(options Options) (*Server, error) {
 	home := filepath.Join(options.ConfigPath, "mihomo")
 	server.tracker = router.NewTracker(filepath.Join(options.ConfigPath, "state.json"))
 	if server.manager, err = link.NewManager(link.Options{Directory: options.RunPath,
-		Executable: options.Executable, Tools: options.Tools, Changed: server.notify}); err != nil {
+		Executable: options.Executable, Tools: options.Tools, HostNetwork: options.HostNetwork,
+		Changed: server.notify}); err != nil {
 		return nil, err
 	} else if server.mihomo, err = router.NewMihomo(options.MihomoBinary, home,
 		filepath.Join(options.RunPath, "mihomo.sock"), server.print); err != nil {
@@ -130,11 +134,16 @@ func (failure *statusError) Error() string {
 func (server *Server) Run(ctx context.Context) error {
 	listener := &http.Server{Addr: server.options.Listen, Handler: server.routes,
 		ReadHeaderTimeout: 10 * time.Second}
-	failures := make(chan error, 1)
+	failures, finished := make(chan error, 1), make(chan struct{})
+	ctx, stop := context.WithCancel(ctx)
+	defer stop()
 	go func() {
 		failures <- listener.ListenAndServe()
 	}()
-	go server.loop(ctx)
+	go func() {
+		server.loop(ctx)
+		close(finished)
+	}()
 	go server.mihomo.Watch(ctx, server.tracker.Observe)
 	server.notify()
 	var failure error
@@ -145,6 +154,8 @@ func (server *Server) Run(ctx context.Context) error {
 	shutdown, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 	_ = listener.Shutdown(shutdown)
+	stop()
+	<-finished
 	server.manager.Close()
 	server.mihomo.Close()
 	if err := server.tracker.Save(); err != nil {
@@ -178,6 +189,7 @@ func (server *Server) loop(ctx context.Context) {
 		case <-server.dirty:
 			server.synchronize()
 		case <-poll.C:
+			server.capture()
 			if connections, err := server.mihomo.Connections(); err == nil {
 				server.tracker.Update(connections, server.manager.Counters())
 			}
@@ -189,8 +201,22 @@ func (server *Server) loop(ctx context.Context) {
 	}
 }
 
+func (server *Server) capture() {
+	settings := server.store.Snapshot().Settings
+	captured := server.manager.Capture(settings.Capture, settings.IPv6)
+	server.mutex.Lock()
+	defer server.mutex.Unlock()
+	if server.captured != captured {
+		server.options.Logf("host traffic capture is active: %v", captured)
+	}
+	server.captured = captured
+}
+
 func (server *Server) synchronize() {
 	snapshot := server.store.Snapshot()
+	if !server.options.HostNetwork || !snapshot.Settings.Capture {
+		server.capture()
+	}
 	server.manager.Apply(snapshot.Endpoints, snapshot.Settings)
 	links := server.manager.Status()
 	for _, endpoint := range snapshot.Endpoints {
@@ -211,10 +237,13 @@ func (server *Server) synchronize() {
 	}
 	snapshot = server.store.Snapshot()
 	server.tracker.SetCollected(snapshot.Endpoints)
-	data, warnings, err := router.Generate(snapshot, links, server.mihomo.Socket())
+	data, warnings, err := router.Generate(snapshot, links, router.Options{
+		Socket: server.mihomo.Socket(), ProxyBind: server.options.ProxyBind,
+		Capture: server.options.HostNetwork && snapshot.Settings.Capture})
 	if err == nil {
 		err = server.mihomo.Apply(data)
 	}
+	server.capture()
 	server.mutex.Lock()
 	defer server.mutex.Unlock()
 	if server.warnings, server.failure = warnings, ""; err != nil {

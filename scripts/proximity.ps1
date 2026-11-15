@@ -2,7 +2,7 @@
 # Usage: .\scripts\proximity.ps1 up -d --build | down | logs -f | ps
 $ErrorActionPreference = "Stop"
 if (-not $env:PROXIMITY_CONFIG_DIR) {
-    $env:PROXIMITY_CONFIG_DIR = Join-Path $env:APPDATA "proximity"
+    $env:PROXIMITY_CONFIG_DIR = Join-Path $env:APPDATA "Proximity"
 }
 New-Item -ItemType Directory -Force -Path $env:PROXIMITY_CONFIG_DIR | Out-Null
 Set-Location (Join-Path $PSScriptRoot "..")
@@ -11,4 +11,4 @@ if ($arguments.Count -eq 0) {
     $arguments = @("up", "-d", "--build")
 }
 Write-Host "proximity: config folder is '$env:PROXIMITY_CONFIG_DIR'"
-docker compose -f docker-compose.yml @arguments
+docker compose -f docker-compose.bridge.yml @arguments

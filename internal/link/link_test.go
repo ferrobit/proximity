@@ -43,6 +43,7 @@ esac
 exit 0
 `
 const fakeOpenVPN = `#!/bin/bash
+echo "$*" > "$(dirname "$0")/openvpn.log"
 hook=""
 while [ $# -gt 0 ]; do
 	if [ "$1" = "--up" ]; then hook="${2##* }"; fi
@@ -202,12 +203,15 @@ func TestManager_AmneziaFailure(t *testing.T) {
 		Monitoring: &config.Monitoring{Interval: 5, Timeout: 1, Retries: 1, ReconnectDelay: 1,
 			ReconnectAttempts: 1, Target: "127.0.0.1:1"}}
 	manager.Apply([]config.Endpoint{endpoint}, config.Settings{CheckInterval: 5})
+	require.False(t, manager.Capture(true, false))
 	status := waitState(t, manager, "AWG", StateReconnecting)
 	require.Contains(t, status.Message, "reconnect attempt 1 of 1")
 	status = waitState(t, manager, "AWG", StateFailed)
 	require.Contains(t, status.Message, "exited")
 	require.Equal(t, -1, status.Latency)
 	require.Contains(t, strings.Join(manager.Log("AWG"), "\n"), "boom")
+	require.Contains(t, strings.Join(manager.Log("AWG"), "\n"),
+		"starting '"+tools.AmneziaGo+"' on device 'proximity_a4'")
 	require.Empty(t, manager.Counters())
 	{
 		endpoint.AmneziaWG = &config.AmneziaWGOptions{Config: "broken"}
@@ -272,6 +276,12 @@ func TestManager_OpenVPN(t *testing.T) {
 		require.NoError(t, err)
 		require.Contains(t, string(calls), "-4 route flush table 51005")
 		require.Contains(t, string(calls), "-4 rule add priority 5100 fwmark 51007 lookup 51007")
+		require.Contains(t, string(calls), "-4 rule add priority 5100 from 10.88.0.2/32 lookup 51007")
+		require.NotContains(t, string(calls), "rule add priority 5150")
+		arguments, err := os.ReadFile(filepath.Join(directory, "openvpn.log"))
+		require.NoError(t, err)
+		require.Contains(t, string(arguments), "--dev proximity_o7 --dev-type tun --route-noexec")
+		require.NotContains(t, string(arguments), "--mark")
 		require.Contains(t, string(calls), "-4 route replace default dev proximity_o7 table 51007")
 		require.Contains(t, string(calls),
 			"-4 route replace 10.99.0.0/16 via 10.88.0.1 dev proximity_o7 table 51007")
@@ -307,6 +317,121 @@ func TestManager_OpenVPN(t *testing.T) {
 	}
 }
 
+func TestManager_Capture(t *testing.T) {
+	tools, directory := makeTools(t)
+	manager, err := NewManager(Options{Directory: filepath.Join(directory, "run"),
+		Executable: "/usr/local/bin/proximity", Tools: tools, HostNetwork: true})
+	require.NoError(t, err)
+	defer manager.Close()
+	require.False(t, manager.Capture(true, true))
+	calls, err := os.ReadFile(filepath.Join(directory, "ip.log"))
+	require.NoError(t, err)
+	for _, line := range []string{"-4 rule add priority 5150 fwmark 51000 lookup main",
+		"-4 rule add priority 5160 lookup main suppress_prefixlength 0",
+		"-4 rule add priority 5170 from 0.0.0.0/32 iif lo lookup 51000",
+		"-4 rule add priority 5170 from 198.18.0.0/30 iif lo lookup 51000",
+		"-6 rule add priority 5170 from ::/128 iif lo lookup 51000",
+		"-6 rule add priority 5170 from fdfe:dcba:9876::/126 iif lo lookup 51000"} {
+		require.Contains(t, string(calls), line+"\n")
+	}
+	require.NotContains(t, string(calls), "route replace default dev")
+	{
+		manager.capture.device = "lo"
+		require.True(t, manager.Capture(true, true))
+		require.True(t, manager.Capture(true, true))
+		calls, err := os.ReadFile(filepath.Join(directory, "ip.log"))
+		require.NoError(t, err)
+		require.Equal(t, 1, strings.Count(string(calls),
+			"-4 route replace default dev lo table 51000\n"))
+		require.Equal(t, 1, strings.Count(string(calls),
+			"-6 route replace default dev lo table 51000\n"))
+		require.True(t, manager.Capture(true, false))
+		calls, err = os.ReadFile(filepath.Join(directory, "ip.log"))
+		require.NoError(t, err)
+		require.Equal(t, 2, strings.Count(string(calls),
+			"-4 route replace default dev lo table 51000\n"))
+	}
+	{
+		endpoint := config.Endpoint{ID: "VPN", Type: config.TypeOpenVPN, Enabled: true, Slot: 7,
+			OpenVPN: &config.OpenVPNOptions{Config: sampleOpenVPN, Username: "alice",
+				Password: "wonderland", OTPKey: "GEZDGNBVGY3TQOJQ", OTPMode: config.OTPChallenge},
+			Monitoring: &config.Monitoring{Interval: 5, Timeout: 1, Retries: 1, ReconnectDelay: 1,
+				Target: "127.0.0.1:1"}}
+		manager.Apply([]config.Endpoint{endpoint}, config.Settings{CheckInterval: 5, Capture: true})
+		waitState(t, manager, "VPN", StateUp)
+		arguments, err := os.ReadFile(filepath.Join(directory, "openvpn.log"))
+		require.NoError(t, err)
+		require.Contains(t, string(arguments), "--mark 51000")
+		since := manager.Status()["VPN"].Since
+		endpoint.ID, endpoint.Name = "Office", "renamed"
+		manager.Apply([]config.Endpoint{endpoint}, config.Settings{CheckInterval: 5, Capture: true})
+		require.NotContains(t, manager.Status(), "VPN")
+		require.Equal(t, StateUp, manager.Status()["Office"].State)
+		require.Equal(t, since, manager.Status()["Office"].Since)
+		require.NotEmpty(t, manager.Log("Office"))
+		require.Empty(t, manager.Log("VPN"))
+		require.EqualError(t, manager.Restart("VPN"), "endpoint 'VPN' is not running")
+		require.NoError(t, manager.Restart("Office"))
+		waitState(t, manager, "Office", StateUp)
+		manager.Apply([]config.Endpoint{endpoint}, config.Settings{CheckInterval: 5})
+		waitState(t, manager, "Office", StateUp)
+		arguments, err = os.ReadFile(filepath.Join(directory, "openvpn.log"))
+		require.NoError(t, err)
+		require.NotContains(t, string(arguments), "--mark")
+	}
+	{
+		require.False(t, manager.Capture(false, false))
+		calls, err := os.ReadFile(filepath.Join(directory, "ip.log"))
+		require.NoError(t, err)
+		require.Contains(t, string(calls), "-4 rule del priority 5170\n")
+		require.Contains(t, string(calls), "-6 route flush table 51000\n")
+	}
+	{
+		plain, err := NewManager(Options{Directory: filepath.Join(directory, "plain"), Tools: tools})
+		require.NoError(t, err)
+		defer plain.Close()
+		plain.capture.device = "lo"
+		require.False(t, plain.Capture(true, false))
+	}
+}
+
+func TestManager_HostAttempts(t *testing.T) {
+	tools, directory := makeTools(t)
+	manager, err := NewManager(Options{Directory: filepath.Join(directory, "run"), Tools: tools})
+	require.NoError(t, err)
+	defer manager.Close()
+	endpoint := config.Endpoint{ID: "M", Type: config.TypeHost, Enabled: true, Slot: 5,
+		Host: &config.HostOptions{Mode: config.HostInterface, Interface: "missing0", Attempts: 2,
+			ReconnectTimeout: 1}}
+	settings := config.Settings{ProbeTarget: "127.0.0.1:1", CheckInterval: 5,
+		ConnectivityChecks: true}
+	manager.Apply([]config.Endpoint{endpoint}, settings)
+	status := waitState(t, manager, "M", StateReconnecting)
+	require.Equal(t, "reconnect attempt 1 of 1: interface 'missing0' does not exist",
+		status.Message)
+	status = waitState(t, manager, "M", StateFailed)
+	require.Equal(t, "interface 'missing0' does not exist", status.Message)
+	{
+		endpoint.Host = &config.HostOptions{Mode: config.HostDefault, Attempts: 1,
+			ReconnectTimeout: 1}
+		manager.Apply([]config.Endpoint{endpoint}, settings)
+		status := waitState(t, manager, "M", StateFailed)
+		require.Contains(t, status.Message, "failed to connect to '127.0.0.1:1'")
+		settings.ProbeTarget = makeListener(t)
+		manager.Apply([]config.Endpoint{endpoint}, settings)
+		status = waitState(t, manager, "M", StateUp)
+		require.NotZero(t, status.Checked)
+		require.GreaterOrEqual(t, status.Latency, 0)
+	}
+	{
+		settings.ProbeTarget, settings.ConnectivityChecks = "127.0.0.1:1", false
+		manager.Apply([]config.Endpoint{endpoint}, settings)
+		status := waitState(t, manager, "M", StateUp)
+		require.Zero(t, status.Checked)
+		require.Equal(t, -1, status.Latency)
+	}
+}
+
 func TestManager_Proxies(t *testing.T) {
 	tools, directory := makeTools(t)
 	target := makeListener(t)
@@ -316,33 +441,30 @@ func TestManager_Proxies(t *testing.T) {
 	require.NoError(t, err)
 	manager, err := NewManager(Options{Directory: filepath.Join(directory, "run"), Tools: tools})
 	require.NoError(t, err)
-	settings := config.Settings{ProbeTarget: target, CheckInterval: 5}
+	settings := config.Settings{ProbeTarget: target, CheckInterval: 5, ConnectivityChecks: true}
 	endpoints := []config.Endpoint{
 		{ID: "S", Type: config.TypeSocks5, Enabled: true, Slot: 1,
 			Socks5: &config.Socks5Options{Server: host, Port: number}},
 		{ID: "H", Type: config.TypeHTTP, Enabled: true, Slot: 2,
 			HTTP: &config.HTTPOptions{Server: "127.0.0.1", Port: 1}},
 		{ID: "D", Type: config.TypeHost, Enabled: true, Slot: 3,
-			Host: &config.HostOptions{Mode: config.HostDefault}},
-		{ID: "M", Type: config.TypeHost, Enabled: true, Slot: 5,
-			Host: &config.HostOptions{Mode: config.HostInterface, Interface: "missing0"}},
+			Host: &config.HostOptions{Mode: config.HostDefault, Attempts: 3, ReconnectTimeout: 1}},
 		{ID: "L", Type: config.TypeHost, Enabled: true, Slot: 6,
 			Host: &config.HostOptions{Mode: config.HostInterface, Interface: "lo",
-				Gateway: "127.0.0.1"}},
+				Gateway: "127.0.0.1", Attempts: 3, ReconnectTimeout: 1}},
 		{ID: "X", Type: config.TypeHost, Slot: 4, Host: &config.HostOptions{}}}
 	manager.Apply(endpoints, settings)
 	status := waitState(t, manager, "S", StateUp)
 	require.Equal(t, target, status.Gateway)
-	require.Eventually(t, func() bool {
-		return manager.Status()["S"].Checked != 0 && manager.Status()["S"].Latency >= 0
-	}, 5*time.Second, 20*time.Millisecond)
+	require.NotZero(t, status.Checked)
+	require.GreaterOrEqual(t, status.Latency, 0)
 	waitState(t, manager, "D", StateUp)
 	status = waitState(t, manager, "H", StateDown)
 	require.Contains(t, status.Message, "failed to connect to '127.0.0.1:1'")
-	status = waitState(t, manager, "M", StateDown)
-	require.Equal(t, "interface 'missing0' does not exist", status.Message)
 	require.Eventually(t, func() bool {
-		return manager.Status()["L"].Device == "lo" && manager.Status()["L"].Link == "up"
+		calls, err := os.ReadFile(filepath.Join(directory, "ip.log"))
+		return err == nil && strings.Contains(string(calls),
+			"rule add priority 5100 from 127.0.0.1/32 lookup 51006")
 	}, 5*time.Second, 20*time.Millisecond)
 	require.NotContains(t, manager.Status(), "X")
 	require.Contains(t, strings.Join(manager.Log("H"), "\n"), "connectivity check 1 of 1 failed")
@@ -357,7 +479,7 @@ func TestManager_Proxies(t *testing.T) {
 		endpoints[0].Enabled, endpoints[2].Name = false, "renamed"
 		manager.Apply(endpoints[:3], settings)
 		require.NotContains(t, manager.Status(), "S")
-		require.NotContains(t, manager.Status(), "M")
+		require.NotContains(t, manager.Status(), "L")
 		require.Contains(t, manager.Status(), "D")
 		calls, err := os.ReadFile(filepath.Join(directory, "ip.log"))
 		require.NoError(t, err)
@@ -442,15 +564,31 @@ func TestSignature_Changes(t *testing.T) {
 	settings := config.Settings{ProbeTarget: "1.1.1.1:443", CheckInterval: 30}
 	endpoint := config.Endpoint{ID: "S", Type: config.TypeSocks5, Enabled: true, Slot: 1,
 		Socks5: &config.Socks5Options{Server: "10.0.0.1", Port: 1080}}
-	signature := makeSignature(endpoint, settings)
+	signature := makeSignature(endpoint, settings, 0)
 	renamed := endpoint
-	renamed.Name, renamed.Group, renamed.Statistics = "name", "group", true
-	require.Equal(t, signature, makeSignature(renamed, settings))
+	renamed.ID, renamed.Name, renamed.Group, renamed.Statistics = "id", "name", "group", true
+	require.Equal(t, signature, makeSignature(renamed, settings, 0))
+	require.NotEqual(t, signature, makeSignature(endpoint, settings, CaptureMark))
 	changed := endpoint.Clone()
 	changed.Socks5.Port = 1081
-	require.NotEqual(t, signature, makeSignature(changed, settings))
+	require.NotEqual(t, signature, makeSignature(changed, settings, 0))
 	settings.CheckInterval = 60
-	require.NotEqual(t, signature, makeSignature(endpoint, settings))
+	require.NotEqual(t, signature, makeSignature(endpoint, settings, 0))
+	settings.CheckInterval, settings.ConnectivityChecks = 30, true
+	require.NotEqual(t, signature, makeSignature(endpoint, settings, 0))
+	{
+		tunnel := config.Endpoint{ID: "T", Type: config.TypeOpenVPN, Enabled: true, Slot: 2,
+			OpenVPN:    &config.OpenVPNOptions{Config: sampleOpenVPN},
+			Monitoring: &config.Monitoring{Enabled: true, Interval: 30}}
+		signature := makeSignature(tunnel, settings, 0)
+		settings.CheckInterval, settings.ConnectivityChecks = 60, false
+		require.Equal(t, signature, makeSignature(tunnel, settings, 0))
+		require.NotEqual(t, signature, makeSignature(tunnel, settings, CaptureMark))
+		tunnel.Monitoring = &config.Monitoring{Interval: 30}
+		signature = makeSignature(tunnel, settings, 0)
+		settings.CheckInterval = 90
+		require.NotEqual(t, signature, makeSignature(tunnel, settings, 0))
+	}
 	{
 		first := Status{State: StateUp, DNS: []string{"1.1.1.1"}}
 		second := Status{State: StateUp, DNS: []string{"1.1.1.1"}, Latency: 5}

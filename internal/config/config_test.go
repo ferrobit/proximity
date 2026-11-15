@@ -1,10 +1,12 @@
 package config
 
 import (
+	"encoding/json"
 	"errors"
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/require"
 )
@@ -139,13 +141,18 @@ func TestAddFallback_Members(t *testing.T) {
 		require.ErrorContains(t, err, item.message)
 	}
 	{
-		require.NoError(t, config.UpdateFallback("Fallback 1", Fallback{ID: "renamed",
+		require.NoError(t, config.UpdateFallback("Fallback 1", Fallback{
 			Endpoints: []string{"HOST 1"}}))
 		require.Equal(t, "Fallback 1", config.Fallbacks[0].ID)
 		require.False(t, config.Fallbacks[0].Enabled)
+		require.False(t, config.Fallbacks[0].HealthCheck)
 		require.ErrorContains(t, config.UpdateFallback("missing", Fallback{}), "does not exist")
 		require.ErrorContains(t, config.UpdateFallback("Fallback 1", Fallback{Interval: 1}),
 			"invalid check interval")
+		require.ErrorContains(t, config.UpdateFallback("Fallback 1", Fallback{ID: "HOST 1"}),
+			"ID 'HOST 1' already exists")
+		require.ErrorContains(t, config.UpdateFallback("Fallback 1", Fallback{ID: "bad,id"}),
+			"invalid ID 'bad,id'")
 	}
 	{
 		config.Settings.DefaultTarget = "Fallback 1"
@@ -157,6 +164,52 @@ func TestAddFallback_Members(t *testing.T) {
 		require.Equal(t, TargetDirect, config.Settings.DefaultTarget)
 		require.ErrorContains(t, config.RemoveFallback("Fallback 1"), "does not exist")
 		require.NoError(t, config.Validate())
+	}
+}
+
+func TestAddFilter_Identifiers(t *testing.T) {
+	config := makeConfig(t)
+	first, err := config.AddFilter(Filter{Directive: "DOMAIN", Target: "DIRECT",
+		Params: []string{"a.test"}})
+	require.NoError(t, err)
+	require.Equal(t, "Filter 1", first.ID)
+	second, err := config.AddFilter(Filter{ID: " Filter 3 ", Directive: "DOMAIN", Target: "DIRECT",
+		Params: []string{"b.test"}})
+	require.NoError(t, err)
+	require.Equal(t, "Filter 3", second.ID)
+	third, err := config.AddFilter(Filter{Directive: "DOMAIN", Target: "DIRECT",
+		Params: []string{"c.test"}})
+	require.NoError(t, err)
+	require.Equal(t, "Filter 2", third.ID)
+	require.Equal(t, "Filter 4", config.NextFilterID())
+	_, err = config.AddFilter(Filter{ID: "Filter 1", Directive: "DOMAIN", Target: "DIRECT",
+		Params: []string{"d.test"}})
+	require.EqualError(t, err, "filter ID 'Filter 1' already exists")
+	{
+		second.ID = "Filter 1"
+		require.EqualError(t, config.UpdateFilter(second.Key, second),
+			"filter ID 'Filter 1' already exists")
+		second.ID = ""
+		require.NoError(t, config.UpdateFilter(second.Key, second))
+		require.Equal(t, "Filter 3", config.Filters[1].ID)
+		second.ID = "Work sites"
+		require.NoError(t, config.UpdateFilter(second.Key, second))
+		require.Equal(t, "Work sites", config.Filters[1].ID)
+		require.NoError(t, config.Validate())
+	}
+	{
+		config.Filters[2].ID = "Work sites"
+		require.EqualError(t, config.Validate(), "duplicate filter ID 'Work sites'")
+		config.Filters[2].ID = ""
+		require.ErrorContains(t, config.Validate(), "invalid filter ID length (0)")
+		_, err := config.SetRoutes("OpenVPN 1", []string{"10.0.0.0/8"})
+		require.NoError(t, err)
+		config.Filters[2].ID = "Routes of AmneziaWG 1"
+		_, err = config.SetRoutes("AmneziaWG 1", []string{"10.1.0.0/16"})
+		require.NoError(t, err)
+		require.Equal(t, "Routes of OpenVPN 1", config.Filters[3].ID)
+		require.Equal(t, "Filter 2", config.Filters[4].ID)
+		require.Equal(t, "AmneziaWG 1", config.Filters[4].Provided)
 	}
 }
 
@@ -233,6 +286,81 @@ func TestClone_Independent(t *testing.T) {
 	require.Equal(t, "a.test", config.Filters[0].Params[0])
 }
 
+func TestImport_Backup(t *testing.T) {
+	config := makeConfig(t)
+	_, err := config.AddFallback(Fallback{Enabled: true, Endpoints: []string{"HOST 1"}})
+	require.NoError(t, err)
+	_, err = config.AddFilter(Filter{Directive: "DOMAIN", Target: "Fallback 1", Enabled: true,
+		Params: []string{"a.test"}})
+	require.NoError(t, err)
+	config.Settings.DefaultTarget, config.Settings.MixedPort = "Fallback 1", 7000
+	require.NoError(t, config.AddUser(User{Name: "admin", Role: RoleAdministrator,
+		PasswordHash: "h"}))
+	backup := config.Export(time.Unix(1700000000, 0))
+	require.Equal(t, BackupFormat, backup.Format)
+	require.Equal(t, currentVersion, backup.Version)
+	require.Equal(t, "2023-11-14T22:13:20Z", backup.Created)
+	require.Len(t, backup.Endpoints, 5)
+	data, err := json.Marshal(backup)
+	require.NoError(t, err)
+	require.NotContains(t, string(data), "password_hash")
+	{
+		target := Default()
+		target.Users, target.Secret = config.Users, "secret"
+		target.Settings.LogLevel = "debug"
+		require.NoError(t, target.Import(backup, false))
+		require.NoError(t, target.Validate())
+		require.Equal(t, config.Endpoints, target.Endpoints)
+		require.Equal(t, config.Fallbacks, target.Fallbacks)
+		require.Equal(t, config.Filters, target.Filters)
+		require.Equal(t, 7899, target.Settings.MixedPort)
+		require.Equal(t, "debug", target.Settings.LogLevel)
+		require.Equal(t, "Fallback 1", target.Settings.DefaultTarget)
+		require.Equal(t, "secret", target.Secret)
+		require.Len(t, target.Users, 1)
+		backup.Endpoints[0].Name = "changed"
+		require.Empty(t, target.Endpoints[0].Name)
+	}
+	{
+		target := Default()
+		require.NoError(t, target.Import(backup, true))
+		require.NoError(t, target.Validate())
+		require.Equal(t, 7000, target.Settings.MixedPort)
+	}
+	{
+		legacy := Backup{Format: BackupFormat, Version: 1, Settings: Default().Settings,
+			Endpoints: backup.Endpoints[:1], Fallbacks: []Fallback{{ID: "Old", Enabled: true,
+				Endpoints: []string{"HOST 1"}}}, Filters: []Filter{{Directive: "DOMAIN",
+				Target: "Old", Params: []string{"a.test"}}, {Directive: "DOMAIN", Target: "Old",
+				Params: []string{"b.test"}}}}
+		legacy.Settings.ConnectivityChecks, legacy.Settings.Capture = false, false
+		target := Default()
+		require.NoError(t, target.Import(legacy, true))
+		require.NoError(t, target.Validate())
+		require.True(t, target.Fallbacks[0].HealthCheck)
+		require.True(t, target.Settings.ConnectivityChecks)
+		require.True(t, target.Settings.Capture)
+		require.Equal(t, "Filter 1", target.Filters[0].ID)
+		require.Equal(t, "Filter 2", target.Filters[1].ID)
+		require.Len(t, target.Filters[0].Key, 12)
+		require.NotEqual(t, target.Filters[0].Key, target.Filters[1].Key)
+	}
+	{
+		target := Default()
+		require.NoError(t, target.Import(Backup{Format: BackupFormat, Version: currentVersion,
+			Settings: Default().Settings}, true))
+		require.NotNil(t, target.Endpoints)
+		require.NotNil(t, target.Fallbacks)
+		require.NotNil(t, target.Filters)
+		require.EqualError(t, target.Import(Backup{Format: "other", Version: 1}, true),
+			"unexpected backup format 'other'")
+		require.EqualError(t, target.Import(Backup{Format: BackupFormat, Version: 99}, true),
+			"unexpected backup version (99)")
+		require.EqualError(t, target.Import(Backup{Format: BackupFormat}, true),
+			"unexpected backup version (0)")
+	}
+}
+
 func TestMoveEndpoint_Order(t *testing.T) {
 	config := makeConfig(t)
 	require.NoError(t, config.MoveEndpoint("HOST 1", -1))
@@ -293,6 +421,33 @@ func TestOpen_CreatesAndReloads(t *testing.T) {
 	}
 }
 
+func TestOpen_Migrates(t *testing.T) {
+	directory := t.TempDir()
+	legacy := `{"version":1,"secret":"s","settings":{"mixed_port":7890,"bind_address":"*",` +
+		`"default_target":"DIRECT","log_level":"warning","probe_target":"1.1.1.1:443",` +
+		`"check_interval":30},"users":[],"endpoints":[{"id":"HOST 1","type":"host","slot":1,` +
+		`"enabled":true,"host":{"mode":"default"}}],"fallbacks":[{"id":"Fallback 1",` +
+		`"enabled":true,"endpoints":["HOST 1"],"url":"https://example.com/","interval":60}],` +
+		`"filters":[{"key":"aaaaaaaaaaaa","id":"","directive":"DOMAIN","target":"DIRECT",` +
+		`"params":["a.test"],"enabled":true},{"key":"bbbbbbbbbbbb","id":"same",` +
+		`"directive":"DOMAIN","target":"DIRECT","params":["b.test"]},{"key":"cccccccccccc",` +
+		`"id":"same","directive":"DOMAIN","target":"DIRECT","params":["c.test"]}]}`
+	require.NoError(t, os.WriteFile(filepath.Join(directory, fileName), []byte(legacy), 0o600))
+	store, err := Open(directory)
+	require.NoError(t, err)
+	snapshot := store.Snapshot()
+	require.Equal(t, currentVersion, snapshot.Version)
+	require.Equal(t, 7890, snapshot.Settings.MixedPort)
+	require.True(t, snapshot.Settings.ConnectivityChecks)
+	require.True(t, snapshot.Settings.Capture)
+	require.True(t, snapshot.Fallbacks[0].HealthCheck)
+	require.Equal(t, &HostOptions{Mode: HostDefault, Attempts: 3, ReconnectTimeout: 10},
+		snapshot.Endpoints[0].Host)
+	require.Equal(t, "Filter 1", snapshot.Filters[0].ID)
+	require.Equal(t, "same", snapshot.Filters[1].ID)
+	require.Equal(t, "Filter 2", snapshot.Filters[2].ID)
+}
+
 func TestRemoveEndpoint_Cascade(t *testing.T) {
 	config := makeConfig(t)
 	_, err := config.AddFallback(Fallback{Endpoints: []string{"SOCKS5 1", "OpenVPN 1"}})
@@ -350,10 +505,10 @@ func TestSetRoutes_Lifecycle(t *testing.T) {
 	}
 }
 
-func TestUpdateEndpoint_KeepsIdentity(t *testing.T) {
+func TestUpdateEndpoint_Identity(t *testing.T) {
 	config := makeConfig(t)
-	require.NoError(t, config.UpdateEndpoint("SOCKS5 1", Endpoint{ID: "other", Type: TypeHost,
-		Slot: 77, Name: "renamed", Socks5: &Socks5Options{Server: "10.0.0.9", Port: 1081}}))
+	require.NoError(t, config.UpdateEndpoint("SOCKS5 1", Endpoint{Type: TypeHost, Slot: 77,
+		Name: "renamed", Socks5: &Socks5Options{Server: "10.0.0.9", Port: 1081}}))
 	endpoint, found := config.FindEndpoint("SOCKS5 1")
 	require.True(t, found)
 	require.Equal(t, Endpoint{ID: "SOCKS5 1", Type: TypeSocks5, Slot: 2, Name: "renamed",
@@ -362,6 +517,63 @@ func TestUpdateEndpoint_KeepsIdentity(t *testing.T) {
 	require.ErrorContains(t, config.UpdateEndpoint("missing", Endpoint{}), "does not exist")
 	_, found = config.FindEndpoint("missing")
 	require.False(t, found)
+	{
+		endpoint.ID = "HOST 1"
+		require.EqualError(t, config.UpdateEndpoint("SOCKS5 1", endpoint), "ID 'HOST 1' already exists")
+		endpoint.ID = "DIRECT"
+		require.EqualError(t, config.UpdateEndpoint("SOCKS5 1", endpoint), "ID 'DIRECT' already exists")
+		endpoint.ID = "bad,id"
+		require.EqualError(t, config.UpdateEndpoint("SOCKS5 1", endpoint), "invalid ID 'bad,id'")
+		endpoint.ID = " SOCKS5 1 "
+		require.NoError(t, config.UpdateEndpoint("SOCKS5 1", endpoint))
+	}
+}
+
+func TestUpdateEndpoint_Rename(t *testing.T) {
+	config := makeConfig(t)
+	_, err := config.AddFallback(Fallback{Enabled: true, Endpoints: []string{"HOST 1",
+		"OpenVPN 1"}})
+	require.NoError(t, err)
+	_, err = config.AddFilter(Filter{Directive: "DOMAIN", Target: "OpenVPN 1",
+		Params: []string{"a.test"}})
+	require.NoError(t, err)
+	_, err = config.AddFilter(Filter{Directive: "DOMAIN", Target: "Fallback 1",
+		Params: []string{"b.test"}})
+	require.NoError(t, err)
+	_, err = config.SetRoutes("OpenVPN 1", []string{"10.0.0.0/8"})
+	require.NoError(t, err)
+	config.Settings.DefaultTarget = "OpenVPN 1"
+	endpoint, _ := config.FindEndpoint("OpenVPN 1")
+	endpoint.ID = "Office VPN"
+	require.NoError(t, config.UpdateEndpoint("OpenVPN 1", endpoint))
+	require.NoError(t, config.Validate())
+	require.Equal(t, []string{"HOST 1", "Office VPN"}, config.Fallbacks[0].Endpoints)
+	require.Equal(t, "Office VPN", config.Filters[0].Target)
+	require.Equal(t, "Fallback 1", config.Filters[1].Target)
+	require.Equal(t, Filter{Key: config.Filters[2].Key, ID: "Routes of Office VPN",
+		Directive: "IP-CIDR", Target: "Office VPN", Params: []string{"10.0.0.0/8"},
+		Provided: "Office VPN"}, config.Filters[2])
+	require.Equal(t, "Office VPN", config.Settings.DefaultTarget)
+	require.False(t, config.TargetExists("OpenVPN 1"))
+	{
+		config.Settings.DefaultTarget = "Fallback 1"
+		require.NoError(t, config.UpdateFallback("Fallback 1", Fallback{ID: "Main chain",
+			Enabled: true, HealthCheck: true, Endpoints: []string{"HOST 1"}}))
+		require.NoError(t, config.Validate())
+		require.Equal(t, "Main chain", config.Fallbacks[0].ID)
+		require.True(t, config.Fallbacks[0].HealthCheck)
+		require.Equal(t, "Main chain", config.Filters[1].Target)
+		require.Equal(t, "Main chain", config.Settings.DefaultTarget)
+	}
+	{
+		key := config.Filters[2].Key
+		config.Filters[2].ID = "custom"
+		endpoint.ID = "VPN 2"
+		require.NoError(t, config.UpdateEndpoint("Office VPN", endpoint))
+		require.Equal(t, "custom", config.Filters[2].ID)
+		require.Equal(t, "VPN 2", config.Filters[2].Provided)
+		require.Equal(t, key, config.Filters[2].Key)
+	}
 }
 
 func TestUpdateUser_LastAdministrator(t *testing.T) {

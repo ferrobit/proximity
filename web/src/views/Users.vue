@@ -32,6 +32,9 @@
           :rules="[{ required: !editing, min: 6, message: 'At least 6 characters' }]">
           <a-input-password v-model:value="form.password" autocomplete="new-password" />
         </a-form-item>
+        <a-form-item label="Repeat password" name="confirm" :rules="[{ validator: checkConfirm }]">
+          <a-input-password v-model:value="form.confirm" autocomplete="new-password" />
+        </a-form-item>
       </a-form>
     </a-modal>
   </div>
@@ -62,7 +65,7 @@ const visible = ref(false)
 const busy = ref(false)
 const editing = ref('')
 const formRef = ref()
-const form = reactive({ name: '', role: 'user', password: '' })
+const form = reactive({ name: '', role: 'user', password: '', confirm: '' })
 
 async function load() {
   loading.value = true
@@ -77,8 +80,14 @@ async function load() {
 
 function open(record) {
   editing.value = record ? record.name : ''
-  Object.assign(form, { name: record ? record.name : '', role: record ? record.role : 'user', password: '' })
+  Object.assign(form, { name: record ? record.name : '', role: record ? record.role : 'user', password: '', confirm: '' })
   visible.value = true
+}
+
+async function checkConfirm(rule, value) {
+  if ((value || '') !== (form.password || '')) {
+    throw new Error('Passwords do not match')
+  }
 }
 
 async function save() {
@@ -86,7 +95,7 @@ async function save() {
   busy.value = true
   try {
     if (editing.value) {
-      await api.put(`/api/users/${id(editing.value)}`, { role: form.role, password: form.password })
+      await api.put(`/api/users/${id(editing.value)}`, { role: form.role, password: form.password, confirm: form.confirm })
     } else {
       await api.post('/api/users', form)
     }

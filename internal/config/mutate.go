@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"slices"
+	"strings"
 
 	"proximity/internal/rules"
 )
@@ -86,6 +87,8 @@ func (config *Config) Validate() error {
 		filter := &config.Filters[index]
 		if filter.normalize(); config.findFilter(filter.Key) != index || filter.Key == "" {
 			return fmt.Errorf("duplicate filter key '%v'", filter.Key)
+		} else if config.findFilterID(filter.ID) != index {
+			return fmt.Errorf("duplicate filter ID '%v'", filter.ID)
 		} else if err := filter.validate(); err != nil {
 			return fmt.Errorf("failed to check filter %v: %w", index+1, err)
 		}
@@ -99,6 +102,14 @@ func (config *Config) Validate() error {
 func (config *Config) NextID(label string) string {
 	for index := 1; ; index++ {
 		if id := fmt.Sprintf("%v %v", label, index); !config.TargetExists(id) {
+			return id
+		}
+	}
+}
+
+func (config *Config) NextFilterID() string {
+	for index := 1; ; index++ {
+		if id := fmt.Sprintf("Filter %v", index); config.findFilterID(id) < 0 {
 			return id
 		}
 	}
@@ -126,13 +137,19 @@ func (config *Config) UpdateEndpoint(id string, endpoint Endpoint) error {
 		return fmt.Errorf("endpoint '%v' does not exist", id)
 	}
 	current := config.Endpoints[index]
-	endpoint.ID, endpoint.Type, endpoint.Slot = current.ID, current.Type, current.Slot
-	if endpoint.normalize(); endpoint.Type == "" {
+	endpoint.Type, endpoint.Slot = current.Type, current.Slot
+	if endpoint.normalize(); endpoint.ID == "" {
+		endpoint.ID = id
+	}
+	if endpoint.Type == "" {
 		return errors.New("endpoint type does not exist")
+	} else if endpoint.ID != id && config.TargetExists(endpoint.ID) {
+		return fmt.Errorf("ID '%v' already exists", endpoint.ID)
 	} else if err := endpoint.validate(); err != nil {
 		return err
 	}
 	config.Endpoints[index] = endpoint
+	config.renameTarget(id, endpoint.ID)
 	return nil
 }
 
@@ -179,12 +196,16 @@ func (config *Config) UpdateFallback(id string, fallback Fallback) error {
 	if index < 0 {
 		return fmt.Errorf("fallback '%v' does not exist", id)
 	}
-	fallback.ID = id
-	fallback.normalize()
-	if err := fallback.validate(config); err != nil {
+	if fallback.normalize(); fallback.ID == "" {
+		fallback.ID = id
+	}
+	if fallback.ID != id && config.TargetExists(fallback.ID) {
+		return fmt.Errorf("ID '%v' already exists", fallback.ID)
+	} else if err := fallback.validate(config); err != nil {
 		return err
 	}
 	config.Fallbacks[index] = fallback
+	config.renameTarget(id, fallback.ID)
 	return nil
 }
 
@@ -210,7 +231,7 @@ func (config *Config) AddFilter(filter Filter) (Filter, error) {
 		return Filter{}, err
 	}
 	filter.Key, filter.Provided = key, ""
-	if err = config.prepareFilter(&filter); err != nil {
+	if err = config.prepareFilter(&filter, -1); err != nil {
 		return Filter{}, err
 	}
 	config.Filters = append(config.Filters, filter)
@@ -226,7 +247,7 @@ func (config *Config) UpdateFilter(key string, filter Filter) error {
 		return nil
 	}
 	filter.Key, filter.Provided = key, ""
-	if err := config.prepareFilter(&filter); err != nil {
+	if err := config.prepareFilter(&filter, index); err != nil {
 		return err
 	}
 	config.Filters[index] = filter
@@ -267,8 +288,12 @@ func (config *Config) SetRoutes(id string, routes []string) (bool, error) {
 	if err != nil {
 		return false, err
 	}
-	config.Filters = append(config.Filters, Filter{Key: key, ID: "Routes of " + id,
-		Directive: rules.IPCIDR, Target: id, Params: slices.Clone(routes), Provided: id})
+	filter := Filter{Key: key, ID: providedPrefix + id, Directive: rules.IPCIDR, Target: id,
+		Params: slices.Clone(routes), Provided: id}
+	if config.findFilterID(filter.ID) >= 0 {
+		filter.ID = config.NextFilterID()
+	}
+	config.Filters = append(config.Filters, filter)
 	return true, nil
 }
 
@@ -334,8 +359,43 @@ func (config *Config) checkAdministrator() error {
 	return errors.New("last administrator cannot be removed")
 }
 
-func (config *Config) prepareFilter(filter *Filter) error {
-	if filter.normalize(); !config.TargetExists(filter.Target) {
+func (config *Config) renameTarget(previous string, current string) {
+	if previous == current {
+		return
+	}
+	for index := range config.Fallbacks {
+		for position, member := range config.Fallbacks[index].Endpoints {
+			if member == previous {
+				config.Fallbacks[index].Endpoints[position] = current
+			}
+		}
+	}
+	for index := range config.Filters {
+		filter := &config.Filters[index]
+		if filter.Target == previous {
+			filter.Target = current
+		}
+		if filter.Provided != previous {
+			continue
+		} else if filter.Provided = current; filter.ID == providedPrefix+previous &&
+			config.findFilterID(providedPrefix+current) < 0 {
+			filter.ID = providedPrefix + current
+		}
+	}
+	if config.Settings.DefaultTarget == previous {
+		config.Settings.DefaultTarget = current
+	}
+}
+
+func (config *Config) prepareFilter(filter *Filter, index int) error {
+	if filter.normalize(); filter.ID == "" && index >= 0 {
+		filter.ID = config.Filters[index].ID
+	} else if filter.ID == "" {
+		filter.ID = config.NextFilterID()
+	}
+	if found := config.findFilterID(filter.ID); found >= 0 && found != index {
+		return fmt.Errorf("filter ID '%v' already exists", filter.ID)
+	} else if !config.TargetExists(filter.Target) {
 		return fmt.Errorf("target '%v' does not exist", filter.Target)
 	} else if len(filter.ID) > 64 {
 		return errors.New("filter ID is too long")
@@ -349,6 +409,28 @@ func (config *Config) prepareFilter(filter *Filter) error {
 		filter.Params = append(filter.Params, rule.Text())
 	}
 	return nil
+}
+
+func (config *Config) upgrade() error {
+	config.migrate()
+	return config.Validate()
+}
+
+func (config *Config) migrate() {
+	if config.Version < 2 {
+		config.Settings.ConnectivityChecks, config.Settings.Capture = true, true
+		for index := range config.Fallbacks {
+			config.Fallbacks[index].HealthCheck = true
+		}
+	}
+	for index := range config.Filters {
+		filter := &config.Filters[index]
+		if filter.ID = strings.TrimSpace(filter.ID); filter.ID == "" ||
+			config.findFilterID(filter.ID) != index {
+			filter.ID = config.NextFilterID()
+		}
+	}
+	config.Version = currentVersion
 }
 
 func (config *Config) freeSlot() int {
@@ -382,6 +464,12 @@ func (config *Config) findFallback(id string) int {
 func (config *Config) findFilter(key string) int {
 	return slices.IndexFunc(config.Filters, func(filter Filter) bool {
 		return filter.Key == key
+	})
+}
+
+func (config *Config) findFilterID(id string) int {
+	return slices.IndexFunc(config.Filters, func(filter Filter) bool {
+		return filter.ID == id
 	})
 }
 

@@ -2,7 +2,9 @@ package server
 
 import (
 	"errors"
+	"fmt"
 	"net/http"
+	"strings"
 	"time"
 
 	"proximity/internal/auth"
@@ -40,12 +42,20 @@ type loginRequest struct {
 type passwordRequest struct {
 	Current  string `json:"current"`
 	Password string `json:"password"`
+	Confirm  string `json:"confirm"`
 }
 
 type userRequest struct {
 	Name     string `json:"name"`
 	Role     string `json:"role"`
 	Password string `json:"password"`
+	Confirm  string `json:"confirm"`
+}
+
+type setupRequest struct {
+	Username string `json:"username"`
+	Password string `json:"password"`
+	Confirm  string `json:"confirm"`
 }
 
 type moveRequest struct {
@@ -84,6 +94,13 @@ func redact(endpoint config.Endpoint) config.Endpoint {
 	return endpoint
 }
 
+func confirm(password string, repeated string) error {
+	if password != repeated {
+		return errors.New("passwords do not match")
+	}
+	return nil
+}
+
 func emptyStatus() link.Status {
 	return link.Status{State: link.StateDisabled, Latency: -1, DNS: []string{},
 		Domains: []string{}, Routes: []string{}}
@@ -91,6 +108,7 @@ func emptyStatus() link.Status {
 
 func (server *Server) register() {
 	server.handle("GET /api/session", 0, server.getSession)
+	server.handle("POST /api/setup", 0, server.setup)
 	server.handle("POST /api/login", 0, server.login)
 	server.handle("POST /api/logout", 0, server.logout)
 	server.handle("POST /api/password", 1, server.changePassword)
@@ -125,6 +143,8 @@ func (server *Server) register() {
 	server.handle("PUT /api/users/{name}", 3, server.updateUser)
 	server.handle("DELETE /api/users/{name}", 3, server.removeUser)
 	server.handle("GET /api/router/config", 2, server.getRouterConfig)
+	server.handle("GET /api/backup", 2, server.exportBackup)
+	server.handle("POST /api/backup", 2, server.importBackup)
 	server.routes.Handle("/", server.static())
 }
 
@@ -132,6 +152,12 @@ func (server *Server) problems() ([]string, string) {
 	server.mutex.Lock()
 	defer server.mutex.Unlock()
 	return append([]string{}, server.warnings...), server.failure
+}
+
+func (server *Server) capturing() bool {
+	server.mutex.Lock()
+	defer server.mutex.Unlock()
+	return server.captured
 }
 
 func (server *Server) views(snapshot config.Config, level int) []endpointView {
@@ -170,13 +196,29 @@ func (server *Server) views(snapshot config.Config, level int) []endpointView {
 }
 
 func (server *Server) getSession(_ *http.Request, current session) (any, error) {
-	role := current.user.Role
+	role, snapshot := current.user.Role, server.store.Snapshot()
 	if current.level == 0 {
 		role = config.RoleAnonymous
 	}
 	return map[string]any{"user": current.user.Name, "role": role, "level": current.level,
-		"version":             server.options.Version,
-		"anonymous_dashboard": server.store.Snapshot().Settings.AnonymousDashboard}, nil
+		"version": server.options.Version, "setup": len(snapshot.Users) == 0,
+		"host_network":        server.options.HostNetwork,
+		"anonymous_dashboard": snapshot.Settings.AnonymousDashboard}, nil
+}
+
+func (server *Server) setup(request *http.Request, _ session) (any, error) {
+	body := setupRequest{}
+	if err := decode(request, &body); err != nil {
+		return nil, err
+	} else if len(server.store.Snapshot().Users) != 0 {
+		return nil, fail(http.StatusForbidden, "administrator already exists")
+	} else if err = confirm(body.Password, body.Confirm); err != nil {
+		return nil, err
+	} else if err = auth.CreateAdministrator(server.store, body.Username, body.Password); err != nil {
+		return nil, err
+	}
+	server.options.Logf("created administrator '%v'", body.Username)
+	return server.authorize(body.Username)
 }
 
 func (server *Server) login(request *http.Request, _ session) (any, error) {
@@ -189,6 +231,15 @@ func (server *Server) login(request *http.Request, _ session) (any, error) {
 	if !found || !auth.VerifyPassword(user.PasswordHash, body.Password) {
 		time.Sleep(failedLoginDelay)
 		return nil, fail(http.StatusUnauthorized, "invalid user name or password")
+	}
+	return server.authorize(body.Username)
+}
+
+func (server *Server) authorize(name string) (any, error) {
+	snapshot := server.store.Snapshot()
+	user, found := snapshot.FindUser(name)
+	if !found {
+		return nil, fmt.Errorf("user '%v' does not exist", name)
 	}
 	expires := time.Now().Add(sessionLifetime)
 	token, err := auth.MakeToken(snapshot.Secret, user, expires)
@@ -210,6 +261,8 @@ func (server *Server) changePassword(request *http.Request, current session) (an
 		return nil, err
 	} else if !auth.VerifyPassword(current.user.PasswordHash, body.Current) {
 		return nil, errors.New("current password is invalid")
+	} else if err = confirm(body.Password, body.Confirm); err != nil {
+		return nil, err
 	}
 	hash, err := auth.HashPassword(body.Password)
 	if err != nil {
@@ -250,7 +303,7 @@ func (server *Server) getDashboard(_ *http.Request, current session) (any, error
 		"counts": map[string]int{"endpoints": len(views), "endpoints_enabled": enabled,
 			"endpoints_up": up, "fallbacks": len(snapshot.Fallbacks),
 			"filters": len(snapshot.Filters), "rules": lines},
-		"proxy_port": snapshot.Settings.MixedPort}, nil
+		"proxy_port": snapshot.Settings.MixedPort, "capture": server.capturing()}, nil
 }
 
 func (server *Server) clearRefused(_ *http.Request, _ session) (any, error) {
@@ -305,12 +358,17 @@ func (server *Server) addEndpoint(request *http.Request, _ session) (any, error)
 }
 
 func (server *Server) updateEndpoint(request *http.Request, _ session) (any, error) {
-	body := config.Endpoint{}
+	body, id := config.Endpoint{}, request.PathValue("id")
 	if err := decode(request, &body); err != nil {
 		return nil, err
 	}
 	return body, server.store.Update(func(config *config.Config) error {
-		return config.UpdateEndpoint(request.PathValue("id"), body)
+		if err := config.UpdateEndpoint(id, body); err != nil {
+			return err
+		} else if renamed := strings.TrimSpace(body.ID); renamed != "" {
+			server.tracker.Rename(id, renamed)
+		}
+		return nil
 	})
 }
 
@@ -497,6 +555,8 @@ func (server *Server) addUser(request *http.Request, _ session) (any, error) {
 	body := userRequest{}
 	if err := decode(request, &body); err != nil {
 		return nil, err
+	} else if err = confirm(body.Password, body.Confirm); err != nil {
+		return nil, err
 	}
 	hash, err := auth.HashPassword(body.Password)
 	if err != nil {
@@ -514,6 +574,8 @@ func (server *Server) updateUser(request *http.Request, current session) (any, e
 		return nil, err
 	} else if name == current.user.Name && body.Role != "" && body.Role != current.user.Role {
 		return nil, errors.New("own role cannot be changed")
+	} else if err = confirm(body.Password, body.Confirm); err != nil {
+		return nil, err
 	}
 	if body.Password != "" {
 		var err error
@@ -538,4 +600,24 @@ func (server *Server) removeUser(request *http.Request, current session) (any, e
 
 func (server *Server) getRouterConfig(_ *http.Request, _ session) (any, error) {
 	return map[string]string{"config": string(server.mihomo.Current())}, nil
+}
+
+func (server *Server) exportBackup(_ *http.Request, _ session) (any, error) {
+	snapshot := server.store.Snapshot()
+	return snapshot.Export(time.Now()), nil
+}
+
+func (server *Server) importBackup(request *http.Request, current session) (any, error) {
+	body := config.Backup{}
+	if err := decode(request, &body); err != nil {
+		return nil, err
+	} else if err = server.store.Update(func(config *config.Config) error {
+		return config.Import(body, current.level >= 3)
+	}); err != nil {
+		return nil, fmt.Errorf("failed to import backup: %w", err)
+	}
+	snapshot := server.store.Snapshot()
+	server.options.Logf("backup imported by '%v'", current.user.Name)
+	return map[string]int{"endpoints": len(snapshot.Endpoints),
+		"fallbacks": len(snapshot.Fallbacks), "filters": len(snapshot.Filters)}, nil
 }

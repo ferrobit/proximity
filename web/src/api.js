@@ -1,7 +1,7 @@
 import { reactive } from 'vue'
 
 export const metrics = reactive({ total: 0, server: 0 })
-export const session = reactive({ user: '', role: 'anonymous', level: 0, version: '', anonymous_dashboard: true, loaded: false })
+export const session = reactive({ user: '', role: 'anonymous', level: 0, version: '', anonymous_dashboard: true, setup: false, host_network: false, loaded: false })
 export const events = { unauthorized: () => {} }
 
 async function request(method, path, body, quiet) {

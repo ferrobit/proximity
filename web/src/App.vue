@@ -19,6 +19,9 @@
           <a-tooltip title="Active connections">
             <span class="stat"><SwapOutlined /> {{ overview.total.connections }}</span>
           </a-tooltip>
+          <a-tooltip v-if="overview.capture" title="All outgoing connections of the host are routed through Proximity">
+            <span class="stat"><GatewayOutlined /> transparent</span>
+          </a-tooltip>
           <a-tooltip :title="overview.failure || overview.router.message || 'Router service state'">
             <span class="stat">
               <a-badge :status="routerBadge" />
@@ -75,6 +78,24 @@
       <a-modal v-model:open="loginOpen" title="Sign in" :footer="null" :width="380" destroy-on-close>
         <LoginForm @done="afterLogin" />
       </a-modal>
+      <a-modal :open="session.setup" title="Create Administrator Account" ok-text="Create account" :closable="false" :mask-closable="false"
+        :keyboard="false" :cancel-button-props="{ style: { display: 'none' } }" :confirm-loading="busy" @ok="createAdministrator">
+        <a-alert type="info" show-icon style="margin-bottom: 16px" message="Proximity has no users yet. Create the first account to continue." />
+        <a-form ref="setupForm" layout="vertical" :model="setup">
+          <a-form-item label="User name" name="username" :rules="[{ required: true, pattern: /^[a-z0-9][a-z0-9_.-]{0,31}$/, message: 'Lower-case letters, digits, _ . - (up to 32)' }]">
+            <a-input v-model:value="setup.username" autocomplete="username" />
+          </a-form-item>
+          <a-form-item label="Role">
+            <a-select value="administrator" disabled :options="[{ value: 'administrator', label: 'Administrator — all access' }]" />
+          </a-form-item>
+          <a-form-item label="Password" name="password" :rules="[{ required: true, min: 6, message: 'At least 6 characters' }]">
+            <a-input-password v-model:value="setup.password" autocomplete="new-password" />
+          </a-form-item>
+          <a-form-item label="Repeat password" name="confirm" :rules="[{ validator: checkSetup }]">
+            <a-input-password v-model:value="setup.confirm" autocomplete="new-password" />
+          </a-form-item>
+        </a-form>
+      </a-modal>
       <a-modal v-model:open="passwordOpen" title="Change password" ok-text="Change" :confirm-loading="busy" destroy-on-close @ok="changePassword">
         <a-form ref="passwordForm" layout="vertical" :model="password">
           <a-form-item label="Current password" name="current" :rules="[{ required: true, message: 'Enter current password' }]">
@@ -97,7 +118,7 @@ import { computed, onMounted, onUnmounted, reactive, ref } from 'vue'
 import { message, theme as antTheme } from 'ant-design-vue'
 import {
   ApiOutlined, ArrowDownOutlined, ArrowUpOutlined, BranchesOutlined, BulbOutlined, DashboardOutlined,
-  FilterOutlined, KeyOutlined, LoginOutlined, LogoutOutlined, SettingOutlined, SwapOutlined,
+  FilterOutlined, GatewayOutlined, KeyOutlined, LoginOutlined, LogoutOutlined, SettingOutlined, SwapOutlined,
   TeamOutlined, UserOutlined
 } from '@ant-design/icons-vue'
 import { api, events, loadSession, metrics, session } from './api'
@@ -130,6 +151,8 @@ const passwordOpen = ref(false)
 const busy = ref(false)
 const passwordForm = ref()
 const password = reactive({ current: '', password: '', repeat: '' })
+const setupForm = ref()
+const setup = reactive({ username: 'admin', password: '', confirm: '' })
 let timer = null
 
 const theme = computed(() => ({
@@ -193,11 +216,42 @@ async function checkRepeat(rule, value) {
   }
 }
 
-async function changePassword() {
-  await passwordForm.value.validate()
+async function checkSetup(rule, value) {
+  if (value !== setup.password) {
+    throw new Error('Passwords do not match')
+  }
+}
+
+async function createAdministrator() {
+  try {
+    await setupForm.value.validate()
+  } catch (failure) {
+    return
+  }
   busy.value = true
   try {
-    await api.post('/api/password', { current: password.current, password: password.password })
+    await api.post('/api/setup', setup)
+    Object.assign(setup, { password: '', confirm: '' })
+    await loadSession()
+    readHash()
+    await refreshOverview()
+    message.success('Administrator account created')
+  } catch (error) {
+    message.error(error.message)
+  } finally {
+    busy.value = false
+  }
+}
+
+async function changePassword() {
+  try {
+    await passwordForm.value.validate()
+  } catch (failure) {
+    return
+  }
+  busy.value = true
+  try {
+    await api.post('/api/password', { current: password.current, password: password.password, confirm: password.repeat })
     Object.assign(password, { current: '', password: '', repeat: '' })
     passwordOpen.value = false
     message.success('Password changed, sign in again')

@@ -39,7 +39,8 @@
           <a-card size="small"><a-statistic title="Router" :value="overview.router.running ? 'running' : 'stopped'"
             :value-style="{ color: overview.router.running ? '#3f8600' : '#cf1322' }">
             <template #prefix><DeploymentUnitOutlined /></template></a-statistic>
-            <div class="muted">mihomo {{ overview.router.version }} · port {{ overview.proxy_port }} · up {{ duration(overview.uptime) }}</div></a-card>
+            <div class="muted">mihomo {{ overview.router.version }} · port {{ overview.proxy_port }} · up {{ duration(overview.uptime) }}</div>
+            <div class="muted">{{ overview.capture ? 'transparent: all host traffic' : 'proxy port only' }}</div></a-card>
         </a-col>
       </a-row>
       <a-card size="small">

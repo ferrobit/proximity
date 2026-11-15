@@ -33,7 +33,7 @@
           <a-switch size="small" :checked="record.enabled" :disabled="!canEdit()" @change="toggle(record, $event)" />
         </template>
         <template v-else-if="column.key === 'id'">
-          <span>{{ record.id || '—' }}</span>
+          <b>{{ record.id }}</b>
           <a-tooltip v-if="record.provided" title="Read-only routes provided by the VPN connection. Enable to route them to this endpoint.">
             <a-tag color="gold" style="margin-left: 6px"><LockOutlined /> provided</a-tag>
           </a-tooltip>
@@ -71,8 +71,8 @@
       :ok-button-props="{ disabled: readOnly }" ok-text="Save" @ok="save">
       <a-form ref="formRef" layout="vertical" :model="form">
         <a-row :gutter="16">
-          <a-col :span="16"><a-form-item label="ID (optional name)" name="id" :rules="[{ max: 64, message: 'Up to 64 characters' }]">
-            <a-input v-model:value="form.id" :disabled="readOnly" /></a-form-item></a-col>
+          <a-col :span="16"><a-form-item label="ID" name="id" :rules="[{ max: 64, message: 'Up to 64 characters' }]" extra="Unique among filters, allocated automatically when empty">
+            <a-input v-model:value="form.id" :disabled="readOnly" :placeholder="editing ? editing.id : 'Filter N'" /></a-form-item></a-col>
           <a-col :span="8"><a-form-item label="Enabled"><a-switch v-model:checked="form.enabled" :disabled="readOnly" /></a-form-item></a-col>
           <a-col :span="12"><a-form-item label="Directive" name="directive" :rules="[{ required: true }]">
             <a-select v-model:value="form.directive" :disabled="readOnly" show-search :options="directives.map((value) => ({ value }))" @change="preview" /></a-form-item></a-col>

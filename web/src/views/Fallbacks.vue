@@ -5,7 +5,7 @@
       <a-button v-if="canEdit()" type="primary" @click="open(null)"><template #icon><PlusOutlined /></template>Add fallback</a-button>
       <a-button @click="load"><template #icon><ReloadOutlined /></template>Refresh</a-button>
       <span class="spacer" />
-      <span class="muted">A fallback tries its endpoints in order and uses the first one that passes the health check.</span>
+      <span class="muted">A fallback uses the first endpoint in the list that is alive.</span>
     </div>
     <a-table :columns="columns" :data-source="fallbacks" row-key="id" size="middle" :pagination="false" :loading="loading">
       <template #bodyCell="{ column, record, index }">
@@ -29,7 +29,8 @@
           </div>
         </template>
         <template v-else-if="column.key === 'check'">
-          <span class="mono">{{ record.url }}</span> <span class="muted">every {{ record.interval }}s</span>
+          <template v-if="record.health_check"><span class="mono">{{ record.url }}</span> <span class="muted">every {{ record.interval }}s</span></template>
+          <span v-else class="muted">off · follows endpoint state</span>
         </template>
         <template v-else-if="column.key === 'actions'">
           <a-space v-if="canEdit()">
@@ -45,8 +46,9 @@
       <a-form ref="formRef" layout="vertical" :model="form">
         <a-row :gutter="16">
           <a-col :span="16">
-            <a-form-item label="ID" name="id" :rules="[{ pattern: idPattern, message: 'Letters, digits, space, _ . - (up to 48)' }]" extra="Optional, allocated automatically when empty">
-              <a-input v-model:value="form.id" :disabled="!!editing" placeholder="Fallback N" />
+            <a-form-item label="ID" name="id" :rules="[{ pattern: idPattern, message: 'Letters, digits, space, _ . - (up to 48)' }]"
+              :extra="editing ? 'Unique among endpoints and fallbacks' : 'Optional, allocated automatically when empty'">
+              <a-input v-model:value="form.id" :placeholder="editing || 'Fallback N'" />
             </a-form-item>
           </a-col>
           <a-col :span="8">
@@ -68,7 +70,10 @@
           </a-list>
           <a-select style="width: 100%; margin-top: 8px" placeholder="Add endpoint…" :value="undefined" :options="available" @select="form.endpoints.push($event)" />
         </a-form-item>
-        <a-row :gutter="16">
+        <a-form-item extra="On: the router requests the URL through every endpoint. Off: the first endpoint in good state is used.">
+          <a-checkbox v-model:checked="form.health_check">Enable health check</a-checkbox>
+        </a-form-item>
+        <a-row :gutter="16" v-if="form.health_check">
           <a-col :span="16">
             <a-form-item label="Health check URL" name="url" :rules="[{ type: 'url', message: 'Enter http(s) URL' }]">
               <a-input v-model:value="form.url" />
@@ -110,7 +115,7 @@ const visible = ref(false)
 const busy = ref(false)
 const editing = ref('')
 const formRef = ref()
-const form = reactive({ id: '', enabled: true, endpoints: [], url: '', interval: 60 })
+const form = reactive({ id: '', enabled: true, endpoints: [], health_check: false, url: '', interval: 60 })
 
 const available = computed(() => targets.value
   .filter((item) => item.kind === 'endpoint' && !form.endpoints.includes(item.id))
@@ -132,7 +137,7 @@ function open(record) {
   editing.value = record ? record.id : ''
   Object.assign(form, record
     ? { ...record, endpoints: [...record.endpoints] }
-    : { id: '', enabled: true, endpoints: [], url: 'https://www.gstatic.com/generate_204', interval: 60 })
+    : { id: '', enabled: true, endpoints: [], health_check: false, url: 'https://www.gstatic.com/generate_204', interval: 60 })
   visible.value = true
 }
 

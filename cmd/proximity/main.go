@@ -7,6 +7,7 @@ import (
 	"log"
 	"net"
 	"net/http"
+	"net/netip"
 	"os"
 	"os/signal"
 	"syscall"
@@ -49,7 +50,8 @@ func run(arguments []string) error {
 	instance, err := server.New(server.Options{Version: version, Listen: *listen,
 		ConfigPath: *configPath, RunPath: *runPath, GeodataPath: *geodataPath,
 		Executable: executable, MihomoBinary: *mihomo, Tools: link.DefaultTools(),
-		Logf: log.Printf})
+		HostNetwork: lookup("PROXIMITY_NETWORK", "bridge") == "host",
+		ProxyBind:   lookup("PROXIMITY_PROXY_BIND", ""), Logf: log.Printf})
 	if err != nil {
 		return err
 	}
@@ -60,12 +62,14 @@ func run(arguments []string) error {
 }
 
 func checkHealth(listen string) error {
-	_, port, err := net.SplitHostPort(listen)
+	host, port, err := net.SplitHostPort(listen)
 	if err != nil {
 		return fmt.Errorf("cannot parse %q as listen address: %w", listen, err)
+	} else if address, err := netip.ParseAddr(host); err != nil || address.IsUnspecified() {
+		host = "127.0.0.1"
 	}
 	client := http.Client{Timeout: 4 * time.Second}
-	response, err := client.Get("http://127.0.0.1:" + port + "/api/session")
+	response, err := client.Get("http://" + net.JoinHostPort(host, port) + "/api/session")
 	if err != nil {
 		return fmt.Errorf("failed to get session state: %w", err)
 	}

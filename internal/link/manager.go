@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"strconv"
 	"sync"
 	"time"
 
@@ -28,16 +29,18 @@ type Status struct {
 }
 
 type Options struct {
-	Directory  string
-	Executable string
-	Tools      Tools
-	Changed    func()
+	Directory   string
+	Executable  string
+	Tools       Tools
+	HostNetwork bool
+	Changed     func()
 }
 
 type Manager struct {
 	mutex   sync.Mutex
 	options Options
-	runners map[string]*runner
+	runners map[int]*runner
+	capture captureState
 }
 
 type runner struct {
@@ -45,11 +48,21 @@ type runner struct {
 	endpoint  config.Endpoint
 	settings  config.Settings
 	signature string
+	bypass    int
 	cancel    context.CancelFunc
 	done      chan struct{}
 	mutex     sync.Mutex
+	id        string
 	status    Status
 	lines     []string
+}
+
+type policy struct {
+	limit     int
+	delay     time.Duration
+	exhausted string
+	terminal  bool
+	verify    bool
 }
 
 type fatalError struct {
@@ -75,7 +88,8 @@ func NewManager(options Options) (*Manager, error) {
 	} else if err = options.Tools.cleanup(); err != nil {
 		return nil, fmt.Errorf("failed to cleanup network state: %w", err)
 	}
-	return &Manager{options: options, runners: map[string]*runner{}}, nil
+	return &Manager{options: options, runners: map[int]*runner{},
+		capture: captureState{device: CaptureDevice}}, nil
 }
 
 func sleep(ctx context.Context, duration time.Duration) {
@@ -96,25 +110,29 @@ func (failure *fatalError) Unwrap() error {
 func (manager *Manager) Apply(endpoints []config.Endpoint, settings config.Settings) {
 	manager.mutex.Lock()
 	defer manager.mutex.Unlock()
-	wanted := map[string]bool{}
+	wanted, bypass := map[int]bool{}, 0
+	if manager.options.HostNetwork && settings.Capture {
+		bypass = CaptureMark
+	}
 	for _, endpoint := range endpoints {
-		signature := makeSignature(endpoint, settings)
-		wanted[endpoint.ID] = endpoint.Enabled
-		if current, found := manager.runners[endpoint.ID]; found && endpoint.Enabled &&
+		signature := makeSignature(endpoint, settings, bypass)
+		wanted[endpoint.Slot] = endpoint.Enabled
+		if current, found := manager.runners[endpoint.Slot]; found && endpoint.Enabled &&
 			current.signature == signature {
+			current.rename(endpoint.ID)
 			continue
 		} else if found {
 			current.close()
-			delete(manager.runners, endpoint.ID)
+			delete(manager.runners, endpoint.Slot)
 		}
 		if endpoint.Enabled {
-			manager.runners[endpoint.ID] = manager.launch(endpoint, settings, signature)
+			manager.runners[endpoint.Slot] = manager.launch(endpoint, settings, signature, bypass)
 		}
 	}
-	for id, current := range manager.runners {
-		if !wanted[id] {
+	for slot, current := range manager.runners {
+		if !wanted[slot] {
 			current.close()
-			delete(manager.runners, id)
+			delete(manager.runners, slot)
 		}
 	}
 }
@@ -122,12 +140,15 @@ func (manager *Manager) Apply(endpoints []config.Endpoint, settings config.Setti
 func (manager *Manager) Restart(id string) error {
 	manager.mutex.Lock()
 	defer manager.mutex.Unlock()
-	current, found := manager.runners[id]
-	if !found {
+	current := manager.find(id)
+	if current == nil {
 		return fmt.Errorf("endpoint '%v' is not running", id)
 	}
 	current.close()
-	manager.runners[id] = manager.launch(current.endpoint, current.settings, current.signature)
+	endpoint := current.endpoint
+	endpoint.ID = id
+	manager.runners[endpoint.Slot] = manager.launch(endpoint, current.settings,
+		current.signature, current.bypass)
 	return nil
 }
 
@@ -135,8 +156,8 @@ func (manager *Manager) Status() map[string]Status {
 	manager.mutex.Lock()
 	defer manager.mutex.Unlock()
 	result := map[string]Status{}
-	for id, current := range manager.runners {
-		result[id] = current.snapshot()
+	for _, current := range manager.runners {
+		result[current.name()] = current.snapshot()
 	}
 	return result
 }
@@ -145,7 +166,7 @@ func (manager *Manager) Counters() map[string][2]int64 {
 	manager.mutex.Lock()
 	defer manager.mutex.Unlock()
 	result := map[string][2]int64{}
-	for id, current := range manager.runners {
+	for _, current := range manager.runners {
 		status := current.snapshot()
 		if !current.endpoint.IsTunnel() || status.State != StateUp {
 			continue
@@ -153,7 +174,7 @@ func (manager *Manager) Counters() map[string][2]int64 {
 		upload, first := readCounter(status.Device, "tx_bytes")
 		download, second := readCounter(status.Device, "rx_bytes")
 		if first == nil && second == nil {
-			result[id] = [2]int64{upload, download}
+			result[current.name()] = [2]int64{upload, download}
 		}
 	}
 	return result
@@ -162,7 +183,7 @@ func (manager *Manager) Counters() map[string][2]int64 {
 func (manager *Manager) Log(id string) []string {
 	manager.mutex.Lock()
 	defer manager.mutex.Unlock()
-	if current, found := manager.runners[id]; found {
+	if current := manager.find(id); current != nil {
 		current.mutex.Lock()
 		defer current.mutex.Unlock()
 		return append([]string{}, current.lines...)
@@ -173,49 +194,85 @@ func (manager *Manager) Log(id string) []string {
 func (manager *Manager) Close() {
 	manager.mutex.Lock()
 	defer manager.mutex.Unlock()
-	for id, current := range manager.runners {
+	for slot, current := range manager.runners {
 		current.close()
-		delete(manager.runners, id)
+		delete(manager.runners, slot)
 	}
+	manager.capture.remove(manager.options.Tools)
+}
+
+func (manager *Manager) find(id string) *runner {
+	for _, current := range manager.runners {
+		if current.name() == id {
+			return current
+		}
+	}
+	return nil
 }
 
 func (manager *Manager) launch(endpoint config.Endpoint, settings config.Settings,
-	signature string) *runner {
+	signature string, bypass int) *runner {
 	ctx, cancel := context.WithCancel(context.Background())
 	result := &runner{manager: manager, endpoint: endpoint, settings: settings,
-		signature: signature, cancel: cancel, done: make(chan struct{}),
-		status: Status{State: StateConnecting, Since: time.Now().Unix(), Latency: -1,
-			DNS: []string{}, Domains: []string{}, Routes: []string{}}}
+		signature: signature, bypass: bypass, cancel: cancel, done: make(chan struct{}),
+		id: endpoint.ID, status: Status{State: StateConnecting, Since: time.Now().Unix(),
+			Latency: -1, DNS: []string{}, Domains: []string{}, Routes: []string{}}}
 	go result.run(ctx)
 	return result
 }
 
-func makeSignature(endpoint config.Endpoint, settings config.Settings) string {
-	endpoint.Name, endpoint.Group, endpoint.Statistics = "", "", false
-	data, err := json.Marshal([]any{endpoint, settings.ProbeTarget, settings.CheckInterval})
+func makeSignature(endpoint config.Endpoint, settings config.Settings, bypass int) string {
+	endpoint.ID, endpoint.Name, endpoint.Group, endpoint.Statistics = "", "", "", false
+	if endpoint.IsTunnel() && endpoint.Monitoring != nil && endpoint.Monitoring.Enabled {
+		settings = config.Settings{}
+	}
+	data, err := json.Marshal([]any{endpoint, settings.ProbeTarget, settings.CheckInterval,
+		settings.ConnectivityChecks, bypass})
 	if err != nil {
-		return endpoint.ID
+		return strconv.Itoa(endpoint.Slot)
 	}
 	return string(data)
+}
+
+func (runner *runner) policy() policy {
+	interval := time.Duration(runner.settings.CheckInterval) * time.Second
+	if monitoring := runner.endpoint.Monitoring; runner.endpoint.IsTunnel() {
+		return policy{limit: monitoring.ReconnectAttempts + 1, exhausted: StateFailed,
+			delay: time.Duration(monitoring.ReconnectDelay) * time.Second, terminal: true}
+	} else if host := runner.endpoint.Host; host != nil {
+		return policy{limit: host.Attempts, exhausted: StateFailed,
+			delay:  time.Duration(host.ReconnectTimeout) * time.Second,
+			verify: runner.settings.ConnectivityChecks}
+	}
+	return policy{limit: 1, delay: interval, exhausted: StateDown,
+		verify: runner.settings.ConnectivityChecks}
 }
 
 func (runner *runner) run(ctx context.Context) {
 	defer close(runner.done)
 	driver := makeDriver(runner)
 	defer driver.dispose()
-	attempts, state, message := 0, StateConnecting, ""
+	policy := runner.policy()
+	failures, state, message := 0, StateConnecting, ""
 	for ctx.Err() == nil {
 		runner.update(func(status *Status) {
 			status.State, status.Message = state, message
 		})
+		latency := time.Duration(-1)
 		err := driver.start(ctx)
+		if err == nil && policy.verify {
+			latency, err = runner.probe(ctx, driver, defaultCheckTimeout, 1)
+		}
 		if err == nil {
 			runner.update(func(status *Status) {
 				driver.describe(status)
 				status.State, status.Message = StateUp, ""
+				if latency >= 0 {
+					status.Checked, status.Latency = time.Now().Unix(), int(latency.Milliseconds())
+				}
 			})
-			err = runner.watch(ctx, driver, func() {
-				attempts = 0
+			err = runner.watch(ctx, driver, policy.verify, func() {
+				failures = 0
 			})
 		}
 		driver.stop()
@@ -224,40 +281,39 @@ func (runner *runner) run(ctx context.Context) {
 		}
 		fatal := &fatalError{}
 		runner.logf("link failed: %v", err)
-		if state, message = StateReconnecting, err.Error(); !runner.endpoint.IsTunnel() {
-			state = StateDown
-			runner.fail(state, message)
-			sleep(ctx, time.Duration(runner.settings.CheckInterval)*time.Second)
-		} else if errors.As(err, &fatal) ||
-			attempts >= runner.endpoint.Monitoring.ReconnectAttempts {
-			runner.fail(StateFailed, message)
-			<-ctx.Done()
+		if failures++; errors.As(err, &fatal) || failures >= policy.limit {
+			state, message = policy.exhausted, err.Error()
+			if runner.fail(state, message); policy.terminal {
+				<-ctx.Done()
+			} else {
+				sleep(ctx, time.Duration(runner.settings.CheckInterval)*time.Second)
+			}
 		} else {
-			attempts++
-			message = fmt.Sprintf("reconnect attempt %v of %v: %v", attempts,
-				runner.endpoint.Monitoring.ReconnectAttempts, err)
+			state = StateReconnecting
+			message = fmt.Sprintf("reconnect attempt %v of %v: %v", failures, policy.limit-1, err)
 			runner.fail(state, message)
-			sleep(ctx, time.Duration(runner.endpoint.Monitoring.ReconnectDelay)*time.Second)
+			sleep(ctx, policy.delay)
 		}
 	}
 }
 
-func (runner *runner) watch(ctx context.Context, driver driver, healthy func()) error {
+func (runner *runner) watch(ctx context.Context, driver driver, verified bool,
+	healthy func()) error {
 	monitoring := runner.endpoint.Monitoring
 	active := monitoring != nil && monitoring.Enabled
 	interval, timeout, retries := time.Duration(runner.settings.CheckInterval)*time.Second,
 		defaultCheckTimeout, 1
+	timer := time.NewTimer(interval)
+	defer timer.Stop()
 	if active {
 		interval, timeout = time.Duration(monitoring.Interval)*time.Second,
 			time.Duration(monitoring.Timeout)*time.Second
 		retries = monitoring.Retries + 1
-	} else {
-		healthy()
-	}
-	timer := time.NewTimer(0)
-	defer timer.Stop()
-	if active {
 		timer.Reset(min(interval, monitoringGrace))
+	} else if healthy(); !runner.settings.ConnectivityChecks {
+		timer.Stop()
+	} else if !verified {
+		timer.Reset(0)
 	}
 	for {
 		select {
@@ -275,14 +331,16 @@ func (runner *runner) watch(ctx context.Context, driver driver, healthy func()) 
 			return nil
 		} else if err != nil && active {
 			return fmt.Errorf("monitoring failed after %v attempts: %w", retries, err)
+		} else if err != nil && verified {
+			return err
 		}
 		runner.update(func(status *Status) {
 			status.Checked, status.Latency, status.Message = time.Now().Unix(), -1, ""
-			if status.State = StateUp; err == nil {
+			if err == nil {
 				healthy()
 				status.Latency = int(latency.Milliseconds())
-			} else if status.Message = err.Error(); !runner.endpoint.IsTunnel() {
-				status.State = StateDown
+			} else {
+				status.Message = err.Error()
 			}
 		})
 		timer.Reset(interval)
@@ -325,6 +383,18 @@ func (runner *runner) update(change func(status *Status)) {
 	if !sameStatus(previous, current) && runner.manager.options.Changed != nil {
 		runner.manager.options.Changed()
 	}
+}
+
+func (runner *runner) name() string {
+	runner.mutex.Lock()
+	defer runner.mutex.Unlock()
+	return runner.id
+}
+
+func (runner *runner) rename(id string) {
+	runner.mutex.Lock()
+	defer runner.mutex.Unlock()
+	runner.id = id
 }
 
 func (runner *runner) snapshot() Status {

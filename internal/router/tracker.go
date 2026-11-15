@@ -125,6 +125,24 @@ func (tracker *Tracker) SetCollected(endpoints []config.Endpoint) {
 	}
 }
 
+func (tracker *Tracker) Rename(previous string, current string) {
+	tracker.mutex.Lock()
+	defer tracker.mutex.Unlock()
+	if traffic, found := tracker.traffic[previous]; found && previous != current {
+		tracker.traffic[current] = traffic
+		delete(tracker.traffic, previous)
+		tracker.dirty = true
+	}
+	if collected, found := tracker.collected[previous]; found && previous != current {
+		tracker.collected[current] = collected
+		delete(tracker.collected, previous)
+	}
+	if counter, found := tracker.counters[previous]; found && previous != current {
+		tracker.counters[current] = counter
+		delete(tracker.counters, previous)
+	}
+}
+
 func (tracker *Tracker) Update(connections Connections, counters map[string][2]int64) {
 	tracker.mutex.Lock()
 	defer tracker.mutex.Unlock()

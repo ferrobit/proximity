@@ -20,14 +20,38 @@ func TestCheck_Domains(t *testing.T) {
 		{Key: "b", Label: "#2", Target: "B", Rules: []Rule{{Directive: Domain, Value: "wiki.corp.test"}}},
 		{Key: "c", Label: "#3", Target: "A", Rules: []Rule{{Directive: DomainKeyword, Value: "wiki"}}},
 		{Key: "d", Label: "#4", Target: "A", Rules: []Rule{{Directive: Domain, Value: "other.test"}}},
+		{Key: "e", Label: "#5", Target: "A", Rules: []Rule{{Directive: Domain, Value: "wiki.other"}}},
 	}
 	result := Check(items)
 	require.Len(t, result, 2)
 	require.Equal(t, []string{"a", "b"}, result[0].Keys)
 	require.Contains(t, result[0].Message, "DOMAIN-SUFFIX 'corp.test' in #1 covers DOMAIN")
 	require.Contains(t, result[0].Message, "different targets: 'A' and 'B'")
-	require.Equal(t, []string{"b", "c"}, result[1].Keys)
-	require.Contains(t, result[1].Message, "DOMAIN-KEYWORD 'wiki' in #3 covers")
+	require.Equal(t, []string{"c", "e"}, result[1].Keys)
+	require.Equal(t, "DOMAIN-KEYWORD 'wiki' in #3 covers DOMAIN 'wiki.other' in #5",
+		result[1].Message)
+}
+
+func TestCheck_DomainsOrder(t *testing.T) {
+	narrow := Item{Key: "a", Label: "'Filter 1'", Target: "DIRECT",
+		Rules: []Rule{{Directive: DomainSuffix, Value: "im-squadus.elvees.com"}}}
+	wide := Item{Key: "b", Label: "'Filter 2'", Target: "OpenVPN 1",
+		Rules: []Rule{{Directive: DomainSuffix, Value: "elvees.com"}}}
+	require.Empty(t, Check([]Item{narrow, wide}))
+	{
+		result := Check([]Item{wide, narrow})
+		require.Len(t, result, 1)
+		require.Equal(t, "DOMAIN-SUFFIX 'elvees.com' in 'Filter 2' covers DOMAIN-SUFFIX "+
+			"'im-squadus.elvees.com' in 'Filter 1' (different targets: 'OpenVPN 1' and 'DIRECT')",
+			result[0].Message)
+		require.Equal(t, []string{"b", "a"}, result[0].Keys)
+	}
+	{
+		exact := Item{Key: "c", Label: "#3", Target: "DIRECT",
+			Rules: []Rule{{Directive: Domain, Value: "elvees.com"}}}
+		require.Empty(t, Check([]Item{exact, wide}))
+		require.Len(t, Check([]Item{wide, exact}), 1)
+	}
 }
 
 func TestCheck_Duplicates(t *testing.T) {
@@ -59,8 +83,16 @@ func TestCheck_Networks(t *testing.T) {
 		result := Check([]Item{{Key: "a", Label: "#1", Target: "A", Rules: []Rule{first}},
 			{Key: "b", Label: "#2", Target: "A", Rules: []Rule{second}}})
 		require.Len(t, result, 1)
-		require.Equal(t, "network '10.0.0.0/8' in #1 intersects with '10.1.2.3/32:443' in #2",
+		require.Equal(t, "network '10.0.0.0/8' in #1 covers '10.1.2.3/32:443' in #2",
 			result[0].Message)
+	}
+	{
+		require.Empty(t, Check([]Item{{Key: "b", Label: "#1", Target: "A", Rules: []Rule{second}},
+			{Key: "a", Label: "#2", Target: "B", Rules: []Rule{first}}}))
+		require.Empty(t, Check([]Item{{Key: "a", Label: "#1", Rules: []Rule{second, third}}}))
+		host := parseOne(t, IPCIDR, "10.1.2.3")
+		require.Len(t, Check([]Item{{Key: "a", Label: "#1", Rules: []Rule{host, second}}}), 1)
+		require.Empty(t, Check([]Item{{Key: "a", Label: "#1", Rules: []Rule{second, host}}}))
 	}
 	{
 		result := Check([]Item{{Key: "a", Label: "#1", Rules: []Rule{second, third, fourth}}})

@@ -15,10 +15,33 @@ type proxyGroup struct {
 	Name     string   `json:"name"`
 	Type     string   `json:"type"`
 	Proxies  []string `json:"proxies"`
-	URL      string   `json:"url"`
-	Interval int      `json:"interval"`
-	Timeout  int      `json:"timeout"`
-	Lazy     bool     `json:"lazy"`
+	URL      string   `json:"url,omitempty"`
+	Interval int      `json:"interval,omitempty"`
+	Timeout  int      `json:"timeout,omitempty"`
+}
+
+type tunSection struct {
+	Enable     bool   `json:"enable"`
+	Device     string `json:"device"`
+	Stack      string `json:"stack"`
+	AutoRoute  bool   `json:"auto-route"`
+	AutoDetect bool   `json:"auto-detect-interface"`
+}
+
+type sniffPorts struct {
+	Ports []string `json:"ports"`
+}
+
+type snifferSection struct {
+	Enable       bool                  `json:"enable"`
+	OverrideDest bool                  `json:"override-destination"`
+	Sniff        map[string]sniffPorts `json:"sniff"`
+}
+
+type Options struct {
+	Socket    string
+	Capture   bool
+	ProxyBind string
 }
 
 type dnsSection struct {
@@ -39,6 +62,9 @@ type document struct {
 	FindProcess string           `json:"find-process-mode"`
 	GeoUpdate   bool             `json:"geo-auto-update"`
 	Profile     map[string]bool  `json:"profile"`
+	RoutingMark int              `json:"routing-mark,omitempty"`
+	Tun         *tunSection      `json:"tun,omitempty"`
+	Sniffer     *snifferSection  `json:"sniffer,omitempty"`
 	DNS         *dnsSection      `json:"dns,omitempty"`
 	Proxies     []map[string]any `json:"proxies"`
 	Groups      []proxyGroup     `json:"proxy-groups"`
@@ -60,7 +86,7 @@ const securePort = 443
 const filePort = 21
 const healthTimeout = 5000
 
-func Generate(snapshot config.Config, links map[string]link.Status, socket string) ([]byte,
+func Generate(snapshot config.Config, links map[string]link.Status, options Options) ([]byte,
 	[]string, error) {
 	state := &buildState{config: snapshot, links: links, variants: map[string][]rules.Variant{},
 		active:   map[string]bool{config.TargetDirect: true, config.TargetReject: true},
@@ -68,9 +94,19 @@ func Generate(snapshot config.Config, links map[string]link.Status, socket strin
 	settings := snapshot.Settings
 	state.document = document{MixedPort: settings.MixedPort, AllowLan: true,
 		BindAddress: settings.BindAddress, Mode: "rule", LogLevel: settings.LogLevel,
-		IPv6: settings.IPv6, Controller: socket, FindProcess: "off",
+		IPv6: settings.IPv6, Controller: options.Socket, FindProcess: "off",
 		Profile: map[string]bool{"store-selected": false}, Proxies: []map[string]any{},
 		Groups: []proxyGroup{}, Rules: []string{}}
+	if options.ProxyBind != "" {
+		state.document.BindAddress = options.ProxyBind
+	}
+	if options.Capture {
+		state.document.RoutingMark = link.CaptureMark
+		state.document.Tun = &tunSection{Enable: true, Device: link.CaptureDevice, Stack: "gvisor"}
+		state.document.Sniffer = &snifferSection{Enable: true, Sniff: map[string]sniffPorts{
+			"HTTP": {Ports: []string{"80", "8080-8880"}}, "TLS": {Ports: []string{"443", "8443"}},
+			"QUIC": {Ports: []string{"443", "8443"}}}}
+	}
 	state.buildProxies()
 	state.buildGroups()
 	state.buildRules()
@@ -241,9 +277,25 @@ func (state *buildState) buildGroups() {
 }
 
 func (state *buildState) appendGroup(fallback config.Fallback, name string, members []string) {
-	state.document.Groups = append(state.document.Groups, proxyGroup{Name: name,
-		Type: "fallback", Proxies: members, URL: fallback.URL, Interval: fallback.Interval,
-		Timeout: healthTimeout})
+	group := proxyGroup{Name: name, Type: "fallback", Proxies: members, URL: fallback.URL,
+		Interval: fallback.Interval, Timeout: healthTimeout}
+	if !fallback.HealthCheck {
+		group = proxyGroup{Name: name, Type: "select", Proxies: state.alive(members)}
+	}
+	state.document.Groups = append(state.document.Groups, group)
+}
+
+func (state *buildState) alive(members []string) []string {
+	result := []string{}
+	for _, name := range members {
+		if status, found := state.links[Owner(name)]; !found || status.State == link.StateUp {
+			result = append(result, name)
+		}
+	}
+	if len(result) == 0 {
+		return members
+	}
+	return result
 }
 
 func (state *buildState) buildRules() {

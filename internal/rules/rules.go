@@ -380,18 +380,15 @@ func (entry checkEntry) conflict(other checkEntry) string {
 		return fmt.Sprintf("duplicate %v '%v' in %v and %v", first.Directive, first.text(),
 			entry.item.Label, other.item.Label)
 	} else if entry.prefix.IsValid() && other.prefix.IsValid() {
-		if entry.prefix.Overlaps(other.prefix) && (first.Port == 0 || second.Port == 0 ||
-			first.Port == second.Port) {
-			return fmt.Sprintf("network '%v' in %v intersects with '%v' in %v", first.text(),
+		if entry.prefix.Bits() <= other.prefix.Bits() && entry.prefix.Overlaps(other.prefix) &&
+			(first.Port == 0 || first.Port == second.Port) {
+			return fmt.Sprintf("network '%v' in %v covers '%v' in %v", first.text(),
 				entry.item.Label, second.text(), other.item.Label)
 		}
 		return ""
 	} else if first.covers(second) {
 		return fmt.Sprintf("%v '%v' in %v covers %v '%v' in %v", first.Directive, first.Value,
 			entry.item.Label, second.Directive, second.Value, other.item.Label)
-	} else if second.covers(first) {
-		return fmt.Sprintf("%v '%v' in %v covers %v '%v' in %v", second.Directive, second.Value,
-			other.item.Label, first.Directive, first.Value, entry.item.Label)
 	}
 	return ""
 }
