@@ -1,10 +1,16 @@
 package config
 
 import (
+	"crypto/ecdsa"
+	"crypto/rand"
+	"crypto/rsa"
+	"crypto/x509"
 	"encoding/json"
+	"encoding/pem"
 	"errors"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -81,6 +87,191 @@ func TestAddFallback_Members(t *testing.T) {
 		require.Equal(t, TargetDirect, config.Settings.DefaultTarget)
 		require.ErrorContains(t, config.RemoveFallback("Fallback 1"), "does not exist")
 		require.NoError(t, config.Validate())
+	}
+}
+
+func TestAddInbound_Defaults(t *testing.T) {
+	config := makeConfig(t)
+	now := time.Unix(1700000000, 0)
+	socks, err := config.AddInbound(Inbound{Type: TypeSocks5, Enabled: true, Name: " proxy ",
+		Users: []InboundUser{{Enabled: true, Name: " alice ", Password: "secret"}}}, now)
+	require.NoError(t, err)
+	require.Equal(t, "SOCKS5 1", socks.ID)
+	require.Equal(t, "proxy", socks.Name)
+	require.Equal(t, InboundPortFirst, socks.Port)
+	require.Equal(t, 1, socks.Slot())
+	require.Equal(t, ViaRouter, socks.Outbound)
+	require.Empty(t, socks.Target())
+	require.False(t, socks.Direct())
+	require.Equal(t, &Socks5Server{Listen: ListenAny, UDP: true}, socks.Socks5)
+	require.Nil(t, socks.OpenVPN)
+	require.Equal(t, []InboundUser{{Enabled: true, Name: "alice", Password: "secret"}},
+		socks.ActiveUsers())
+	server, err := config.AddInbound(Inbound{Type: TypeOpenVPN, Outbound: ViaHost,
+		OpenVPN: &OpenVPNServer{OTP: true, Routes: []string{" 192.168.10.7/24 ", ""},
+			DNS: []string{"10.0.0.53"}, Ciphers: "aes-256-gcm", OTPKey: "gezd-gnbv gy3t=="}}, now)
+	require.NoError(t, err)
+	require.Equal(t, "OpenVPN 1", server.ID)
+	require.Equal(t, InboundPortFirst+1, server.Port)
+	require.Equal(t, TargetDirect, server.Target())
+	require.True(t, server.Direct())
+	require.Equal(t, []InboundUser{}, server.Users)
+	options := server.OpenVPN
+	require.Equal(t, "10.77.2.0/24", options.Network)
+	require.Equal(t, []string{"192.168.10.0/24"}, options.Routes)
+	require.Equal(t, "AES-256-GCM", options.Ciphers)
+	require.Equal(t, "GEZDGNBVGY3T", options.OTPKey)
+	require.Equal(t, [8]any{ListenAny, ProtocolUDP, 32, 10, 60, 3600, 1500, 3},
+		[8]any{options.Listen, options.Protocol, options.MaxClients, options.KeepaliveInterval,
+			options.KeepaliveTimeout, options.Renegotiation, options.MTU, options.Verbosity})
+	require.Equal(t, "SHA256 1.2", options.Digest+" "+options.TLSVersion)
+	require.Equal(t, "Proximity CA", CommonName(options.CACertificate))
+	require.Equal(t, "proximity-server", CommonName(options.Certificate))
+	require.Equal(t, "proximity-client", CommonName(options.ClientCertificate))
+	require.Regexp(t, `^-----BEGIN OpenVPN Static key V1-----\n([0-9a-f]{32}\n){16}-----END`,
+		options.TLSCrypt)
+	require.NoError(t, config.Validate())
+	{
+		third, err := config.AddInbound(Inbound{Type: TypeOpenVPN, ID: "Office", Port: 7810,
+			Outbound: "HOST 1", OpenVPN: &OpenVPNServer{CACertificate: options.CACertificate,
+				CAKey: options.CAKey, OTP: true}}, now)
+		require.NoError(t, err)
+		require.Equal(t, "10.77.11.0/24", third.OpenVPN.Network)
+		require.Equal(t, "HOST 1", third.Target())
+		require.Len(t, third.OpenVPN.OTPKey, 32)
+		require.NotEqual(t, options.Certificate, third.OpenVPN.Certificate)
+		require.NoError(t, checkIssued(third.OpenVPN.ClientCertificate, options.CACertificate))
+		fourth, err := config.AddInbound(Inbound{Type: TypeSocks5, Socks5: &Socks5Server{
+			Listen: "10.0.0.1", TLS: true}}, now)
+		require.NoError(t, err)
+		require.Equal(t, InboundPortFirst+2, fourth.Port)
+		require.NoError(t, checkPair(fourth.Socks5.Certificate, fourth.Socks5.Key))
+		require.NoError(t, config.Validate())
+	}
+	{
+		clone := config.Clone()
+		clone.Inbounds[0].Users[0].Name, clone.Inbounds[0].Socks5.Listen = "x", "10.0.0.9"
+		clone.Inbounds[1].OpenVPN.Routes[0], clone.Inbounds[1].OpenVPN.DNS[0] = "x", "x"
+		require.Equal(t, "alice", config.Inbounds[0].Users[0].Name)
+		require.Equal(t, ListenAny, config.Inbounds[0].Socks5.Listen)
+		require.Equal(t, "192.168.10.0/24", config.Inbounds[1].OpenVPN.Routes[0])
+		require.Equal(t, "10.0.0.53", config.Inbounds[1].OpenVPN.DNS[0])
+	}
+	{
+		full := Default()
+		for port := InboundPortFirst; port <= InboundPortLast; port++ {
+			full.Inbounds = append(full.Inbounds, Inbound{ID: "x", Port: port})
+		}
+		_, err := full.AddInbound(Inbound{Type: TypeSocks5}, now)
+		require.EqualError(t, err, "free port does not exist in range 7800..7898")
+	}
+}
+
+func TestAddInbound_Invalid(t *testing.T) {
+	now := time.Unix(1700000000, 0)
+	base := makeConfig(t)
+	_, err := base.AddInbound(Inbound{Type: TypeOpenVPN, Anonymous: true}, now)
+	require.NoError(t, err)
+	valid := *base.Inbounds[0].OpenVPN
+	other, err := GenerateMaterial(MaterialAll, Material{}, now)
+	require.NoError(t, err)
+	for _, item := range []struct {
+		inbound Inbound
+		message string
+	}{
+		{Inbound{Type: "http"}, "unexpected inbound type 'http'"},
+		{Inbound{Type: TypeSocks5, ID: "OpenVPN 1"}, "ID 'OpenVPN 1' already exists"},
+		{Inbound{Type: TypeSocks5, ID: "bad/id"}, "invalid ID 'bad/id'"},
+		{Inbound{Type: TypeSocks5, Name: strings.Repeat("n", 97)}, "name or group is too long"},
+		{Inbound{Type: TypeSocks5, Port: 7800}, "port (7800) is used by inbound 'OpenVPN 1'"},
+		{Inbound{Type: TypeSocks5, Port: 7899}, "invalid port (7899), expected 7800..7898"},
+		{Inbound{Type: TypeSocks5, Outbound: "missing"}, "outbound 'missing' does not exist"},
+		{Inbound{Type: TypeSocks5, Users: make([]InboundUser, 257)}, "invalid number of users (257)"},
+		{Inbound{Type: TypeSocks5, Users: []InboundUser{{Name: "a b", Password: "x"}}},
+			"invalid user name 'a b'"},
+		{Inbound{Type: TypeSocks5, Users: []InboundUser{{Name: "a", Password: "with space"}}},
+			"invalid password of user 'a'"},
+		{Inbound{Type: TypeSocks5, Users: []InboundUser{{Name: "a", Password: "x"},
+			{Name: "a", Password: "y"}}}, "duplicate user 'a'"},
+		{Inbound{Type: TypeSocks5, Socks5: &Socks5Server{Listen: "::1"}},
+			"invalid listen address '::1'"},
+		{Inbound{Type: TypeSocks5, Socks5: &Socks5Server{TLS: true, Certificate: "x", Key: "y"}},
+			"failed to check TLS certificate"},
+		{Inbound{Type: TypeOpenVPN, OpenVPN: &OpenVPNServer{Server: "bad host"}},
+			"invalid server address 'bad host'"},
+		{Inbound{Type: TypeOpenVPN, OpenVPN: &OpenVPNServer{PublicPort: 70000}},
+			"invalid public port (70000)"},
+		{Inbound{Type: TypeOpenVPN, OpenVPN: &OpenVPNServer{Listen: "host"}},
+			"invalid listen address 'host'"},
+		{Inbound{Type: TypeOpenVPN, OpenVPN: &OpenVPNServer{Protocol: "sctp"}},
+			"unexpected protocol 'sctp'"},
+		{Inbound{Type: TypeOpenVPN, OpenVPN: &OpenVPNServer{Network: "10.0.0.0"}},
+			`cannot parse "10.0.0.0" as network`},
+		{Inbound{Type: TypeOpenVPN, OpenVPN: &OpenVPNServer{Network: "10.0.0.0/30"}},
+			"invalid network '10.0.0.0/30', expected IPv4 prefix /16../29"},
+		{Inbound{Type: TypeOpenVPN, OpenVPN: &OpenVPNServer{Network: "198.19.0.0/24"}},
+			"overlaps reserved network '198.18.0.0/15'"},
+		{Inbound{Type: TypeOpenVPN, OpenVPN: &OpenVPNServer{Network: "10.77.1.128/25"}},
+			"network '10.77.1.128/25' overlaps network '10.77.1.0/24' of another inbound"},
+		{Inbound{Type: TypeOpenVPN, OpenVPN: &OpenVPNServer{Routes: []string{"fd00::/64"}}},
+			"invalid route 'fd00::/64', expected IPv4 prefix"},
+		{Inbound{Type: TypeOpenVPN, OpenVPN: &OpenVPNServer{DNS: []string{"dns.test"}}},
+			"invalid DNS server 'dns.test', expected IPv4 address"},
+		{Inbound{Type: TypeOpenVPN, OpenVPN: &OpenVPNServer{DNS: []string{"1.1.1.1", "1.1.1.2",
+			"1.1.1.3", "1.1.1.4", "1.1.1.5"}}}, "too many routes or DNS servers"},
+		{Inbound{Type: TypeOpenVPN, OpenVPN: &OpenVPNServer{MaxClients: 1001}},
+			"invalid number of clients (1001)"},
+		{Inbound{Type: TypeOpenVPN, OpenVPN: &OpenVPNServer{KeepaliveInterval: 601}},
+			"invalid keepalive interval (601)"},
+		{Inbound{Type: TypeOpenVPN, OpenVPN: &OpenVPNServer{KeepaliveInterval: 60,
+			KeepaliveTimeout: 60}}, "invalid keepalive timeout (60), expected 61..3600"},
+		{Inbound{Type: TypeOpenVPN, OpenVPN: &OpenVPNServer{Renegotiation: 119}},
+			"invalid renegotiation period (119), expected 120..86400"},
+		{Inbound{Type: TypeOpenVPN, OpenVPN: &OpenVPNServer{MTU: 9000}}, "invalid MTU (9000)"},
+		{Inbound{Type: TypeOpenVPN, OpenVPN: &OpenVPNServer{Verbosity: 7}},
+			"invalid verbosity (7)"},
+		{Inbound{Type: TypeOpenVPN, OpenVPN: &OpenVPNServer{Ciphers: "a;b"}},
+			"invalid data ciphers 'A;B'"},
+		{Inbound{Type: TypeOpenVPN, OpenVPN: &OpenVPNServer{Digest: "md5"}},
+			"unexpected digest 'MD5'"},
+		{Inbound{Type: TypeOpenVPN, OpenVPN: &OpenVPNServer{TLSVersion: "1.0"}},
+			"unexpected TLS version '1.0'"},
+		{Inbound{Type: TypeOpenVPN, OpenVPN: &OpenVPNServer{OTPKey: "18"}},
+			"failed to decode OTP key"},
+		{Inbound{Type: TypeOpenVPN, OpenVPN: &OpenVPNServer{CACertificate: valid.CACertificate}},
+			"failed to issue server certificate: failed to check CA private key"},
+		{Inbound{Type: TypeOpenVPN, OpenVPN: &OpenVPNServer{CACertificate: valid.CACertificate,
+			CAKey: valid.CAKey, Certificate: valid.Certificate, Key: valid.Key,
+			ClientCertificate: "x"}}, "failed to check client certificate"},
+		{Inbound{Type: TypeOpenVPN, OpenVPN: &OpenVPNServer{CACertificate: "x",
+			Certificate: valid.Certificate, Key: valid.Key,
+			ClientCertificate: valid.ClientCertificate, ClientKey: valid.ClientKey}},
+			"failed to check CA certificate: PEM certificate does not exist"},
+		{Inbound{Type: TypeOpenVPN, OpenVPN: &OpenVPNServer{CACertificate: valid.CACertificate,
+			Certificate: valid.Certificate, Key: valid.ClientKey,
+			ClientCertificate: valid.ClientCertificate, ClientKey: valid.ClientKey}},
+			"failed to check server certificate: failed to match certificate and private key"},
+		{Inbound{Type: TypeOpenVPN, OpenVPN: &OpenVPNServer{CACertificate: other.CACertificate,
+			Certificate: valid.Certificate, Key: valid.Key,
+			ClientCertificate: valid.ClientCertificate, ClientKey: valid.ClientKey}},
+			"failed to check server certificate: failed to check signature of 'proximity-server'"},
+		{Inbound{Type: TypeOpenVPN, OpenVPN: &OpenVPNServer{CACertificate: valid.CACertificate,
+			Certificate: valid.Certificate, Key: valid.Key,
+			ClientCertificate: other.ClientCertificate, ClientKey: other.ClientKey}},
+			"failed to check client certificate: failed to check signature of 'proximity-client'"},
+		{Inbound{Type: TypeOpenVPN, OpenVPN: &OpenVPNServer{CACertificate: valid.CACertificate,
+			CAKey: other.CAKey, Certificate: valid.Certificate, Key: valid.Key,
+			ClientCertificate: valid.ClientCertificate, ClientKey: valid.ClientKey}},
+			"failed to check CA: failed to match certificate and private key"},
+		{Inbound{Type: TypeOpenVPN, OpenVPN: &OpenVPNServer{CACertificate: valid.CACertificate,
+			Certificate: valid.Certificate, Key: valid.Key, TLSCrypt: "key",
+			ClientCertificate: valid.ClientCertificate, ClientKey: valid.ClientKey}},
+			"invalid OpenVPN static key"},
+	} {
+		config := base.Clone()
+		_, err := config.AddInbound(item.inbound, now)
+		require.ErrorContains(t, err, item.message, item.message)
+		require.Len(t, config.Inbounds, 1)
 	}
 }
 
@@ -297,6 +488,99 @@ func TestClone_Independent(t *testing.T) {
 	require.Equal(t, "a.test", config.Routes[0].Params[0])
 }
 
+func TestGenerateMaterial_Kinds(t *testing.T) {
+	now := time.Unix(1700000000, 0)
+	full, err := GenerateMaterial(MaterialAll, Material{}, now)
+	require.NoError(t, err)
+	require.NoError(t, checkPair(full.CACertificate, full.CAKey))
+	require.NoError(t, checkPair(full.Certificate, full.Key))
+	require.NoError(t, checkPair(full.ClientCertificate, full.ClientKey))
+	require.NoError(t, checkIssued(full.Certificate, full.CACertificate))
+	require.NoError(t, checkIssued(full.ClientCertificate, full.CACertificate))
+	require.NoError(t, checkStaticKey(full.TLSCrypt))
+	require.Regexp(t, `^[A-Z2-7]{32}$`, full.OTPKey)
+	authority, err := parseCertificate(full.CACertificate)
+	require.NoError(t, err)
+	require.True(t, authority.IsCA)
+	require.Equal(t, now.Add(certificateLifetime).Unix(), authority.NotAfter.Unix())
+	leaf, err := parseCertificate(full.Certificate)
+	require.NoError(t, err)
+	require.False(t, leaf.IsCA)
+	require.Equal(t, []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth}, leaf.ExtKeyUsage)
+	{
+		chain, err := GenerateMaterial(MaterialPKI, Material{}, now)
+		require.NoError(t, err)
+		require.Empty(t, chain.TLSCrypt+chain.OTPKey)
+		require.NotEqual(t, full.CACertificate, chain.CACertificate)
+		server, err := GenerateMaterial(MaterialServer, full, now)
+		require.NoError(t, err)
+		require.NoError(t, checkIssued(server.Certificate, full.CACertificate))
+		require.Error(t, checkIssued(server.Certificate, chain.CACertificate))
+		require.Empty(t, server.ClientCertificate+server.CACertificate)
+		client, err := GenerateMaterial(MaterialClient, full, now)
+		require.NoError(t, err)
+		require.NoError(t, checkPair(client.ClientCertificate, client.ClientKey))
+		parsed, err := parseCertificate(client.ClientCertificate)
+		require.NoError(t, err)
+		require.Equal(t, []x509.ExtKeyUsage{x509.ExtKeyUsageClientAuth}, parsed.ExtKeyUsage)
+	}
+	{
+		static, err := GenerateMaterial(MaterialTLSCrypt, Material{}, now)
+		require.NoError(t, err)
+		require.NotEqual(t, full.TLSCrypt, static.TLSCrypt)
+		code, err := GenerateMaterial(MaterialOTP, Material{}, now)
+		require.NoError(t, err)
+		require.NotEqual(t, full.OTPKey, code.OTPKey)
+		single, err := GenerateMaterial(MaterialTLS, Material{}, now)
+		require.NoError(t, err)
+		require.NoError(t, checkPair(single.Certificate, single.Key))
+		require.Equal(t, "proximity-server", CommonName(single.Certificate))
+		require.Empty(t, single.CACertificate)
+	}
+	{
+		_, err := GenerateMaterial("other", Material{}, now)
+		require.EqualError(t, err, "unexpected material kind 'other'")
+		_, err = GenerateMaterial(MaterialServer, Material{}, now)
+		require.EqualError(t, err, "failed to check CA certificate: PEM certificate does not exist")
+		_, err = GenerateMaterial(MaterialClient, Material{CACertificate: full.CACertificate}, now)
+		require.EqualError(t, err, "failed to check CA private key: PEM private key does not exist")
+		_, err = GenerateMaterial(MaterialClient, Material{CACertificate: full.CACertificate,
+			CAKey: full.Key}, now)
+		require.ErrorContains(t, err, "failed to check CA: failed to match certificate")
+		forged, err := GenerateMaterial(MaterialServer, Material{CACertificate: full.Certificate,
+			CAKey: full.Key}, now)
+		require.NoError(t, err)
+		require.ErrorContains(t, checkIssued(forged.Certificate, full.Certificate),
+			"failed to check signature of 'proximity-server'")
+	}
+	{
+		require.Empty(t, CommonName("broken"))
+		require.Empty(t, normalizePEM(" \r\n "))
+		require.Equal(t, "a\nb\n", normalizePEM("a\r\nb"))
+		_, err := parseCertificate("-----BEGIN CERTIFICATE-----\nAAAA\n-----END CERTIFICATE-----\n")
+		require.ErrorContains(t, err, "failed to parse certificate")
+		_, err = parseKey("-----BEGIN PRIVATE KEY-----\nAAAA\n-----END PRIVATE KEY-----\n")
+		require.EqualError(t, err, "unexpected private key format")
+		require.EqualError(t, checkIssued("x", full.CACertificate),
+			"PEM certificate does not exist")
+		require.ErrorContains(t, checkIssued(full.Certificate, "x"),
+			"failed to check CA certificate")
+		block, _ := pem.Decode([]byte(full.Key))
+		key, err := x509.ParsePKCS8PrivateKey(block.Bytes)
+		require.NoError(t, err)
+		encoded, err := x509.MarshalECPrivateKey(key.(*ecdsa.PrivateKey))
+		require.NoError(t, err)
+		_, err = parseKey(string(pem.EncodeToMemory(&pem.Block{Type: "EC PRIVATE KEY",
+			Bytes: encoded})))
+		require.NoError(t, err)
+		legacy, err := rsa.GenerateKey(rand.Reader, 1024)
+		require.NoError(t, err)
+		_, err = parseKey(string(pem.EncodeToMemory(&pem.Block{Type: "RSA PRIVATE KEY",
+			Bytes: x509.MarshalPKCS1PrivateKey(legacy)})))
+		require.NoError(t, err)
+	}
+}
+
 func TestImport_Backup(t *testing.T) {
 	config := makeConfig(t)
 	_, err := config.AddFallback(Fallback{Enabled: true, Outbounds: []string{"HOST 1"}})
@@ -374,6 +658,41 @@ func TestImport_Backup(t *testing.T) {
 		require.EqualError(t, target.Import(Backup{Format: BackupFormat}, true),
 			"unexpected backup version (0)")
 	}
+	{
+		_, err := config.AddInbound(Inbound{Type: TypeSocks5, Anonymous: true}, time.Now())
+		require.NoError(t, err)
+		current := config.Export(time.Now())
+		require.Len(t, current.Inbounds, 1)
+		target := Default()
+		_, err = target.AddInbound(Inbound{Type: TypeSocks5, ID: "Kept", Anonymous: true},
+			time.Now())
+		require.NoError(t, err)
+		previous := current
+		previous.Version, previous.Inbounds = inboundVersion-1, nil
+		require.NoError(t, target.Import(previous, true))
+		require.NoError(t, target.Validate())
+		require.Equal(t, "Kept", target.Inbounds[0].ID)
+		require.NoError(t, target.Import(current, true))
+		require.NoError(t, target.Validate())
+		require.Equal(t, config.Inbounds, target.Inbounds)
+		current.Inbounds = nil
+		require.NoError(t, target.Import(current, true))
+		require.Equal(t, []Inbound{}, target.Inbounds)
+	}
+}
+
+func TestInboundProblem_Reasons(t *testing.T) {
+	config := makeConfig(t)
+	users := []InboundUser{{Enabled: true, Name: "a", Password: "x"}}
+	require.Empty(t, config.InboundProblem(Inbound{Outbound: ViaRouter, Anonymous: true}))
+	require.Empty(t, config.InboundProblem(Inbound{Outbound: ViaHost, Users: users}))
+	require.Empty(t, config.InboundProblem(Inbound{Outbound: "HOST 1", Users: users}))
+	require.Equal(t, "outbound 'gone' does not exist",
+		config.InboundProblem(Inbound{Outbound: "gone", Anonymous: true}))
+	require.Equal(t, "outbound 'AmneziaWG 1' is disabled",
+		config.InboundProblem(Inbound{Outbound: "AmneziaWG 1", Anonymous: true}))
+	require.Equal(t, "anonymous connections are not allowed and enabled users do not exist",
+		config.InboundProblem(Inbound{Outbound: ViaRouter, Users: []InboundUser{{Name: "a"}}}))
 }
 
 func TestMoveOutbound_Order(t *testing.T) {
@@ -521,6 +840,62 @@ func TestSetRoutes_Lifecycle(t *testing.T) {
 	}
 }
 
+func TestUpdateInbound_Identity(t *testing.T) {
+	config := makeConfig(t)
+	now := time.Unix(1700000000, 0)
+	_, err := config.AddInbound(Inbound{Type: TypeSocks5, Outbound: "SOCKS5 1"}, now)
+	require.NoError(t, err)
+	created, err := config.AddInbound(Inbound{Type: TypeOpenVPN, Outbound: ViaHost}, now)
+	require.NoError(t, err)
+	updated, err := config.UpdateInbound("OpenVPN 1", Inbound{Type: TypeSocks5, ID: " Office ",
+		Enabled: true, Outbound: "SOCKS5 1", OpenVPN: created.OpenVPN}, now)
+	require.NoError(t, err)
+	require.Equal(t, "Office", updated.ID)
+	require.Equal(t, TypeOpenVPN, updated.Type)
+	require.Equal(t, InboundPortFirst+1, updated.Port)
+	require.Equal(t, created.OpenVPN.Certificate, updated.OpenVPN.Certificate)
+	found, exists := config.FindInbound("Office")
+	require.True(t, exists)
+	require.Equal(t, updated, found)
+	_, exists = config.FindInbound("OpenVPN 1")
+	require.False(t, exists)
+	{
+		_, err := config.UpdateInbound("missing", Inbound{}, now)
+		require.EqualError(t, err, "inbound 'missing' does not exist")
+		_, err = config.UpdateInbound("Office", Inbound{ID: "SOCKS5 1"}, now)
+		require.EqualError(t, err, "ID 'SOCKS5 1' already exists")
+		_, err = config.UpdateInbound("Office", Inbound{Port: InboundPortFirst}, now)
+		require.EqualError(t, err, "port (7800) is used by inbound 'SOCKS5 1'")
+		kept, err := config.UpdateInbound("Office", Inbound{Port: 7850, OpenVPN: updated.OpenVPN},
+			now)
+		require.NoError(t, err)
+		require.Equal(t, "Office", kept.ID)
+		require.Equal(t, 7850, kept.Port)
+		require.Equal(t, ViaRouter, kept.Outbound)
+		require.Equal(t, "10.77.2.0/24", kept.OpenVPN.Network)
+	}
+	{
+		renamed, _ := config.FindOutbound("SOCKS5 1")
+		renamed.ID = "Upstream"
+		require.NoError(t, config.UpdateOutbound("SOCKS5 1", renamed))
+		require.Equal(t, "Upstream", config.Inbounds[0].Outbound)
+		require.NoError(t, config.RemoveOutbound("Upstream"))
+		require.Equal(t, "Upstream", config.Inbounds[0].Outbound)
+		require.Equal(t, "outbound 'Upstream' does not exist",
+			config.InboundProblem(config.Inbounds[0]))
+		require.NoError(t, config.Validate())
+	}
+	{
+		require.NoError(t, config.MoveInbound("Office", -1))
+		require.Equal(t, "Office", config.Inbounds[0].ID)
+		require.EqualError(t, config.MoveInbound("missing", 1), "item does not exist")
+		require.EqualError(t, config.RemoveInbound("missing"), "inbound 'missing' does not exist")
+		require.NoError(t, config.RemoveInbound("Office"))
+		require.Len(t, config.Inbounds, 1)
+		require.Equal(t, "OpenVPN 1", config.NextInboundID("OpenVPN"))
+	}
+}
+
 func TestUpdateOutbound_Identity(t *testing.T) {
 	config := makeConfig(t)
 	require.NoError(t, config.UpdateOutbound("SOCKS5 1", Outbound{Type: TypeHost, Slot: 77,
@@ -649,9 +1024,37 @@ func TestValidate_Problems(t *testing.T) {
 		{func(config *Config) { config.Settings.ProbeTarget = "host" }, "failed to check probe target"},
 		{func(config *Config) { config.Settings.DefaultTarget = "x" }, "default target 'x'"},
 		{func(config *Config) { config.Settings.BindAddress = "all" }, "invalid bind address 'all'"},
+		{func(config *Config) { config.Settings.UnreachableLimit = 10001 },
+			"invalid number of unreachable routes (10001), expected 1..10000"},
+		{func(config *Config) { config.Settings.UnreachableLifetime = 59 },
+			"invalid lifetime of unreachable routes (59), expected 60..31536000"},
+		{func(config *Config) { config.Inbounds[1].ID = "SOCKS5 1" },
+			"duplicate inbound ID 'SOCKS5 1'"},
+		{func(config *Config) { config.Inbounds[1].Port = InboundPortFirst },
+			"duplicate inbound port (7800)"},
+		{func(config *Config) { config.Inbounds[0].Type = "x" },
+			"failed to check inbound 'SOCKS5 1': unexpected inbound type 'x'"},
+		{func(config *Config) { config.Inbounds[0].Outbound = "bad/id" },
+			"failed to check inbound 'SOCKS5 1': invalid outbound 'bad/id'"},
+		{func(config *Config) { config.Inbounds[2].OpenVPN.Network = "10.77.2.0/25" },
+			"network of inbound 'OpenVPN 2' overlaps inbound 'OpenVPN 1'"},
+		{func(config *Config) { config.Inbounds[1].OpenVPN.OTP = true },
+			"failed to check inbound 'OpenVPN 1': OTP key does not exist"},
 	} {
 		config := makeConfig(t)
+		for _, kind := range []string{TypeSocks5, TypeOpenVPN, TypeOpenVPN} {
+			_, err := config.AddInbound(Inbound{Type: kind}, time.Now())
+			require.NoError(t, err)
+		}
 		item.mutate(config)
 		require.ErrorContains(t, config.Validate(), item.message)
+	}
+	{
+		config := makeConfig(t)
+		config.Settings.UnreachableLimit, config.Settings.UnreachableLifetime = 0, 0
+		config.Inbounds = nil
+		require.NoError(t, config.Validate())
+		require.Equal(t, 100, config.Settings.UnreachableLimit)
+		require.Equal(t, 86400, config.Settings.UnreachableLifetime)
 	}
 }

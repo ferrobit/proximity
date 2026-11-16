@@ -65,6 +65,7 @@ const cookieName = "proximity_session"
 const sessionLifetime = 7 * 24 * time.Hour
 const maxBodySize = 4 << 20
 const pollInterval = 500 * time.Millisecond
+const measureInterval = 2 * time.Second
 const saveInterval = 30 * time.Second
 const failedLoginDelay = 700 * time.Millisecond
 
@@ -182,6 +183,7 @@ func (server *Server) loop(ctx context.Context) {
 	poll, save := time.NewTicker(pollInterval), time.NewTicker(saveInterval)
 	defer poll.Stop()
 	defer save.Stop()
+	measured := time.Now()
 	for {
 		select {
 		case <-ctx.Done():
@@ -190,8 +192,13 @@ func (server *Server) loop(ctx context.Context) {
 			server.synchronize()
 		case <-poll.C:
 			server.capture()
-			if connections, err := server.mihomo.Connections(); err == nil {
+			connections, err := server.mihomo.Connections()
+			if err == nil {
 				server.tracker.Update(connections, server.manager.Counters())
+			}
+			if err == nil && time.Since(measured) >= measureInterval {
+				server.tracker.UpdateInbounds(connections, server.manager.InboundCounters())
+				measured = time.Now()
 			}
 		case <-save.C:
 			if err := server.tracker.Save(); err != nil {
@@ -236,7 +243,11 @@ func (server *Server) synchronize() {
 		}
 	}
 	snapshot = server.store.Snapshot()
+	server.manager.ApplyInbounds(snapshot)
 	server.tracker.SetCollected(snapshot.Outbounds)
+	server.tracker.SetInbounds(snapshot.Inbounds)
+	server.tracker.SetLimits(snapshot.Settings.UnreachableLimit,
+		time.Duration(snapshot.Settings.UnreachableLifetime)*time.Second)
 	data, warnings, err := router.Generate(snapshot, links, router.Options{
 		Socket: server.mihomo.Socket(), ProxyBind: server.options.ProxyBind,
 		Capture: server.options.HostNetwork && snapshot.Settings.Capture})

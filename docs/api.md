@@ -106,6 +106,31 @@ Outbound object (fields depend on `type`):
 Tunnels also take `monitoring: {enabled, interval, timeout, retries, reconnect_delay,
 reconnect_attempts, target}`.
 
+### Inbounds
+
+| Method and path | Level | Description |
+|---|---|---|
+| `GET /api/inbounds` | 1 | `{inbounds, groups, ports: [7800, 7898]}`; every inbound carries `status` (`state`, `message`, `device`, `address`, `clients`) and `traffic`. Level 1 gets passwords and private keys removed (`redacted: true`) |
+| `POST /api/inbounds` | 2 | Add (see below); empty `id` → `SOCKS5 <N>` / `OpenVPN <N>`, `port: 0` → the first free port. Returns the stored inbound with generated keys |
+| `PUT /api/inbounds/{id}` | 2 | Replace; `type` cannot change, `id` may |
+| `DELETE /api/inbounds/{id}` | 2 | Delete |
+| `POST /api/inbounds/{id}/move` | 2 | `{delta}` |
+| `POST /api/inbounds/{id}/restart` | 2 | Restart the listener or the VPN server |
+| `GET /api/inbounds/{id}/log` | 2 | `{lines}` — last 300 log lines |
+| `GET /api/inbounds/{id}/config?user=&embed=&host=` | 2 | OpenVPN client configuration → `{config, file}`; `file` is `<ID>-<username>.conf`. Empty `user` = anonymous, `embed=true` writes the credentials into the file, `host` is used when the inbound has no public address |
+| `POST /api/inbounds/generate` | 2 | `{kind, ca_certificate, ca_key}` → new key material. `kind`: `all`, `pki` (CA + server + client), `server`, `client` (both signed by the given CA), `tls_crypt`, `otp_key`, `tls` (self-signed certificate for SOCKS5) |
+
+Inbound object: `{id, name, group, type, enabled, statistics, port, outbound, anonymous,
+users: [{enabled, name, password}]}` plus one block by `type`. `outbound` is `@router`
+(routes decide), `@host` (host Internet connection) or an outbound ID.
+
+| Type | Block |
+|---|---|
+| `socks5` | `socks5: {listen, udp, tls, certificate, key}` |
+| `openvpn` | `openvpn: {server, public_port, listen, protocol: "udp" \| "tcp", network, redirect_gateway, routes: [...], dns: [...], client_to_client, max_clients, keepalive_interval, keepalive_timeout, renegotiation, mtu, ciphers, digest, tls_version, verbosity, otp, otp_key, ca_certificate, ca_key, certificate, key, client_certificate, client_key, tls_crypt}` |
+
+Empty key and certificate fields are generated on save.
+
 ### Fallbacks
 
 | Method and path | Level | Description |
@@ -145,9 +170,13 @@ Settings object:
   "mixed_port": 7899, "bind_address": "*", "default_target": "DIRECT",
   "log_level": "warning", "ipv6": false, "anonymous_dashboard": true,
   "connectivity_checks": true, "probe_target": "1.1.1.1:443",
-  "check_interval": 30, "capture": true
+  "check_interval": 30, "capture": true,
+  "unreachable_limit": 100, "unreachable_lifetime": 86400
 }
 ```
+
+`unreachable_limit` (1…10000) and `unreachable_lifetime` (seconds, 60…31536000) bound the
+*Unreachable routes* list; omitted or zero values mean the defaults.
 
 ## Examples
 
@@ -171,6 +200,14 @@ curl -s -b jar -H "$H" $P/api/routes/preview -d '{
   "directive": "IP-CIDR", "target": "DIRECT", "params": ["1.2.3.4:443", "2001:db8::1"]}'
 # {"lines":["AND,((IP-CIDR,1.2.3.4/32),(DST-PORT,443)),DIRECT","IP-CIDR6,2001:db8::1/128,DIRECT"],
 #  "params":["1.2.3.4/32:443","2001:db8::1/128"]}
+
+# add an OpenVPN inbound for two users and save bob's client configuration
+curl -s -b jar -H "$H" -X POST $P/api/inbounds -d '{
+  "type": "openvpn", "enabled": true, "statistics": true, "outbound": "@router",
+  "users": [{"enabled": true, "name": "bob", "password": "builder"},
+            {"enabled": true, "name": "eve", "password": "listener"}],
+  "openvpn": {"server": "vpn.example.com", "redirect_gateway": true}}'
+curl -s -b jar "$P/api/inbounds/OpenVPN%201/config?user=bob" | jq -r .config > "OpenVPN 1-bob.conf"
 
 # nightly backup
 curl -s -b jar $P/api/backup > proximity-$(date +%F).json

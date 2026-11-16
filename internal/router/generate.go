@@ -39,6 +39,22 @@ type snifferSection struct {
 	Sniff        map[string]sniffPorts `json:"sniff"`
 }
 
+type listenerUser struct {
+	Username string `json:"username"`
+	Password string `json:"password"`
+}
+
+type listener struct {
+	Name        string         `json:"name"`
+	Type        string         `json:"type"`
+	Port        int            `json:"port"`
+	Listen      string         `json:"listen"`
+	UDP         bool           `json:"udp"`
+	Users       []listenerUser `json:"users"`
+	Certificate string         `json:"certificate,omitempty"`
+	PrivateKey  string         `json:"private-key,omitempty"`
+}
+
 type Options struct {
 	Socket    string
 	Capture   bool
@@ -69,6 +85,7 @@ type document struct {
 	Tun         *tunSection      `json:"tun,omitempty"`
 	Sniffer     *snifferSection  `json:"sniffer,omitempty"`
 	DNS         *dnsSection      `json:"dns,omitempty"`
+	Listeners   []listener       `json:"listeners,omitempty"`
 	Proxies     []map[string]any `json:"proxies"`
 	Groups      []proxyGroup     `json:"proxy-groups"`
 	Rules       []string         `json:"rules"`
@@ -88,6 +105,8 @@ const fileSuffix = "~ftp"
 const securePort = 443
 const filePort = 21
 const healthTimeout = 5000
+const listenAll = "0.0.0.0"
+const listenDual = "::"
 
 func Generate(snapshot config.Config, links map[string]link.Status, options Options) ([]byte,
 	[]string, error) {
@@ -105,14 +124,11 @@ func Generate(snapshot config.Config, links map[string]link.Status, options Opti
 	}
 	if options.Capture {
 		state.document.RoutingMark = link.CaptureMark
-		state.document.Tun = &tunSection{Enable: true, Device: link.CaptureDevice, Stack: "gvisor",
-			DNSHijack: []string{"any:53"}}
-		state.document.Sniffer = &snifferSection{Enable: true, Sniff: map[string]sniffPorts{
-			"HTTP": {Ports: []string{"80", "8080-8880"}}, "TLS": {Ports: []string{"443", "8443"}},
-			"QUIC": {Ports: []string{"443", "8443"}}}}
+		state.attachTun()
 	}
 	state.buildProxies()
 	state.buildGroups()
+	state.buildInbounds()
 	state.buildRules()
 	buffer := bytes.Buffer{}
 	encoder := json.NewEncoder(&buffer)
@@ -177,6 +193,62 @@ func routeLabel(route config.Route, index int) string {
 
 func (state *buildState) warnf(format string, arguments ...any) {
 	state.warnings = append(state.warnings, fmt.Sprintf(format, arguments...))
+}
+
+func (state *buildState) attachTun() {
+	state.document.Tun = &tunSection{Enable: true, Device: link.CaptureDevice, Stack: "gvisor",
+		DNSHijack: []string{"any:53"}}
+	state.document.Sniffer = &snifferSection{Enable: true, Sniff: map[string]sniffPorts{
+		"HTTP": {Ports: []string{"80", "8080-8880"}}, "TLS": {Ports: []string{"443", "8443"}},
+		"QUIC": {Ports: []string{"443", "8443"}}}}
+}
+
+func (state *buildState) buildInbounds() {
+	for _, inbound := range state.config.Inbounds {
+		target, match := inbound.Target(), "IN-NAME,"+inbound.ID
+		if !inbound.Enabled {
+			continue
+		} else if problem := state.config.InboundProblem(inbound); problem != "" {
+			state.warnf("inbound '%v' is skipped: %v", inbound.ID, problem)
+			continue
+		}
+		if server := inbound.OpenVPN; server != nil {
+			match = "SRC-IP-CIDR," + server.Network
+			if state.document.Tun == nil {
+				state.attachTun()
+			}
+		} else {
+			state.document.Listeners = append(state.document.Listeners, state.makeListener(inbound))
+		}
+		if target == "" {
+			continue
+		}
+		for _, variant := range state.variants[target] {
+			state.document.Rules = append(state.document.Rules, fmt.Sprintf(
+				"AND,((%v),(DST-PORT,%v)),%v", match, variant.Port, variant.Target))
+		}
+		state.document.Rules = append(state.document.Rules, match+","+target)
+	}
+}
+
+func (state *buildState) makeListener(inbound config.Inbound) listener {
+	socks := inbound.Socks5
+	result := listener{Name: inbound.ID, Type: "socks", Port: inbound.Port, Listen: socks.Listen,
+		UDP: socks.UDP, Users: []listenerUser{}}
+	if socks.Listen == config.ListenAny && state.config.Settings.IPv6 {
+		result.Listen = listenDual
+	} else if socks.Listen == config.ListenAny {
+		result.Listen = listenAll
+	}
+	for _, user := range inbound.ActiveUsers() {
+		if !inbound.Anonymous {
+			result.Users = append(result.Users, listenerUser{user.Name, user.Password})
+		}
+	}
+	if socks.TLS {
+		result.Certificate, result.PrivateKey = socks.Certificate, socks.Key
+	}
+	return result
 }
 
 func (state *buildState) buildProxies() {

@@ -1,7 +1,9 @@
 package link
 
 import (
+	"bufio"
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"net"
 	"os"
@@ -9,6 +11,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -73,6 +76,44 @@ echo "2026-01-01 00:00:00 Initialization Sequence Completed"
 exec sleep 30
 `
 
+const fakeServer = `#!/bin/bash
+echo "$*" > "$(dirname "$0")/server.log"
+if [ -f "$(dirname "$0")/fail" ]; then
+	echo "2026-01-01 00:00:00 Options error: boom"
+	echo "Use --help for more information."
+	exit 1
+fi
+echo "2026-01-01 00:00:00 MANAGEMENT: unix domain socket listening"
+echo "2026-01-01 00:00:00 Initialization Sequence Completed"
+exec sleep 30
+`
+const fakeFirewall = `#!/bin/bash
+echo "$*" >> "$(dirname "$0")/iptables.log"
+port="$(cat "$(dirname "$0")/port.txt" 2>/dev/null)"
+case "$*" in
+*"-C FORWARD"* | *"-D "*)
+	exit 1
+	;;
+*"-S FORWARD"*)
+	printf -- '-P FORWARD DROP\n-A FORWARD -i proximity_i9 -j ACCEPT\n'
+	printf -- '-A FORWARD -o docker0 -j ACCEPT\n'
+	;;
+*"-v -S PROXIMITY-STAT-IN"*)
+	printf -- '-N PROXIMITY-STAT-IN\n'
+	printf -- '-A PROXIMITY-STAT-IN -p tcp -m tcp --dport %s -c 5 300\n' "$port"
+	printf -- '-A PROXIMITY-STAT-IN -p udp -m udp --dport %s -c 1 50\n' "$port"
+	;;
+*"-v -S PROXIMITY-STAT-OUT"*)
+	printf -- '-A PROXIMITY-STAT-OUT -p tcp -m tcp --sport %s -c 9 7000\n' "$port"
+	;;
+esac
+exit 0
+`
+const sampleStatus = "TITLE,OpenVPN\nHEADER,CLIENT_LIST,Common Name,Real Address\n" +
+	"CLIENT_LIST,bob,192.0.2.5:5000,10.77.2.2,,100,200,2026-01-01 00:00:00,1700000000,bob,0,0,A\n" +
+	"CLIENT_LIST,UNDEF,192.0.2.6:5001,10.77.2.3,,1,2,2026-01-01 00:00:01,1700000001,UNDEF,1,1,A\n" +
+	"CLIENT_LIST,short\nROUTING_TABLE,10.77.2.2,bob\nEND\n"
+
 func writeScript(t *testing.T, directory string, name string, text string) string {
 	path := filepath.Join(directory, name)
 	require.NoError(t, os.WriteFile(path, []byte(text), 0o700))
@@ -107,6 +148,65 @@ func makeListener(t *testing.T) string {
 	return listener.Addr().String()
 }
 
+func makeInboundPort(t *testing.T) (int, net.Listener) {
+	for port := config.InboundPortLast; port > config.InboundPortFirst; port-- {
+		listener, err := net.Listen("tcp4", net.JoinHostPort("127.0.0.1", strconv.Itoa(port)))
+		if err == nil {
+			t.Cleanup(func() {
+				_ = listener.Close()
+			})
+			return port, listener
+		}
+	}
+	require.FailNow(t, "free inbound port does not exist")
+	return 0, nil
+}
+
+func makeManagement(t *testing.T, path string) func() []string {
+	require.NoError(t, os.MkdirAll(filepath.Dir(path), 0o700))
+	listener, err := net.Listen("unix", path)
+	require.NoError(t, err)
+	t.Cleanup(func() {
+		_ = listener.Close()
+	})
+	mutex, commands := sync.Mutex{}, []string{}
+	go func() {
+		for {
+			connection, err := listener.Accept()
+			if err != nil {
+				return
+			}
+			_, _ = connection.Write([]byte(">INFO:OpenVPN Management Interface Version 5\n"))
+			line, _ := bufio.NewReader(connection).ReadString('\n')
+			mutex.Lock()
+			commands = append(commands, strings.TrimSpace(line))
+			mutex.Unlock()
+			if strings.HasPrefix(line, "status") {
+				_, _ = connection.Write([]byte(sampleStatus))
+			} else if strings.HasPrefix(line, "kill bob") {
+				_, _ = connection.Write([]byte("SUCCESS: common name 'bob' found, 1 client(s) killed\n"))
+			} else if strings.HasPrefix(line, "kill UNDEF") {
+				_, _ = connection.Write([]byte("ERROR: common name 'UNDEF' not found\n"))
+			} else {
+				_, _ = connection.Write([]byte("partial\n"))
+			}
+			_ = connection.Close()
+		}
+	}()
+	return func() []string {
+		mutex.Lock()
+		defer mutex.Unlock()
+		return append([]string{}, commands...)
+	}
+}
+
+func waitInbound(t *testing.T, manager *Manager, id string, state string) InboundStatus {
+	require.Eventually(t, func() bool {
+		return manager.Inbounds()[id].State == state
+	}, 20*time.Second, 20*time.Millisecond, "inbound '%v' state '%v'", id, state)
+	return manager.Inbounds()[id]
+}
+
 func waitState(t *testing.T, manager *Manager, id string, state string) Status {
 	require.Eventually(t, func() bool {
 		return manager.Status()[id].State == state
@@ -130,6 +230,65 @@ func TestAmneziaDriver_Ready(t *testing.T) {
 		require.NoError(t, err)
 		defer listener.Close()
 		require.True(t, driver.ready(socket))
+	}
+}
+
+func TestClientConfig_Export(t *testing.T) {
+	snapshot := config.Default()
+	inbound, err := snapshot.AddInbound(config.Inbound{Type: config.TypeOpenVPN, ID: "Office",
+		Users:   []config.InboundUser{{Enabled: true, Name: "bob", Password: "secret"}},
+		OpenVPN: &config.OpenVPNServer{Server: "vpn.example.com"}}, time.Now())
+	require.NoError(t, err)
+	server := inbound.OpenVPN
+	text, err := ClientConfig(inbound, ExportOptions{User: "bob", Host: "ignored.test"})
+	require.NoError(t, err)
+	require.True(t, strings.HasPrefix(text, "# Proximity inbound 'Office'\nclient\ndev tun\n"+
+		"proto udp\nremote vpn.example.com 7800\nresolv-retry infinite\nnobind\npersist-key\n"+
+		"persist-tun\nremote-cert-tls server\nverify-x509-name proximity-server name\n"+
+		"auth SHA256\ndata-ciphers AES-256-GCM:AES-128-GCM:CHACHA20-POLY1305\n"+
+		"tls-version-min 1.2\ntun-mtu 1500\nexplicit-exit-notify 1\nauth-user-pass\nverb 3\n"+
+		"<ca>\n-----BEGIN CERTIFICATE-----\n"), text)
+	require.Contains(t, text, "<ca>\n"+server.CACertificate+"</ca>\n")
+	require.Contains(t, text, "<cert>\n"+server.ClientCertificate+"</cert>\n")
+	require.Contains(t, text, "<key>\n"+server.ClientKey+"</key>\n")
+	require.True(t, strings.HasSuffix(text, "<tls-crypt>\n"+server.TLSCrypt+"</tls-crypt>\n"))
+	require.NotContains(t, text, server.Key)
+	require.NotContains(t, text, server.CAKey)
+	require.NotContains(t, text, "secret")
+	require.NotContains(t, text, "static-challenge")
+	{
+		server.Server, server.PublicPort, server.Protocol = "", 1194, config.ProtocolTCP
+		server.OTP = true
+		text, err := ClientConfig(inbound, ExportOptions{User: "bob", Embed: true,
+			Host: "203.0.113.7"})
+		require.NoError(t, err)
+		require.Contains(t, text, "proto tcp-client\nremote 203.0.113.7 1194\n")
+		require.Contains(t, text, "auth-nocache\nstatic-challenge \"Enter one-time code\" 1\n")
+		require.NotContains(t, text, "explicit-exit-notify")
+		require.NotContains(t, text, "\nauth-user-pass\n")
+		require.True(t, strings.HasSuffix(text, "<auth-user-pass>\nbob\nsecret\n"+
+			"</auth-user-pass>\n"))
+	}
+	{
+		_, err := ClientConfig(inbound, ExportOptions{Host: "203.0.113.7"})
+		require.EqualError(t, err, "anonymous connections are not allowed")
+		inbound.Anonymous = true
+		text, err := ClientConfig(inbound, ExportOptions{Embed: true, Host: "203.0.113.7"})
+		require.NoError(t, err)
+		require.NotContains(t, text, "auth-user-pass")
+		require.NotContains(t, text, "static-challenge")
+		server.Certificate = "broken"
+		text, err = ClientConfig(inbound, ExportOptions{Host: "203.0.113.7"})
+		require.NoError(t, err)
+		require.NotContains(t, text, "verify-x509-name")
+	}
+	{
+		_, err := ClientConfig(inbound, ExportOptions{User: "eve", Host: "203.0.113.7"})
+		require.EqualError(t, err, "user 'eve' does not exist")
+		_, err = ClientConfig(inbound, ExportOptions{User: "bob"})
+		require.EqualError(t, err, "server address does not exist")
+		_, err = ClientConfig(config.Inbound{Type: config.TypeSocks5}, ExportOptions{})
+		require.EqualError(t, err, "unexpected inbound type 'socks5'")
 	}
 }
 
@@ -247,6 +406,167 @@ func TestManager_AmneziaFailure(t *testing.T) {
 		require.Equal(t, "10.8.1.2/32", status.Address)
 		require.Equal(t, []string{"10.8.1.1"}, status.DNS)
 		require.Equal(t, []string{"10.55.0.9/32", "10.66.0.0/16"}, status.Routes)
+	}
+}
+
+func TestManager_Inbounds(t *testing.T) {
+	tools, directory := makeTools(t)
+	tools.OpenVPN = writeScript(t, directory, "openvpn-server", fakeServer)
+	tools.Iptables = writeScript(t, directory, "iptables", fakeFirewall)
+	tools.Forwarding = writeScript(t, directory, "ip_forward", "0\n")
+	port, listener := makeInboundPort(t)
+	slot := strconv.Itoa(port - config.InboundPortFirst)
+	writeScript(t, directory, "port.txt", strconv.Itoa(port))
+	home := filepath.Join(directory, "run", "inbound-"+slot)
+	commands := makeManagement(t, filepath.Join(home, "management.sock"))
+	manager, err := NewManager(Options{Directory: filepath.Join(directory, "run"),
+		Executable: "/usr/local/bin/proximity", Tools: tools, HostNetwork: true})
+	require.NoError(t, err)
+	defer manager.Close()
+	snapshot := config.Default()
+	_, err = snapshot.AddInbound(config.Inbound{Type: config.TypeSocks5, ID: "Socks", Port: port,
+		Enabled: true, Statistics: true, Anonymous: true}, time.Now())
+	require.NoError(t, err)
+	_, err = snapshot.AddInbound(config.Inbound{Type: config.TypeOpenVPN, ID: "VPN", Port: port - 1,
+		Enabled: true, Statistics: true, Users: []config.InboundUser{
+			{Enabled: true, Name: "bob", Password: "builder"},
+			{Enabled: true, Name: "eve", Password: "listener"}, {Name: "off", Password: "x"}},
+		OpenVPN: &config.OpenVPNServer{Network: "10.77.2.0/24", OTP: true, Listen: "192.0.2.1",
+			ClientToClient: true, RedirectGateway: true, Routes: []string{"192.168.10.0/24"}}},
+		time.Now())
+	require.NoError(t, err)
+	snapshot.Inbounds = append(snapshot.Inbounds, config.Inbound{ID: "Blocked", Enabled: true,
+		Type: config.TypeSocks5, Port: config.InboundPortFirst, Outbound: "gone", Anonymous: true},
+		config.Inbound{ID: "Off", Type: config.TypeSocks5, Port: config.InboundPortFirst + 1})
+	manager.ApplyInbounds(snapshot)
+	require.Equal(t, StateFailed, manager.Inbounds()["Blocked"].State)
+	require.Equal(t, "outbound 'gone' does not exist", manager.Inbounds()["Blocked"].Message)
+	require.NotContains(t, manager.Inbounds(), "Off")
+	status := waitInbound(t, manager, "Socks", StateUp)
+	require.Equal(t, "127.0.0.1:"+strconv.Itoa(port), status.Address)
+	require.Empty(t, status.Clients)
+	status = waitInbound(t, manager, "VPN", StateUp)
+	require.Equal(t, "proximity_i"+slot, status.Device)
+	require.Equal(t, "10.77.2.1", status.Address)
+	{
+		text, err := os.ReadFile(filepath.Join(home, "server.conf"))
+		require.NoError(t, err)
+		server := snapshot.Inbounds[1].OpenVPN
+		require.True(t, strings.HasPrefix(string(text), "port "+strconv.Itoa(port-1)+
+			"\nproto udp4\ndev proximity_i"+slot+"\ndev-type tun\ntopology subnet\n"+
+			"server 10.77.2.0 255.255.255.0\nkeepalive 10 60\nmax-clients 32\nreneg-sec 3600\n"+
+			"tun-mtu 1500\ndata-ciphers AES-256-GCM:AES-128-GCM:CHACHA20-POLY1305\nauth SHA256\n"+
+			"tls-version-min 1.2\ndh none\nremote-cert-tls client\nduplicate-cn\n"+
+			"username-as-common-name\nscript-security 2\nauth-user-pass-verify "+
+			"\"/usr/local/bin/proximity verify "+filepath.Join(home, "auth.json")+"\" via-file\n"+
+			"auth-user-pass-optional\ntmp-dir "+home+"\nmanagement "+
+			filepath.Join(home, "management.sock")+" unix\nverb 3\nlocal 192.0.2.1\n"+
+			"auth-gen-token\nexplicit-exit-notify 1\nclient-to-client\n"+
+			"push \"redirect-gateway def1\"\npush \"block-outside-dns\"\n"+
+			"push \"route 192.168.10.0 255.255.255.0\"\npush \"dhcp-option DNS 198.18.0.2\"\n"+
+			"<ca>\n"), string(text))
+		require.Contains(t, string(text), "<key>\n"+server.Key+"</key>\n")
+		require.NotContains(t, string(text), server.ClientKey)
+		data, err := os.ReadFile(filepath.Join(home, "auth.json"))
+		require.NoError(t, err)
+		require.JSONEq(t, `{"anonymous":false,"otp_key":"`+server.OTPKey+`","users":[`+
+			`{"name":"bob","password":"builder"},{"name":"eve","password":"listener"}]}`,
+			string(data))
+		arguments, err := os.ReadFile(filepath.Join(directory, "server.log"))
+		require.NoError(t, err)
+		require.Equal(t, "--config "+filepath.Join(home, "server.conf")+" --mark 51000\n",
+			string(arguments))
+		forwarding, err := os.ReadFile(tools.Forwarding)
+		require.NoError(t, err)
+		require.Equal(t, "1\n", string(forwarding))
+		table := strconv.Itoa(InboundTable(port - config.InboundPortFirst))
+		calls, err := os.ReadFile(filepath.Join(directory, "ip.log"))
+		require.NoError(t, err)
+		require.Contains(t, string(calls), "-4 route replace blackhole default metric 4294967295 "+
+			"table "+table)
+		require.Contains(t, string(calls), "-4 route replace 10.77.2.0/24 dev proximity_i"+slot+
+			" table "+table)
+		require.Contains(t, string(calls), "-4 rule add priority 5140 from 10.77.2.0/24 lookup "+
+			table)
+		rules, err := os.ReadFile(filepath.Join(directory, "iptables.log"))
+		require.NoError(t, err)
+		require.Contains(t, string(rules), "-w 5 -D FORWARD -i proximity_i9 -j ACCEPT")
+		require.NotContains(t, string(rules), "docker0 -j ACCEPT\n-w 5 -D")
+		require.Contains(t, string(rules), "-w 5 -I FORWARD 1 -i proximity_i"+slot+" -j ACCEPT")
+		require.Contains(t, string(rules), "-w 5 -I FORWARD 1 -o proximity_i"+slot+" -j ACCEPT")
+		require.Contains(t, string(rules), "-w 5 -N PROXIMITY-STAT-IN")
+		require.Contains(t, string(rules), "-w 5 -A PROXIMITY-STAT-OUT -p udp --sport "+
+			strconv.Itoa(port))
+		require.Contains(t, string(rules), "-w 5 -I OUTPUT 1 -j PROXIMITY-STAT-OUT")
+	}
+	{
+		require.Eventually(t, func() bool {
+			return len(manager.Inbounds()["VPN"].Clients) == 2
+		}, 10*time.Second, 20*time.Millisecond)
+		require.Equal(t, []InboundClient{{Name: "bob", Address: "192.0.2.5:5000",
+			Virtual: "10.77.2.2", Upload: 100, Download: 200, Since: 1700000000},
+			{Name: "anonymous", Address: "192.0.2.6:5001", Virtual: "10.77.2.3", Upload: 1,
+				Download: 2, Since: 1700000001}}, manager.Inbounds()["VPN"].Clients)
+		require.Equal(t, map[string][2]int64{"Socks": {350, 7000}}, manager.InboundCounters())
+		log := strings.Join(manager.InboundLog("VPN"), "\n")
+		require.Contains(t, log, "Initialization Sequence Completed")
+		require.NotContains(t, log, "MANAGEMENT: unix")
+		require.Empty(t, manager.InboundLog("missing"))
+	}
+	{
+		renamed := snapshot.Clone()
+		renamed.Inbounds[1].ID, renamed.Inbounds[1].Anonymous = "Office", true
+		renamed.Inbounds[1].Users = renamed.Inbounds[1].Users[1:]
+		manager.ApplyInbounds(renamed)
+		require.Equal(t, StateUp, manager.Inbounds()["Office"].State)
+		require.NotContains(t, manager.Inbounds(), "VPN")
+		data, err := os.ReadFile(filepath.Join(home, "auth.json"))
+		require.NoError(t, err)
+		require.Contains(t, string(data), `"anonymous":true`)
+		require.NotContains(t, string(data), "bob")
+		require.Contains(t, commands(), "kill bob")
+		log := strings.Join(manager.InboundLog("Office"), "\n")
+		require.Contains(t, log, "users are updated: 1 enabled, anonymous connections allowed: true")
+		require.Contains(t, log, "sessions of 'bob': SUCCESS: common name 'bob' found")
+		count := len(commands())
+		manager.ApplyInbounds(renamed)
+		renamed.Inbounds[1].Anonymous = false
+		manager.ApplyInbounds(renamed)
+		require.Equal(t, []string{"kill UNDEF"}, commands()[count:])
+		require.EqualError(t, manager.RestartInbound("VPN"), "inbound 'VPN' is not running")
+		require.NoError(t, manager.RestartInbound("Office"))
+		waitInbound(t, manager, "Office", StateUp)
+		data, err = os.ReadFile(filepath.Join(home, "auth.json"))
+		require.NoError(t, err)
+		require.JSONEq(t, `{"anonymous":false,"otp_key":"`+snapshot.Inbounds[1].OpenVPN.OTPKey+
+			`","users":[{"name":"eve","password":"listener"}]}`, string(data))
+		require.Eventually(t, func() bool {
+			return strings.Contains(strings.Join(manager.InboundLog("Office"), "\n"),
+				"management interface is not available")
+		}, 10*time.Second, 20*time.Millisecond)
+		require.Empty(t, manager.Inbounds()["Office"].Clients)
+	}
+	{
+		require.NoError(t, listener.Close())
+		status := waitInbound(t, manager, "Socks", StateReconnecting)
+		require.Equal(t, "router does not listen on port ("+strconv.Itoa(port)+")", status.Message)
+		writeScript(t, directory, "fail", "x")
+		changed := snapshot.Clone()
+		changed.Inbounds[1].OpenVPN.MaxClients = 5
+		changed.Inbounds[0].Statistics = false
+		manager.ApplyInbounds(changed)
+		require.Eventually(t, func() bool {
+			return strings.HasPrefix(manager.Inbounds()["VPN"].Message, "Options error: boom: process")
+		}, 10*time.Second, 20*time.Millisecond)
+		require.Contains(t, []string{StateReconnecting, StateFailed}, manager.Inbounds()["VPN"].State)
+		require.Empty(t, manager.InboundCounters())
+		changed.Inbounds[1].Enabled = false
+		manager.ApplyInbounds(changed)
+		require.NotContains(t, manager.Inbounds(), "VPN")
+		require.NoDirExists(t, home)
+		rules, err := os.ReadFile(filepath.Join(directory, "iptables.log"))
+		require.NoError(t, err)
+		require.Contains(t, string(rules), "-w 5 -X PROXIMITY-STAT-IN")
 	}
 }
 
@@ -546,6 +866,98 @@ func TestNewManager_Problems(t *testing.T) {
 	}
 }
 
+func TestPortListening_Tables(t *testing.T) {
+	address := makeListener(t)
+	_, text, err := net.SplitHostPort(address)
+	require.NoError(t, err)
+	port, err := strconv.Atoi(text)
+	require.NoError(t, err)
+	listening, known := portListening(port)
+	require.True(t, known)
+	require.True(t, listening)
+	acceptor := socksAcceptor{port: port, target: address}
+	require.NoError(t, acceptor.start(context.Background()))
+	require.Nil(t, acceptor.exited())
+	{
+		tables := socketTables
+		defer func() {
+			socketTables = tables
+		}()
+		socketTables = []string{filepath.Join(t.TempDir(), "missing")}
+		listening, known := portListening(port)
+		require.False(t, known)
+		require.False(t, listening)
+		require.NoError(t, acceptor.check(context.Background()))
+		acceptor.target = "127.0.0.1:1"
+		require.ErrorContains(t, acceptor.check(context.Background()),
+			"listener does not accept connections")
+		ctx, cancel := context.WithCancel(context.Background())
+		cancel()
+		require.Error(t, acceptor.start(ctx))
+	}
+}
+
+func TestRunVerify_Credentials(t *testing.T) {
+	directory := t.TempDir()
+	path, credentials := filepath.Join(directory, "auth.json"), filepath.Join(directory, "up.txt")
+	now := time.Unix(1700000000, 0)
+	verify := func(state authState, text string) error {
+		data, err := json.Marshal(state)
+		require.NoError(t, err)
+		require.NoError(t, os.WriteFile(path, data, 0o600))
+		require.NoError(t, os.WriteFile(credentials, []byte(text), 0o600))
+		return RunVerify(path, credentials, now)
+	}
+	users := []authUser{{Name: "bob", Password: "builder"}}
+	require.NoError(t, verify(authState{Users: users}, "bob\r\nbuilder\r\n"))
+	require.NoError(t, verify(authState{Users: users}, "bob\nbuilder"))
+	require.EqualError(t, verify(authState{Users: users}, "bob\nwrong\n"),
+		"invalid password of user 'bob'")
+	require.EqualError(t, verify(authState{Users: users}, "eve\nbuilder\n"),
+		"unexpected user 'eve'")
+	require.EqualError(t, verify(authState{Users: users}, "\n\n"),
+		"anonymous connections are not allowed")
+	require.EqualError(t, verify(authState{Users: users, Anonymous: true}, "\nsecret\n"),
+		"anonymous connections are not allowed")
+	require.NoError(t, verify(authState{Users: users, Anonymous: true}, ""))
+	require.EqualError(t, verify(authState{Users: users, Anonymous: true}, "bob\nwrong\n"),
+		"invalid password of user 'bob'")
+	{
+		key := "GEZDGNBVGY3TQOJQGEZDGNBVGY3TQOJQ"
+		state := authState{Users: users, OTPKey: key}
+		code, err := computeOTP(key, now)
+		require.NoError(t, err)
+		previous, err := computeOTP(key, now.Add(-otpStep))
+		require.NoError(t, err)
+		stale, err := computeOTP(key, now.Add(-3*otpStep))
+		require.NoError(t, err)
+		encode := base64.StdEncoding.EncodeToString
+		require.NoError(t, verify(state, "bob\nbuilder"+code+"\n"))
+		require.NoError(t, verify(state, "bob\nbuilder"+previous+"\n"))
+		require.NoError(t, verify(state, "bob\nSCRV1:"+encode([]byte("builder"))+":"+
+			encode([]byte(code))+"\n"))
+		require.EqualError(t, verify(state, "bob\nbuilder"+stale+"\n"),
+			"invalid one-time code of user 'bob'")
+		require.EqualError(t, verify(state, "bob\nbuilder\n"), "invalid password of user 'bob'")
+		require.EqualError(t, verify(state, "bob\nSCRV1:"+encode([]byte("wrong"))+":"+
+			encode([]byte(code))+"\n"), "invalid password of user 'bob'")
+		require.EqualError(t, verify(state, "bob\nSCRV1:!!:"+encode([]byte(code))+"\n"),
+			"invalid password of user 'bob'")
+		require.EqualError(t, verify(state, "bob\nabc\n"), "invalid password of user 'bob'")
+		state.OTPKey = "1"
+		require.EqualError(t, verify(state, "bob\nbuilder"+code+"\n"),
+			"invalid one-time code of user 'bob'")
+	}
+	{
+		require.ErrorContains(t, RunVerify(filepath.Join(directory, "missing"), credentials, now),
+			"failed to read file")
+		require.ErrorContains(t, RunVerify(path, filepath.Join(directory, "missing"), now),
+			"failed to read file")
+		require.NoError(t, os.WriteFile(path, []byte("{"), 0o600))
+		require.ErrorContains(t, RunVerify(path, credentials, now), "failed to decode file")
+	}
+}
+
 func TestRunHook_Environment(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "environment.json")
 	require.NoError(t, RunHook(path, []string{"route_vpn_gateway=10.8.0.1", "dev=tun0",
@@ -612,6 +1024,21 @@ func TestSignature_Changes(t *testing.T) {
 		signature = makeSignature(tunnel, settings, 0)
 		settings.CheckInterval = 90
 		require.NotEqual(t, signature, makeSignature(tunnel, settings, 0))
+	}
+	{
+		inbound := config.Inbound{ID: "I", Type: config.TypeOpenVPN, Port: 7800,
+			OpenVPN: &config.OpenVPNServer{MaxClients: 5}}
+		signature := inboundSignature(inbound, 0)
+		renamed := inbound.Clone()
+		renamed.ID, renamed.Name, renamed.Group, renamed.Statistics = "id", "name", "group", true
+		renamed.Outbound, renamed.Anonymous = config.ViaHost, true
+		renamed.Users = []config.InboundUser{{Name: "a"}}
+		require.Equal(t, signature, inboundSignature(renamed, 0))
+		require.NotEqual(t, signature, inboundSignature(inbound, CaptureMark))
+		renamed.OpenVPN.MaxClients = 6
+		require.NotEqual(t, signature, inboundSignature(renamed, 0))
+		inbound.Port = 7801
+		require.NotEqual(t, signature, inboundSignature(inbound, 0))
 	}
 	{
 		first := Status{State: StateUp, DNS: []string{"1.1.1.1"}}

@@ -101,6 +101,44 @@ for p in 5150 5155 5160 5170; do while sudo ip rule del priority $p 2>/dev/null;
 sudo ip route flush table 51000
 ```
 
+## An inbound is `failed`
+
+Hover the state or open the inbound log (📄).
+
+| Message | What to do |
+|---|---|
+| `outbound '…' is disabled` / `does not exist` | Enable the outbound or select another one in the inbound. Proximity does not fall back to another exit on its own |
+| `anonymous connections are not allowed and enabled users do not exist` | Add an enabled user or allow anonymous connections |
+| `router does not listen on port (…)` | SOCKS5: the port is taken by another program on the host (host mode), or the router is not running — see the header badge |
+| `Options error: …` | OpenVPN rejected the configuration; the text names the directive |
+| `failed to enable IP forwarding` | Host mode: run `sudo sysctl -w net.ipv4.ip_forward=1` (Docker normally sets it) |
+
+## An OpenVPN client connects but nothing opens
+
+1. The inbound log must contain `client traffic is attached to router device
+   'proximity_tun'`. If not, the router is not running.
+2. Host mode: forwarded packets must pass the host firewall. Proximity inserts
+   `FORWARD -i/-o proximity_i<N> -j ACCEPT` with the tool from `PROXIMITY_IPTABLES`; the
+   log line `forwarding rules are not installed` shows a failure. Hosts with the legacy
+   backend need `PROXIMITY_IPTABLES=iptables-legacy`; firewalld and ufw may need their own
+   rule that allows forwarding from `proximity_i+`.
+3. The client must reach the *Public address* and port (UDP by default) from outside:
+   check port forwarding on your router for 7800–7898.
+4. IPv6 is not tunnelled: a dual-stack client keeps using its own IPv6 route.
+
+## An OpenVPN client gets `AUTH_FAILED`
+
+The inbound log shows the reason printed by the check: `unexpected user`, `invalid
+password`, `invalid one-time code` (the clocks of the server and the phone must agree
+within 30 seconds), `anonymous connections are not allowed`. Export the configuration
+again after regenerating keys or the TOTP key.
+
+## Inbound traffic counters stay at zero
+
+SOCKS5 counters need `iptables` inside the container (included in the image) and the
+`NET_ADMIN` capability. Counters include IP and TCP headers. OpenVPN counters are read from
+the server device and need no extra tools.
+
 ## "Router configuration is not applied"
 
 mihomo rejected the generated configuration (`mihomo -t` failed). The message shows the

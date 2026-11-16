@@ -264,10 +264,14 @@ func TestServer_Backup(t *testing.T) {
 		userRequest{Name: "viewer", Role: config.RoleUser, Password: "viewer123",
 			Confirm: "viewer123"})
 	require.Equal(t, http.StatusOK, code)
+	code, _, _ = call(t, server, admin, http.MethodPost, "/api/inbounds", config.Inbound{
+		Type: config.TypeSocks5, Enabled: true, Outbound: "SOCKS5 1", Anonymous: true})
+	require.Equal(t, http.StatusOK, code)
 	code, exported, _ := call(t, server, admin, http.MethodGet, "/api/backup", nil)
 	require.Equal(t, http.StatusOK, code)
 	require.Equal(t, config.BackupFormat, exported["format"])
-	require.Equal(t, 3.0, exported["version"])
+	require.Equal(t, 4.0, exported["version"])
+	require.Len(t, exported["inbounds"], 1)
 	require.Len(t, exported["outbounds"], 1)
 	require.Len(t, exported["routes"], 1)
 	require.NotContains(t, exported, "users")
@@ -285,13 +289,18 @@ func TestServer_Backup(t *testing.T) {
 		code, _, _ := call(t, server, admin, http.MethodDelete, "/api/outbounds/SOCKS5%201", nil)
 		require.Equal(t, http.StatusOK, code)
 		require.Empty(t, server.store.Snapshot().Outbounds)
+		code, _, _ = call(t, server, admin, http.MethodDelete, "/api/inbounds/SOCKS5%201", nil)
+		require.Equal(t, http.StatusOK, code)
+		require.Empty(t, server.store.Snapshot().Inbounds)
 		settings := exported["settings"].(map[string]any)
 		settings["mixed_port"], settings["log_level"] = 7000.0, "debug"
 		operator := login(t, server, "operator", "operator1")
 		code, body, _ := call(t, server, operator, http.MethodPost, "/api/backup", exported)
 		require.Equal(t, http.StatusOK, code, body)
-		require.Equal(t, map[string]any{"outbounds": 1.0, "fallbacks": 0.0, "routes": 1.0}, body)
+		require.Equal(t, map[string]any{"outbounds": 1.0, "fallbacks": 0.0, "routes": 1.0,
+			"inbounds": 1.0}, body)
 		snapshot := server.store.Snapshot()
+		require.Equal(t, "SOCKS5 1", snapshot.Inbounds[0].Outbound)
 		require.Equal(t, "SOCKS5 1", snapshot.Outbounds[0].ID)
 		require.Equal(t, "pass", snapshot.Outbounds[0].Socks5.Password)
 		require.Equal(t, "SOCKS5 1", snapshot.Routes[0].Target)
@@ -318,6 +327,157 @@ func TestServer_Backup(t *testing.T) {
 		code, _, _ = call(t, server, admin, http.MethodPost, "/api/backup", 5)
 		require.Equal(t, http.StatusBadRequest, code)
 		require.Equal(t, "SOCKS5 1", server.store.Snapshot().Routes[0].Target)
+	}
+}
+
+func TestServer_Inbounds(t *testing.T) {
+	server := makeServer(t)
+	admin := login(t, server, "admin", "secret123")
+	code, _, _ := call(t, server, admin, http.MethodPost, "/api/users",
+		userRequest{Name: "viewer", Role: config.RoleUser, Password: "viewer123",
+			Confirm: "viewer123"})
+	require.Equal(t, http.StatusOK, code)
+	viewer := login(t, server, "viewer", "viewer123")
+	code, body, _ := call(t, server, admin, http.MethodPost, "/api/inbounds", config.Inbound{
+		Type: config.TypeSocks5, Enabled: true, Statistics: true, Group: "edge",
+		Users:  []config.InboundUser{{Enabled: true, Name: "alice", Password: "secret"}},
+		Socks5: &config.Socks5Server{TLS: true}})
+	require.Equal(t, http.StatusOK, code, body)
+	require.Equal(t, "SOCKS5 1", body["id"])
+	require.Equal(t, 7800.0, body["port"])
+	require.Contains(t, body["socks5"].(map[string]any)["key"], "PRIVATE KEY")
+	code, body, _ = call(t, server, admin, http.MethodPost, "/api/inbounds", config.Inbound{
+		Type: config.TypeOpenVPN, Enabled: true, Outbound: config.ViaHost, Group: "edge",
+		Users: []config.InboundUser{{Enabled: true, Name: "bob", Password: "builder"}}})
+	require.Equal(t, http.StatusOK, code, body)
+	require.Equal(t, "OpenVPN 1", body["id"])
+	require.Equal(t, 7801.0, body["port"])
+	created := body["openvpn"].(map[string]any)
+	require.Equal(t, "10.77.2.0/24", created["network"])
+	code, body, _ = call(t, server, admin, http.MethodPost, "/api/inbounds", config.Inbound{
+		Type: config.TypeSocks5, Port: 7800})
+	require.Equal(t, http.StatusBadRequest, code)
+	require.Equal(t, "port (7800) is used by inbound 'SOCKS5 1'", body["error"])
+	code, _, _ = call(t, server, admin, http.MethodPost, "/api/inbounds", "text")
+	require.Equal(t, http.StatusBadRequest, code)
+	code, _, _ = call(t, server, viewer, http.MethodPost, "/api/inbounds", config.Inbound{})
+	require.Equal(t, http.StatusForbidden, code)
+	{
+		code, body, _ := call(t, server, admin, http.MethodGet, "/api/inbounds", nil)
+		require.Equal(t, http.StatusOK, code)
+		require.Equal(t, []any{"edge"}, body["groups"])
+		require.Equal(t, []any{7800.0, 7898.0}, body["ports"])
+		items := body["inbounds"].([]any)
+		require.Len(t, items, 2)
+		first, second := items[0].(map[string]any), items[1].(map[string]any)
+		require.Equal(t, false, first["redacted"])
+		require.Equal(t, "secret", first["users"].([]any)[0].(map[string]any)["password"])
+		require.Equal(t, map[string]any{"state": "disabled", "message": "", "since": 0.0,
+			"device": "", "address": "", "clients": []any{}}, first["status"])
+		require.Contains(t, second["openvpn"].(map[string]any)["client_key"], "PRIVATE KEY")
+		code, body, _ = call(t, server, viewer, http.MethodGet, "/api/inbounds", nil)
+		require.Equal(t, http.StatusOK, code)
+		items = body["inbounds"].([]any)
+		first, second = items[0].(map[string]any), items[1].(map[string]any)
+		require.Equal(t, true, first["redacted"])
+		require.Empty(t, first["users"].([]any)[0].(map[string]any)["password"])
+		require.Empty(t, first["socks5"].(map[string]any)["key"])
+		require.NotEmpty(t, first["socks5"].(map[string]any)["certificate"])
+		hidden := second["openvpn"].(map[string]any)
+		require.Empty(t, hidden["ca_key"].(string)+hidden["key"].(string)+
+			hidden["client_key"].(string)+hidden["tls_crypt"].(string)+hidden["otp_key"].(string))
+		require.NotEmpty(t, hidden["ca_certificate"])
+		require.NotEmpty(t, server.store.Snapshot().Inbounds[1].OpenVPN.ClientKey)
+		code, _, _ = call(t, server, nil, http.MethodGet, "/api/inbounds", nil)
+		require.Equal(t, http.StatusUnauthorized, code)
+	}
+	{
+		query := "/api/inbounds/OpenVPN%201/config?host=vpn.example.com"
+		code, body, _ := call(t, server, admin, http.MethodGet, query+"&user=bob", nil)
+		require.Equal(t, http.StatusOK, code, body)
+		require.Equal(t, "OpenVPN 1-bob.conf", body["file"])
+		require.Contains(t, body["config"], "remote vpn.example.com 7801\n")
+		require.Contains(t, body["config"], "\nauth-user-pass\n")
+		require.NotContains(t, body["config"], "builder")
+		code, body, _ = call(t, server, admin, http.MethodGet, query+"&user=bob&embed=true", nil)
+		require.Equal(t, http.StatusOK, code)
+		require.Contains(t, body["config"], "<auth-user-pass>\nbob\nbuilder\n</auth-user-pass>\n")
+		code, body, _ = call(t, server, admin, http.MethodGet, query, nil)
+		require.Equal(t, http.StatusBadRequest, code)
+		require.Equal(t, "failed to export configuration: anonymous connections are not allowed",
+			body["error"])
+		code, body, _ = call(t, server, admin, http.MethodGet,
+			"/api/inbounds/missing/config?user=bob", nil)
+		require.Equal(t, http.StatusNotFound, code)
+		require.Equal(t, "inbound 'missing' does not exist", body["error"])
+		code, _, _ = call(t, server, viewer, http.MethodGet, query+"&user=bob", nil)
+		require.Equal(t, http.StatusForbidden, code)
+	}
+	{
+		code, body, _ := call(t, server, admin, http.MethodPost, "/api/inbounds/generate",
+			generateRequest{Kind: config.MaterialAll})
+		require.Equal(t, http.StatusOK, code, body)
+		require.Len(t, body, 8)
+		material := config.Material{CACertificate: body["ca_certificate"].(string),
+			CAKey: body["ca_key"].(string)}
+		code, body, _ = call(t, server, admin, http.MethodPost, "/api/inbounds/generate",
+			generateRequest{Kind: config.MaterialClient, Material: material})
+		require.Equal(t, http.StatusOK, code, body)
+		require.Len(t, body, 2)
+		require.Contains(t, body["client_certificate"], "BEGIN CERTIFICATE")
+		code, body, _ = call(t, server, admin, http.MethodPost, "/api/inbounds/generate",
+			generateRequest{Kind: "other"})
+		require.Equal(t, http.StatusBadRequest, code)
+		require.Equal(t, "unexpected material kind 'other'", body["error"])
+		code, _, _ = call(t, server, admin, http.MethodPost, "/api/inbounds/generate", 5)
+		require.Equal(t, http.StatusBadRequest, code)
+	}
+	{
+		server.tracker.SetInbounds(server.store.Snapshot().Inbounds)
+		server.tracker.UpdateInbounds(router.Connections{}, map[string][2]int64{"SOCKS5 1": {1, 2}})
+		server.tracker.UpdateInbounds(router.Connections{}, map[string][2]int64{"SOCKS5 1": {11, 22}})
+		current := server.store.Snapshot().Inbounds[0]
+		current.ID, current.Anonymous = "Edge", true
+		code, body, _ := call(t, server, admin, http.MethodPut, "/api/inbounds/SOCKS5%201", current)
+		require.Equal(t, http.StatusOK, code, body)
+		require.Equal(t, "Edge", body["id"])
+		require.Equal(t, int64(10), server.tracker.Inbounds()["Edge"].Upload)
+		code, body, _ = call(t, server, admin, http.MethodPut, "/api/inbounds/SOCKS5%201", current)
+		require.Equal(t, http.StatusBadRequest, code)
+		require.Equal(t, "inbound 'SOCKS5 1' does not exist", body["error"])
+		code, _, _ = call(t, server, admin, http.MethodPut, "/api/inbounds/Edge", "text")
+		require.Equal(t, http.StatusBadRequest, code)
+		code, _, _ = call(t, server, admin, http.MethodPost, "/api/inbounds/Edge/move",
+			moveRequest{Delta: 1})
+		require.Equal(t, http.StatusOK, code)
+		require.Equal(t, "Edge", server.store.Snapshot().Inbounds[1].ID)
+		code, _, _ = call(t, server, admin, http.MethodPost, "/api/inbounds/Edge/move", "text")
+		require.Equal(t, http.StatusBadRequest, code)
+		code, body, _ = call(t, server, admin, http.MethodPost, "/api/inbounds/Edge/restart", nil)
+		require.Equal(t, http.StatusBadRequest, code)
+		require.Equal(t, "inbound 'Edge' is not running", body["error"])
+		code, body, _ = call(t, server, admin, http.MethodGet, "/api/inbounds/Edge/log", nil)
+		require.Equal(t, http.StatusOK, code)
+		require.Equal(t, []any{}, body["lines"])
+	}
+	{
+		server.synchronize()
+		states := server.manager.Inbounds()
+		require.Contains(t, states, "Edge")
+		require.Contains(t, states, "OpenVPN 1")
+		code, body, _ := call(t, server, admin, http.MethodGet, "/api/inbounds", nil)
+		require.Equal(t, http.StatusOK, code)
+		status := body["inbounds"].([]any)[1].(map[string]any)["status"].(map[string]any)
+		require.NotEqual(t, "disabled", status["state"])
+		code, _, _ = call(t, server, admin, http.MethodPost, "/api/inbounds/Edge/restart", nil)
+		require.Equal(t, http.StatusOK, code)
+		code, _, _ = call(t, server, admin, http.MethodDelete, "/api/inbounds/Edge", nil)
+		require.Equal(t, http.StatusOK, code)
+		code, body, _ = call(t, server, admin, http.MethodDelete, "/api/inbounds/Edge", nil)
+		require.Equal(t, http.StatusBadRequest, code)
+		require.Equal(t, "inbound 'Edge' does not exist", body["error"])
+		server.synchronize()
+		require.NotContains(t, server.manager.Inbounds(), "Edge")
 	}
 }
 

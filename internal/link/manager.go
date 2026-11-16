@@ -37,10 +37,13 @@ type Options struct {
 }
 
 type Manager struct {
-	mutex   sync.Mutex
-	options Options
-	runners map[int]*runner
-	capture captureState
+	mutex    sync.Mutex
+	options  Options
+	runners  map[int]*runner
+	inbounds map[int]*inboundRunner
+	blocked  map[string]string
+	capture  captureState
+	account  accountState
 }
 
 type runner struct {
@@ -89,6 +92,7 @@ func NewManager(options Options) (*Manager, error) {
 		return nil, fmt.Errorf("failed to cleanup network state: %w", err)
 	}
 	return &Manager{options: options, runners: map[int]*runner{},
+		inbounds: map[int]*inboundRunner{}, blocked: map[string]string{},
 		capture: captureState{device: CaptureDevice}}, nil
 }
 
@@ -194,6 +198,11 @@ func (manager *Manager) Log(id string) []string {
 func (manager *Manager) Close() {
 	manager.mutex.Lock()
 	defer manager.mutex.Unlock()
+	for port, current := range manager.inbounds {
+		current.close()
+		delete(manager.inbounds, port)
+	}
+	manager.account.remove(manager.options.Tools)
 	for slot, current := range manager.runners {
 		current.close()
 		delete(manager.runners, slot)

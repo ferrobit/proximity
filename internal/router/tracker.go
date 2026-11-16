@@ -44,8 +44,9 @@ type Sample struct {
 }
 
 type trackerState struct {
-	Traffic map[string]Traffic `json:"traffic"`
-	Refused []Refused          `json:"refused"`
+	Traffic  map[string]Traffic `json:"traffic"`
+	Refused  []Refused          `json:"refused"`
+	Inbounds map[string]Traffic `json:"inbounds,omitempty"`
 }
 
 type Tracker struct {
@@ -63,9 +64,17 @@ type Tracker struct {
 	bucket    map[string][2]int64
 	sampled   time.Time
 	dirty     bool
+	limit     int
+	lifetime  time.Duration
+	inbounds  map[string]Traffic
+	listening map[string]bool
+	entered   map[string]Connection
+	gauges    map[string][2]int64
+	visited   time.Time
 }
 
-const maxRefused = 500
+const defaultRefused = 100
+const defaultLifetime = 24 * time.Hour
 const maxHistory = 720
 const HistoryStep = 5 * time.Second
 const totalKey = ""
@@ -88,11 +97,16 @@ var reasons = []struct {
 func NewTracker(path string) *Tracker {
 	result := &Tracker{path: path, traffic: map[string]Traffic{}, seen: map[string]Connection{},
 		refused: map[string]*Refused{}, collected: map[string]bool{}, started: map[string]int{},
-		polled: time.Now(), bucket: map[string][2]int64{}, sampled: time.Now()}
+		polled: time.Now(), bucket: map[string][2]int64{}, sampled: time.Now(),
+		limit: defaultRefused, lifetime: defaultLifetime, inbounds: map[string]Traffic{},
+		listening: map[string]bool{}, entered: map[string]Connection{}, visited: time.Now()}
 	state := trackerState{}
 	if data, err := os.ReadFile(path); err == nil && json.Unmarshal(data, &state) == nil {
 		for id, traffic := range state.Traffic {
 			result.traffic[id] = Traffic{Upload: traffic.Upload, Download: traffic.Download}
+		}
+		for id, traffic := range state.Inbounds {
+			result.inbounds[id] = Traffic{Upload: traffic.Upload, Download: traffic.Download}
 		}
 		for _, item := range state.Refused {
 			result.refused[item.key()] = &item
@@ -140,6 +154,101 @@ func (tracker *Tracker) SetCollected(outbounds []config.Outbound) {
 			tracker.dirty = true
 		}
 	}
+}
+
+func (tracker *Tracker) SetLimits(limit int, lifetime time.Duration) {
+	tracker.mutex.Lock()
+	defer tracker.mutex.Unlock()
+	tracker.limit, tracker.lifetime = limit, lifetime
+	tracker.prune(time.Now())
+}
+
+func (tracker *Tracker) SetInbounds(inbounds []config.Inbound) {
+	tracker.mutex.Lock()
+	defer tracker.mutex.Unlock()
+	tracker.listening = map[string]bool{}
+	for _, inbound := range inbounds {
+		tracker.listening[inbound.ID] = inbound.Statistics && inbound.Enabled
+	}
+	for id := range tracker.inbounds {
+		if _, found := tracker.listening[id]; !found {
+			delete(tracker.inbounds, id)
+			tracker.dirty = true
+		}
+	}
+}
+
+func (tracker *Tracker) RenameInbound(previous string, current string) {
+	tracker.mutex.Lock()
+	defer tracker.mutex.Unlock()
+	if traffic, found := tracker.inbounds[previous]; found && previous != current {
+		tracker.inbounds[current] = traffic
+		delete(tracker.inbounds, previous)
+		tracker.dirty = true
+	}
+	if listening, found := tracker.listening[previous]; found && previous != current {
+		tracker.listening[current] = listening
+		delete(tracker.listening, previous)
+	}
+	if gauge, found := tracker.gauges[previous]; found && previous != current {
+		tracker.gauges[current] = gauge
+		delete(tracker.gauges, previous)
+	}
+}
+
+func (tracker *Tracker) UpdateInbounds(connections Connections, gauges map[string][2]int64) {
+	tracker.mutex.Lock()
+	defer tracker.mutex.Unlock()
+	now := time.Now()
+	elapsed := max(now.Sub(tracker.visited).Seconds(), 0.1)
+	tracker.visited = now
+	deltas, entered := map[string]Traffic{}, map[string]Connection{}
+	for _, connection := range connections.Items {
+		name := connection.Metadata.Inbound
+		if !tracker.listening[name] {
+			continue
+		}
+		previous := tracker.entered[connection.ID]
+		entered[connection.ID] = connection
+		delta := deltas[name]
+		delta.Upload += max(connection.Upload-previous.Upload, 0)
+		delta.Download += max(connection.Download-previous.Download, 0)
+		delta.Connections++
+		deltas[name] = delta
+	}
+	for id, gauge := range gauges {
+		previous, found := tracker.gauges[id]
+		delta := deltas[id]
+		delta.Upload, delta.Download = 0, 0
+		if found && gauge[0] >= previous[0] && gauge[1] >= previous[1] {
+			delta.Upload, delta.Download = gauge[0]-previous[0], gauge[1]-previous[1]
+		}
+		deltas[id] = delta
+	}
+	tracker.gauges, tracker.entered = gauges, entered
+	for id, traffic := range tracker.inbounds {
+		traffic.UploadRate, traffic.DownloadRate, traffic.Connections = 0, 0, 0
+		tracker.inbounds[id] = traffic
+	}
+	for id, delta := range deltas {
+		if !tracker.listening[id] {
+			continue
+		}
+		traffic := tracker.inbounds[id]
+		traffic.Upload, traffic.Download = traffic.Upload+delta.Upload,
+			traffic.Download+delta.Download
+		traffic.UploadRate = int64(float64(delta.Upload) / elapsed)
+		traffic.DownloadRate = int64(float64(delta.Download) / elapsed)
+		traffic.Connections = delta.Connections
+		tracker.inbounds[id] = traffic
+		tracker.dirty = tracker.dirty || delta.Upload != 0 || delta.Download != 0
+	}
+}
+
+func (tracker *Tracker) Inbounds() map[string]Traffic {
+	tracker.mutex.Lock()
+	defer tracker.mutex.Unlock()
+	return maps.Clone(tracker.inbounds)
 }
 
 func (tracker *Tracker) Rename(previous string, current string) {
@@ -276,20 +385,13 @@ func (tracker *Tracker) Observe(line string) {
 		return
 	}
 	tracker.refused[item.key()] = &item
-	if len(tracker.refused) > maxRefused {
-		oldest := ""
-		for key, current := range tracker.refused {
-			if oldest == "" || current.Last < tracker.refused[oldest].Last {
-				oldest = key
-			}
-		}
-		delete(tracker.refused, oldest)
-	}
+	tracker.prune(time.Now())
 }
 
 func (tracker *Tracker) Snapshot() (map[string]Traffic, []Refused) {
 	tracker.mutex.Lock()
 	defer tracker.mutex.Unlock()
+	tracker.prune(time.Now())
 	traffic, refused := map[string]Traffic{}, []Refused{}
 	for id, item := range tracker.traffic {
 		traffic[id] = item
@@ -327,10 +429,11 @@ func (tracker *Tracker) Clear() {
 func (tracker *Tracker) Save() error {
 	tracker.mutex.Lock()
 	defer tracker.mutex.Unlock()
-	if !tracker.dirty {
+	if tracker.prune(time.Now()); !tracker.dirty {
 		return nil
 	}
-	state := trackerState{Traffic: tracker.traffic, Refused: []Refused{}}
+	state := trackerState{Traffic: tracker.traffic, Refused: []Refused{},
+		Inbounds: tracker.inbounds}
 	for _, item := range tracker.refused {
 		state.Refused = append(state.Refused, *item)
 	}
@@ -344,6 +447,27 @@ func (tracker *Tracker) Save() error {
 	}
 	tracker.dirty = false
 	return nil
+}
+
+func (tracker *Tracker) prune(now time.Time) {
+	deadline := now.Add(-tracker.lifetime).Unix()
+	for key, item := range tracker.refused {
+		if item.Last < deadline {
+			delete(tracker.refused, key)
+			tracker.dirty = true
+		}
+	}
+	for len(tracker.refused) > max(tracker.limit, 0) {
+		oldest := ""
+		for key, item := range tracker.refused {
+			if oldest == "" || item.Last < tracker.refused[oldest].Last || (item.Last ==
+				tracker.refused[oldest].Last && key < oldest) {
+				oldest = key
+			}
+		}
+		delete(tracker.refused, oldest)
+		tracker.dirty = true
+	}
 }
 
 func (tracker *Tracker) sample(now time.Time, seconds float64) {

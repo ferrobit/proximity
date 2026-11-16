@@ -1,5 +1,6 @@
 # macOS, Windows or Linux without transparent mode: the container gets its own
 # network, programs use the proxy on 127.0.0.1:7899 explicitly.
+# Inbounds (SOCKS5 and OpenVPN servers) listen on ports 7800-7898, TCP and UDP.
 # Usage: docker compose -f docker-compose.bridge.yml up -d --build
 name: proximity
 
@@ -9,7 +10,7 @@ services:
     build:
       context: .
       args:
-        VERSION: ${PROXIMITY_VERSION:-1.1.0}
+        VERSION: ${PROXIMITY_VERSION:-1.2.0}
     container_name: proximity
     hostname: proximity
     restart: unless-stopped
@@ -23,6 +24,7 @@ services:
       net.ipv4.conf.all.rp_filter: 2
       net.ipv4.conf.default.rp_filter: 2
       net.ipv4.conf.all.src_valid_mark: 1
+      net.ipv4.ip_forward: 1
     environment:
       PROXIMITY_ADMIN_USER: ${PROXIMITY_ADMIN_USER:-}
       PROXIMITY_ADMIN_PASSWORD: ${PROXIMITY_ADMIN_PASSWORD:-}
@@ -30,6 +32,8 @@ services:
     ports:
       - "${PROXIMITY_UI_BIND:-0.0.0.0}:8899:8899"
       - "${PROXIMITY_PROXY_BIND:-127.0.0.1}:7899:7899"
+      - "${PROXIMITY_INBOUND_BIND:-0.0.0.0}:7800-7898:7800-7898/tcp"
+      - "${PROXIMITY_INBOUND_BIND:-0.0.0.0}:7800-7898:7800-7898/udp"
     volumes:
       - ${PROXIMITY_CONFIG_DIR:-${HOME}/.config/proximity}:/config
     networks:

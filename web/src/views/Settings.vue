@@ -1,43 +1,60 @@
 <template>
   <div>
     <h2 class="pane-title"><SettingOutlined /> Settings</h2>
-    <a-card size="small" style="max-width: 760px">
-      <a-form ref="formRef" layout="vertical" :model="form" :disabled="!isAdmin()">
-        <a-divider orientation="left" style="margin-top: 0"><DeploymentUnitOutlined /> Router</a-divider>
-        <a-row :gutter="16">
-          <a-col :span="8"><a-form-item label="Proxy port (HTTP + SOCKS5)" name="mixed_port" :rules="[{ required: true, type: 'number', min: 1, max: 65535, message: '1…65535' }]"
-            :extra="session.host_network ? 'Listens on the host directly' : 'Must match the port published by Docker'"><a-input-number v-model:value="form.mixed_port" style="width: 100%" /></a-form-item></a-col>
-          <a-col :span="8"><a-form-item label="Bind address" name="bind_address" :rules="[{ required: true, pattern: /^\*$|^(\d{1,3}\.){3}\d{1,3}$|^[0-9a-fA-F:]+$/, message: '* or IP address' }]"
-            :extra="session.host_network ? 'Overridden by PROXIMITY_PROXY_BIND when it is set' : '* listens on all addresses'"><a-input v-model:value="form.bind_address" /></a-form-item></a-col>
-          <a-col :span="8"><a-form-item label="Router log level" name="log_level">
-            <a-select v-model:value="form.log_level" :options="['silent', 'error', 'warning', 'info', 'debug'].map((value) => ({ value }))" /></a-form-item></a-col>
-        </a-row>
-        <a-form-item :extra="session.host_network
-          ? 'Linux host network: programs need no proxy settings, every outgoing connection is checked against the routes'
-          : 'Available only when the container uses the host network (Linux, docker-compose.yml)'">
-          <a-checkbox v-model:checked="form.capture" :disabled="!isAdmin() || !session.host_network">Route all outgoing connections of the host through Proximity</a-checkbox>
-        </a-form-item>
-        <a-form-item extra="Enable when the host has IPv6 connectivity, otherwise IPv6 traffic bypasses the routes">
-          <a-checkbox v-model:checked="form.ipv6">IPv6</a-checkbox>
-        </a-form-item>
-        <a-form-item extra="Periodically opens a TCP connection through HOST outbounds and to proxy servers to detect their state">
-          <a-checkbox v-model:checked="form.connectivity_checks">Enable connectivity checks</a-checkbox>
-        </a-form-item>
-        <a-row :gutter="16">
-          <a-col :span="12"><a-form-item label="Probe target (host:port)" name="probe_target" :rules="[{ required: true, pattern: /^[^\s:]+:\d{1,5}$/, message: 'host:port expected' }]"
-            extra="Used to check HOST outbounds"><a-input v-model:value="form.probe_target" :disabled="!isAdmin() || !form.connectivity_checks" /></a-form-item></a-col>
-          <a-col :span="12"><a-form-item label="Check interval, seconds" name="check_interval" :rules="[{ required: true, type: 'number', min: 5, max: 3600, message: '5…3600' }]">
-            <a-input-number v-model:value="form.check_interval" style="width: 100%" :disabled="!isAdmin() || !form.connectivity_checks" /></a-form-item></a-col>
-        </a-row>
-        <a-divider orientation="left"><SafetyOutlined /> Access</a-divider>
-        <a-form-item><a-checkbox v-model:checked="form.anonymous_dashboard">Anonymous users can view the dashboard</a-checkbox></a-form-item>
-        <a-button v-if="isAdmin()" type="primary" :loading="busy" @click="save"><template #icon><SaveOutlined /></template>Save settings</a-button>
-        <a-alert v-else type="info" show-icon message="Only an administrator can change settings." />
-      </a-form>
-      <template v-if="canEdit()">
-        <a-divider orientation="left"><DatabaseOutlined /> Backup &amp; Restore</a-divider>
+    <div>
+      <h3 class="pane-subtitle"><DeploymentUnitOutlined /> Router</h3>
+      <a-card size="small" class="settings-card">
+        <a-form ref="formRef" layout="vertical" :model="form" :disabled="!isAdmin()">
+          <a-divider orientation="left" style="margin-top: 0"><ApiOutlined /> Proxy</a-divider>
+          <a-row :gutter="16">
+            <a-col :span="8"><a-form-item label="Proxy port (HTTP + SOCKS5)" name="mixed_port" :rules="[{ required: true, type: 'number', min: 1, max: 65535, message: '1…65535' }]"
+              :extra="session.host_network ? 'Listens on the host directly' : 'Must match the port published by Docker'"><a-input-number v-model:value="form.mixed_port" style="width: 100%" /></a-form-item></a-col>
+            <a-col :span="8"><a-form-item label="Bind address" name="bind_address" :rules="[{ required: true, pattern: /^\*$|^(\d{1,3}\.){3}\d{1,3}$|^[0-9a-fA-F:]+$/, message: '* or IP address' }]"
+              :extra="session.host_network ? 'Overridden by PROXIMITY_PROXY_BIND when it is set' : '* listens on all addresses'"><a-input v-model:value="form.bind_address" /></a-form-item></a-col>
+            <a-col :span="8"><a-form-item label="Router log level" name="log_level">
+              <a-select v-model:value="form.log_level" :options="['silent', 'error', 'warning', 'info', 'debug'].map((value) => ({ value }))" /></a-form-item></a-col>
+          </a-row>
+          <a-form-item :extra="session.host_network
+            ? 'Linux host network: programs need no proxy settings, every outgoing connection is checked against the routes'
+            : 'Available only when the container uses the host network (Linux, docker-compose.yml)'">
+            <a-checkbox v-model:checked="form.capture" :disabled="!isAdmin() || !session.host_network">Route all outgoing connections of the host through Proximity</a-checkbox>
+          </a-form-item>
+          <a-form-item extra="Enable when the host has IPv6 connectivity, otherwise IPv6 traffic bypasses the routes">
+            <a-checkbox v-model:checked="form.ipv6">IPv6</a-checkbox>
+          </a-form-item>
+          <a-divider orientation="left"><HeartOutlined /> Connectivity checks</a-divider>
+          <a-form-item extra="Periodically opens a TCP connection through HOST outbounds and to proxy servers to detect their state">
+            <a-checkbox v-model:checked="form.connectivity_checks">Enable connectivity checks</a-checkbox>
+          </a-form-item>
+          <a-row :gutter="16">
+            <a-col :span="12"><a-form-item label="Probe target (host:port)" name="probe_target" :rules="[{ required: true, pattern: /^[^\s:]+:\d{1,5}$/, message: 'host:port expected' }]"
+              extra="Used to check HOST outbounds"><a-input v-model:value="form.probe_target" :disabled="!isAdmin() || !form.connectivity_checks" /></a-form-item></a-col>
+            <a-col :span="12"><a-form-item label="Check interval, seconds" name="check_interval" :rules="[{ required: true, type: 'number', min: 5, max: 3600, message: '5…3600' }]">
+              <a-input-number v-model:value="form.check_interval" style="width: 100%" :disabled="!isAdmin() || !form.connectivity_checks" /></a-form-item></a-col>
+          </a-row>
+          <a-divider orientation="left"><StopOutlined /> Unreachable routes</a-divider>
+          <a-row :gutter="16">
+            <a-col :span="12"><a-form-item label="Maximum count" name="unreachable_limit" :rules="[{ required: true, type: 'number', min: 1, max: 10000, message: '1…10000' }]"
+              extra="When the list is full the oldest entries are removed"><a-input-number v-model:value="form.unreachable_limit" style="width: 100%" /></a-form-item></a-col>
+            <a-col :span="12"><a-form-item label="Maximum lifetime" name="lifetime" :rules="[{ validator: checkLifetime }]"
+              extra="Entries that did not repeat for this time are removed (1 minute … 365 days)">
+              <a-input-group compact>
+                <a-input-number v-model:value="form.lifetime" :min="1" style="width: 60%" />
+                <a-select v-model:value="form.lifetime_unit" style="width: 40%" :options="lifetimeUnits" />
+              </a-input-group>
+            </a-form-item></a-col>
+          </a-row>
+          <a-button v-if="isAdmin()" type="primary" :loading="busy" @click="save"><template #icon><SaveOutlined /></template>Save settings</a-button>
+          <a-alert v-else type="info" show-icon message="Only an administrator can change settings." />
+        </a-form>
+      </a-card>
+    </div>
+    <Users v-if="isAdmin()" @changed="reload" />
+    <div v-if="canEdit()" class="pane-section">
+      <h3 class="pane-subtitle"><DatabaseOutlined /> Backup and Restore</h3>
+      <a-card size="small" class="settings-card">
         <p class="muted">
-          The file contains outbounds (with passwords and VPN keys), fallbacks, routes and settings. User accounts are not included.
+          The file contains outbounds, inbounds (with passwords, VPN keys and certificates), fallbacks, routes and settings. User accounts are not included.
           <span v-if="!isAdmin()">Import by an operator keeps the current settings.</span>
         </p>
         <a-space wrap>
@@ -46,8 +63,8 @@
             <a-button :loading="importing"><template #icon><UploadOutlined /></template>Import configuration</a-button>
           </a-upload>
         </a-space>
-      </template>
-    </a-card>
+      </a-card>
+    </div>
   </div>
 </template>
 
@@ -55,26 +72,53 @@
 import { onMounted, reactive, ref } from 'vue'
 import { message, Modal } from 'ant-design-vue'
 import {
-  DatabaseOutlined, DeploymentUnitOutlined, DownloadOutlined, SafetyOutlined, SaveOutlined, SettingOutlined, UploadOutlined
+  ApiOutlined, DatabaseOutlined, DeploymentUnitOutlined, DownloadOutlined, HeartOutlined, SaveOutlined, SettingOutlined,
+  StopOutlined, UploadOutlined
 } from '@ant-design/icons-vue'
 import { api, canEdit, isAdmin, loadSession, session } from '../api'
+import Users from './Users.vue'
 
 const emit = defineEmits(['refresh'])
+const lifetimeUnits = [
+  { value: 60, label: 'minutes' },
+  { value: 3600, label: 'hours' },
+  { value: 86400, label: 'days' }
+]
 const formRef = ref()
 const busy = ref(false)
 const exporting = ref(false)
 const importing = ref(false)
 const form = reactive({
   mixed_port: 7899, bind_address: '*', default_target: 'DIRECT', log_level: 'warning', ipv6: false, anonymous_dashboard: true,
-  connectivity_checks: true, probe_target: '1.1.1.1:443', check_interval: 30, capture: true
+  connectivity_checks: true, probe_target: '1.1.1.1:443', check_interval: 30, capture: true, unreachable_limit: 100,
+  unreachable_lifetime: 86400, lifetime: 1, lifetime_unit: 86400
 })
+
+function splitLifetime(seconds) {
+  const unit = [...lifetimeUnits].reverse().find((item) => seconds % item.value === 0) || lifetimeUnits[0]
+  form.lifetime = Math.max(1, Math.round(seconds / unit.value))
+  form.lifetime_unit = unit.value
+}
+
+async function checkLifetime() {
+  const seconds = Number(form.lifetime) * form.lifetime_unit
+  if (!Number.isInteger(seconds) || seconds < 60 || seconds > 31536000) {
+    throw new Error('1 minute … 365 days')
+  }
+}
 
 async function load() {
   try {
     Object.assign(form, await api.get('/api/settings'))
+    splitLifetime(form.unreachable_lifetime)
   } catch (error) {
     message.error(error.message)
   }
+}
+
+async function reload() {
+  await loadSession()
+  await load()
 }
 
 async function save() {
@@ -82,8 +126,13 @@ async function save() {
   busy.value = true
   try {
     const current = await api.get('/api/settings', true)
-    await api.put('/api/settings', { ...form, default_target: current.default_target })
-    await loadSession()
+    const { lifetime, lifetime_unit: unit, ...settings } = form
+    await api.put('/api/settings', {
+      ...settings, default_target: current.default_target, anonymous_dashboard: current.anonymous_dashboard,
+      unreachable_lifetime: lifetime * unit
+    })
+    await reload()
+    emit('refresh')
     message.success('Settings saved')
   } catch (error) {
     message.error(error.message)
@@ -121,16 +170,15 @@ function importBackup(file) {
     }
     Modal.confirm({
       title: 'Import configuration?',
-      content: `Current outbounds, fallbacks and routes will be replaced with the content of '${file.name}'.`,
+      content: `Current outbounds, inbounds, fallbacks and routes will be replaced with the content of '${file.name}'.`,
       okText: 'Import',
       okType: 'danger',
       async onOk() {
         importing.value = true
         try {
           const result = await api.post('/api/backup', data)
-          message.success(`Imported: ${result.outbounds} outbounds, ${result.fallbacks} fallbacks, ${result.routes} routes`)
-          await loadSession()
-          await load()
+          message.success(`Imported: ${result.outbounds} outbounds, ${result.inbounds} inbounds, ${result.fallbacks} fallbacks, ${result.routes} routes`)
+          await reload()
           emit('refresh')
         } catch (error) {
           message.error(error.message)
@@ -146,3 +194,7 @@ function importBackup(file) {
 
 onMounted(load)
 </script>
+
+<style scoped>
+.settings-card { max-width: 860px; }
+</style>

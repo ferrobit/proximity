@@ -2,7 +2,7 @@
 
 A tour of every page of the Proximity web UI (<http://localhost:8899>).
 
-> Screenshots were taken from a real Proximity 1.1.0 instance with live OpenVPN and
+> Screenshots were taken from a real Proximity 1.2.0 instance with live OpenVPN and
 > AmneziaWG tunnels, SOCKS5/HTTP proxies and generated traffic. Host names such as
 > `corp.example` are placeholders.
 
@@ -19,7 +19,6 @@ A tour of every page of the Proximity web UI (<http://localhost:8899>).
 - [Routes](#routes)
   - [Fallbacks](#fallbacks)
 - [Inbounds](#inbounds)
-- [Users](#users)
 - [Settings](#settings)
 - [Themes](#themes)
 
@@ -28,7 +27,7 @@ A tour of every page of the Proximity web UI (<http://localhost:8899>).
 | Area | Contents |
 |---|---|
 | **Header** | Logo; outbounds in good state / enabled; current upload and download rate; active connections; `transparent` when the host's traffic is captured; router state; theme switch; current user and role (menu: *Change password*, *Sign out*) |
-| **Left column** | Dashboard, Outbounds, Routes, Inbounds, Users, Settings — only the sections your role may open. The column can be collapsed |
+| **Left column** | Dashboard, Outbounds, Routes, Inbounds, Settings — only the sections your role may open. The column can be collapsed |
 | **Center** | The selected section. The URL keeps the section (`#/routes`), so you can bookmark it |
 | **Footer** | Version, copyright, page generation time (total and server) |
 
@@ -233,31 +232,81 @@ first usable member is used.
 
 ![Inbounds](images/inbounds.png)
 
-A placeholder for a future version. An inbound will be an incoming connection point: a
-port or protocol on which Proximity accepts traffic from clients. Today all clients use the
-mixed proxy port and, in host network mode, transparent capture.
+An inbound is an incoming connection point: clients connect to a port of Proximity and
+their traffic leaves through the selected outbound. **Add inbound** offers two types:
+**SOCKS5 Inbound** (a SOCKS5 proxy server) and **OpenVPN Inbound** (an OpenVPN server).
+Changes are applied immediately: saving restarts only the affected inbound, and a change
+of users does not interrupt other clients.
 
-## Users
+The table shows the port, the outbound, the state, connected OpenVPN clients (hover the
+counter for names and addresses), users and traffic. ↻ restarts an inbound, 📄 opens its
+log.
 
-![Users](images/users.png)
+### General
 
-Administrators manage accounts here: **Add user**, change role or password (leave the
-password empty to keep it), delete. Roles:
-
-| Role | Can |
+| Field | Meaning |
 |---|---|
-| Administrator | everything, including users and settings |
-| Operator | edit outbounds, fallbacks and routes; export and import the configuration |
-| User | view everything except secrets |
+| ID | Unique among inbounds; empty → `SOCKS5 <N>` / `OpenVPN <N>` |
+| Name, Group | Free text; a group is a new or an existing string |
+| Enabled | Off: the port is closed |
+| Collect statistics | Count upload and download traffic of the inbound |
+| Port number | Unique, `7800…7898` (the range published by the Docker files); empty → the first free port |
+| Outbound | **Router** — the routes decide, like for the proxy port; **Host** — the host Internet connection, routes are skipped; or one of the outbounds — everything goes there |
 
-Every user can change their own password from the user menu in the header. A password
-change signs the user out of all other sessions.
+An inbound does not start (state *failed* with the reason) when its outbound is disabled
+or deleted, or when anonymous connections are off and there is no enabled user.
+
+### SOCKS5
+
+| Field | Meaning |
+|---|---|
+| Listen address | `*` or an IPv4 address of the host |
+| UDP relay | SOCKS5 `UDP ASSOCIATE` |
+| TLS | SOCKS5 over TLS. The certificate and the key are generated (self-signed) when TLS is switched on; replace them or press **Regenerate** |
+
+### OpenVPN
+
+![OpenVPN inbound](images/inbound-openvpn.png)
+
+| Group | Fields |
+|---|---|
+| Server | *Public address* and *Public port* (what clients connect to; written to exported configurations), *Protocol* UDP/TCP, *Listen address*, *VPN network* (`10.77.<N>.0/24` when empty), *Maximum clients*, *Tunnel MTU*, *Log verbosity* |
+| Clients | *Route all client traffic through the VPN*, *Clients can reach each other*, *Additional routes*, *DNS servers* (empty: the Proximity resolver, so domain routes work for VPN clients) |
+| Security | *Data ciphers*, *HMAC digest*, *Minimum TLS version*, *Renegotiation*, *Keepalive*, *Require one-time code (TOTP)* with the *TOTP key* |
+| Keys and certificates | CA certificate and key, server certificate and key, client certificate and key, TLS-crypt key |
+
+Keys, certificates, the TLS-crypt key and the TOTP key are generated automatically when
+the dialog opens. Every field can be edited (paste your own PEM text) or regenerated with
+its **Regenerate** button; *Regenerate CA and all certificates* replaces the whole chain.
+After regeneration clients need new configuration files.
+
+All users of an inbound share the client certificate and the TOTP key; they differ by user
+name and password. With TOTP on, clients are asked for the code together with the password
+(`static-challenge`); a client that cannot show a prompt may append the code to the
+password.
+
+### Users
+
+![Inbound users](images/inbound-users.png)
+
+| Element | Meaning |
+|---|---|
+| Allow anonymous connections | SOCKS5: no authentication at all, the list is not checked. OpenVPN: a client with the certificate connects without user name and password |
+| User list | *Enabled*, *User name*, *Password* (⚡ generates a random one), delete |
+| Export configuration (OpenVPN) | Saves the inbound and opens a read-only preview of the client configuration with **Copy to clipboard** and **Export**. The file is named `<ID>-<username>.conf`. *Embed user name and password* writes the credentials into the file (OpenVPN 2.6 or newer) |
+
+![Client configuration](images/inbound-export.png)
+
+Disabling or deleting an OpenVPN user, or changing the password, disconnects the sessions
+of that user at once.
 
 ## Settings
 
 ![Settings](images/settings.png)
 
-**Router**
+The page has three sections.
+
+### Router
 
 | Setting | Meaning |
 |---|---|
@@ -269,15 +318,33 @@ change signs the user out of all other sessions.
 | Enable connectivity checks | Periodically check HOST outbounds and proxy servers |
 | Probe target (host:port) | Target for HOST checks, default `1.1.1.1:443` |
 | Check interval, seconds | How often |
+| Unreachable routes: Maximum count | Size of the *Unreachable routes* list on the Dashboard, default 100. The oldest entries are removed first |
+| Unreachable routes: Maximum lifetime | Entries that did not repeat for this time are removed, default 1 day |
 
-**Access** — *Anonymous users can view the dashboard*.
+Only an administrator can change these settings; other roles see them read-only.
 
-**Backup & Restore** (Administrator, Operator) — *Export configuration* downloads one
-JSON file with outbounds (including passwords and VPN keys), fallbacks, routes and
-settings; *Import configuration* replaces them after confirmation. User accounts are not
-included; an Operator's import keeps the current settings.
+### Users
 
-Only an administrator can change settings; other roles see them read-only.
+Administrators manage accounts here: **Add user**, change role or password (leave the
+password empty to keep it), delete. *Anonymous users can view the dashboard* is applied at
+once. Roles:
+
+| Role | Can |
+|---|---|
+| Administrator | everything, including users and settings |
+| Operator | edit outbounds, inbounds, fallbacks and routes; export and import the configuration |
+| User | view everything except secrets |
+
+Every user can change their own password from the user menu in the header. A password
+change signs the user out of all other sessions.
+
+### Backup and Restore
+
+Administrator and Operator. *Export configuration* downloads one JSON file with outbounds
+and inbounds (including passwords, VPN keys and certificates), fallbacks, routes and
+settings; *Import configuration* replaces them after confirmation. A file written by a
+version without inbounds keeps the current inbounds. User accounts are not included; an
+Operator's import keeps the current settings.
 
 ## Themes
 

@@ -13,6 +13,7 @@ meant for people who want to understand, debug or extend the project.
 - [Monitoring and states](#monitoring-and-states)
 - [OpenVPN driver](#openvpn-driver)
 - [AmneziaWG driver](#amneziawg-driver)
+- [Inbounds](#inbounds)
 - [Statistics and unreachable routes](#statistics-and-unreachable-routes)
 - [Storage](#storage)
 - [Security model](#security-model)
@@ -28,7 +29,7 @@ flowchart TB
         Config["config<br/>model, validation, JSON store, backup"]
         Rules["rules<br/>parse, normalize, check routes"]
         Router["router<br/>config generator, mihomo process, tracker"]
-        Link["link<br/>outbound drivers, monitoring, routing, capture"]
+        Link["link<br/>outbound drivers, inbound servers, monitoring, routing, capture"]
         Auth["auth<br/>PBKDF2 passwords, tokens"]
         Wg["wgconf<br/>WireGuard / AmneziaWG config, vpn:// import"]
     end
@@ -66,9 +67,10 @@ The `Dockerfile` is a multi-stage build:
 | `web` | `node:22-bookworm-slim` | `web/dist` |
 | `amnezia` | `golang:1.25-bookworm` | `amneziawg-go` (`v3.1.20260828`), `awg` (`v3.1.20260812`) |
 | `build` | `golang:1.25-bookworm` | `proximity` with the UI embedded |
-| final | `debian:bookworm-slim` | + `iproute2`, `iputils-ping`, `openvpn`, `oathtool`, `ca-certificates`, `tzdata` |
+| final | `debian:bookworm-slim` | + `iproute2`, `iptables`, `iputils-ping`, `openvpn`, `oathtool`, `ca-certificates`, `tzdata` |
 
-Exposed ports: `8899` (UI/API) and `7899` (mixed HTTP/SOCKS5 proxy). Volume: `/config`.
+Exposed ports: `8899` (UI/API), `7899` (mixed HTTP/SOCKS5 proxy) and `7800-7898` TCP + UDP
+(inbounds). Volume: `/config`.
 `HEALTHCHECK` runs `proximity health`, which requests `/api/session`.
 
 ## Control loop
@@ -234,6 +236,60 @@ outbound on its **Monitoring** tab.
   (default 1280) are set, and the default route goes into the tunnel's table.
 - The connection log ends with the output of `awg show` for the device.
 
+## Inbounds
+
+An inbound is stored in `proximity.json` (`inbounds`) and applied by the same control loop
+on every change. Its port (7800…7898) is also its key: slot = port − 7799.
+
+**SOCKS5** is a mihomo listener (`listeners: [{type: socks, name: <ID>, port, users}]`).
+
+- Anonymous access → `users: []` (mihomo skips authentication); otherwise only enabled
+  users are written. An inbound without enabled users and without anonymous access is
+  never written, because an empty list would open the proxy.
+- TLS → inline `certificate` / `private-key`.
+- The state is read from the kernel socket table (`/proc/net/tcp`), not by a probe
+  connection, so health checks are not counted as traffic.
+
+**OpenVPN** is an `openvpn` server process per inbound (`link.openvpnAcceptor`).
+
+- The configuration is rendered to `/run/proximity/inbound-<slot>/server.conf`: device
+  `proximity_i<slot>`, `topology subnet`, `dh none` (ECDH), `tls-crypt`, `duplicate-cn`,
+  `username-as-common-name`, `auth-user-pass-optional`.
+- Credentials are checked by `proximity verify <auth.json> <file>`
+  (`auth-user-pass-verify … via-file`). `auth.json` holds enabled users, the anonymous
+  flag and the TOTP key; it is replaced atomically when users change, so the server keeps
+  running. The code is accepted appended to the password or as a `static-challenge`
+  response (`SCRV1:…`), for the current and the neighbouring 30-second windows. With TOTP
+  the server issues `auth-gen-token`, so renegotiation does not ask for a new code.
+- Sessions of changed, disabled or deleted users are closed through the management unix
+  socket (`kill <name>`); the same socket gives the list of connected clients (`status 2`).
+- Client traffic is forwarded by the kernel into the mihomo TUN device and terminated
+  there, so no NAT is needed: table `61000 + slot` holds `<network> dev proximity_i<slot>`,
+  `default dev proximity_tun` and a `blackhole` fallback; rule `5140: from <network>`.
+  The TUN device is enabled in the mihomo configuration whenever an OpenVPN inbound is
+  active, even without transparent capture. DNS requests of clients are hijacked
+  (`198.18.0.2` is pushed), so fake-IP and domain routes work for them.
+- Forwarding needs `net.ipv4.ip_forward=1` (set by the bridge compose file; in host mode
+  Proximity checks it and tries to enable it) and `iptables -I FORWARD -i/-o
+  proximity_i<slot> -j ACCEPT`, because Docker sets the `FORWARD` policy to `DROP`.
+- In host mode with capture the server socket carries mark 51000, like tunnel transports.
+
+**Where the traffic goes** is decided by rules placed before the routes:
+
+| Outbound | SOCKS5 | OpenVPN |
+|---|---|---|
+| Router | no rule — the routes decide | no rule |
+| Host | `IN-NAME,<ID>,DIRECT` | `SRC-IP-CIDR,<network>,DIRECT` |
+| an outbound | `IN-NAME,<ID>,<outbound>` | `SRC-IP-CIDR,<network>,<outbound>` |
+
+HTTP outbounds with per-protocol servers get `AND,((…),(DST-PORT,443)),<ID>~https` lines
+first. An inbound whose outbound is disabled or deleted is not started (fail closed).
+
+**Key material** (`config.GenerateMaterial`): ECDSA P-256 CA, server certificate
+(`serverAuth`) and one client certificate (`clientAuth`) shared by the users of the
+inbound, valid for 10 years; a 2048-bit OpenVPN static key for `tls-crypt`; a 160-bit
+base32 TOTP key.
+
 ## Statistics and unreachable routes
 
 - `router.Tracker` reads mihomo `/connections` every 500 ms and attributes bytes to the
@@ -244,7 +300,14 @@ outbound on its **Monitoring** tab.
   samples (`/api/history?since=…`). History is not persisted; totals are.
 - mihomo's log stream (`/logs?level=info`) is parsed for dial errors. Each error is
   classified (`refused`, `timeout`, `no route`, `unreachable`, `dns`, …) and stored with the
-  destination, outbound, matched rule, count and first/last time.
+  destination, outbound, matched rule, count and first/last time. The list is bounded by
+  *Settings → Unreachable routes*: entries older than the maximum lifetime (by the last
+  occurrence) are removed, then the oldest ones above the maximum count.
+- Inbound traffic is read every 2 s. OpenVPN: `rx_bytes` / `tx_bytes` of the server device.
+  SOCKS5: byte counters of two `iptables` chains (`PROXIMITY-STAT-IN` from `INPUT` by
+  destination port, `PROXIMITY-STAT-OUT` from `OUTPUT` by source port), because short
+  connections are invisible in mihomo's `/connections` snapshots. Without `iptables` the
+  counters fall back to those snapshots and miss short connections.
 
 ## Storage
 
@@ -252,12 +315,13 @@ All persistent data lives in the settings folder mounted as `/config`:
 
 | File | Written | Contents |
 |---|---|---|
-| `proximity.json` | on every change (atomic replace) | users, outbounds, fallbacks, routes, settings, token secret |
-| `state.json` | every 30 s and on shutdown | traffic totals, unreachable routes |
+| `proximity.json` | on every change (atomic replace) | users, outbounds, inbounds, fallbacks, routes, settings, token secret |
+| `state.json` | every 30 s and on shutdown | traffic totals of outbounds and inbounds, unreachable routes |
 | `mihomo/config.yaml` | on every synchronization | generated mihomo configuration |
 | `mihomo/geoip.metadb`, `geosite.dat` | first start | GeoIP / GeoSite databases |
 
-Runtime files (unix socket, generated tunnel configs, hook output) are in `/run/proximity`.
+Runtime files (unix socket, generated tunnel and server configs, hook output, `auth.json`
+of OpenVPN inbounds) are in `/run/proximity`.
 
 ## Security model
 
@@ -266,7 +330,11 @@ Runtime files (unix socket, generated tunnel configs, hook output) are in `/run/
   Changing a user's password invalidates all existing sessions of that user.
 - Every non-GET request must carry the `X-Requested-With` header (CSRF protection).
 - Failed sign-ins are delayed by 0.7 s.
-- Users with the *User* role receive outbounds with passwords and keys removed.
+- Users with the *User* role receive outbounds and inbounds with passwords and private keys
+  removed.
+- Inbound users are separate from Proximity accounts. Their passwords are compared in
+  constant time; they are stored in plain text because mihomo and exported client
+  configurations need them.
 - Secrets in `proximity.json` and in backups are stored in plain text — protect the folder
   and backup files.
 

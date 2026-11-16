@@ -57,6 +57,17 @@ func TestRun_Arguments(t *testing.T) {
 		require.ErrorContains(t, run([]string{"-config", filepath.Join(blocker, "config")}),
 			"server.New failed")
 	}
+	{
+		state, credentials := filepath.Join(directory, "auth.json"),
+			filepath.Join(directory, "credentials.txt")
+		require.NoError(t, os.WriteFile(state, []byte(`{"users":[{"name":"bob",`+
+			`"password":"builder"}]}`), 0o600))
+		require.NoError(t, os.WriteFile(credentials, []byte("bob\nbuilder\n"), 0o600))
+		require.NoError(t, run([]string{"verify", state, credentials}))
+		require.NoError(t, os.WriteFile(credentials, []byte("bob\nwrong\n"), 0o600))
+		require.EqualError(t, run([]string{"verify", state, credentials}),
+			"invalid password of user 'bob'")
+	}
 }
 
 type JMPBuf struct {

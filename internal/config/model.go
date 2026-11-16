@@ -14,16 +14,18 @@ import (
 )
 
 type Settings struct {
-	MixedPort          int    `json:"mixed_port"`
-	BindAddress        string `json:"bind_address"`
-	DefaultTarget      string `json:"default_target"`
-	LogLevel           string `json:"log_level"`
-	IPv6               bool   `json:"ipv6"`
-	AnonymousDashboard bool   `json:"anonymous_dashboard"`
-	ConnectivityChecks bool   `json:"connectivity_checks"`
-	ProbeTarget        string `json:"probe_target"`
-	CheckInterval      int    `json:"check_interval"`
-	Capture            bool   `json:"capture"`
+	MixedPort           int    `json:"mixed_port"`
+	BindAddress         string `json:"bind_address"`
+	DefaultTarget       string `json:"default_target"`
+	LogLevel            string `json:"log_level"`
+	IPv6                bool   `json:"ipv6"`
+	AnonymousDashboard  bool   `json:"anonymous_dashboard"`
+	ConnectivityChecks  bool   `json:"connectivity_checks"`
+	ProbeTarget         string `json:"probe_target"`
+	CheckInterval       int    `json:"check_interval"`
+	Capture             bool   `json:"capture"`
+	UnreachableLimit    int    `json:"unreachable_limit"`
+	UnreachableLifetime int    `json:"unreachable_lifetime"`
 }
 
 type User struct {
@@ -134,6 +136,7 @@ type Config struct {
 	Outbounds []Outbound `json:"outbounds"`
 	Fallbacks []Fallback `json:"fallbacks"`
 	Routes    []Route    `json:"routes"`
+	Inbounds  []Inbound  `json:"inbounds"`
 	Legacy
 }
 
@@ -172,13 +175,19 @@ const (
 	OTPAppend    = "append"
 )
 
-const currentVersion = 3
+const currentVersion = 4
+const inboundVersion = 4
 const maxSlot = 9999
 const defaultAttempts = 3
 const defaultReconnectTimeout = 10
 const providedPrefix = "Routes of "
 const defaultHealthURL = "https://www.gstatic.com/generate_204"
 const defaultProbeTarget = "1.1.1.1:443"
+const defaultUnreachableLimit = 100
+const defaultUnreachableLifetime = 24 * 60 * 60
+const maxUnreachableLimit = 10000
+const minUnreachableLifetime = 60
+const maxUnreachableLifetime = 365 * 24 * 60 * 60
 
 var typeLabels = map[string]string{TypeHost: "HOST", TypeSocks5: "SOCKS5", TypeHTTP: "HTTP",
 	TypeOpenVPN: "OpenVPN", TypeAmneziaWG: "AmneziaWG"}
@@ -194,8 +203,10 @@ func Default() Config {
 	return Config{Version: currentVersion, Settings: Settings{MixedPort: 7899, BindAddress: "*",
 		DefaultTarget: TargetDirect, LogLevel: "warning", AnonymousDashboard: true,
 		ConnectivityChecks: true, ProbeTarget: defaultProbeTarget, CheckInterval: 30,
-		Capture: true}, Users: []User{},
-		Outbounds: []Outbound{}, Fallbacks: []Fallback{}, Routes: []Route{}}
+		Capture: true, UnreachableLimit: defaultUnreachableLimit,
+		UnreachableLifetime: defaultUnreachableLifetime}, Users: []User{},
+		Outbounds: []Outbound{}, Fallbacks: []Fallback{}, Routes: []Route{},
+		Inbounds: []Inbound{}}
 }
 
 func TypeLabel(kind string) string {
@@ -243,6 +254,15 @@ func validateHostPort(target string) error {
 	return nil
 }
 
+func (settings *Settings) normalize() {
+	if settings.UnreachableLimit == 0 {
+		settings.UnreachableLimit = defaultUnreachableLimit
+	}
+	if settings.UnreachableLifetime == 0 {
+		settings.UnreachableLifetime = defaultUnreachableLifetime
+	}
+}
+
 func (settings *Settings) validate(config *Config) error {
 	found := false
 	for _, level := range logLevels {
@@ -256,6 +276,12 @@ func (settings *Settings) validate(config *Config) error {
 		return err
 	} else if err = validateHostPort(settings.ProbeTarget); err != nil {
 		return fmt.Errorf("failed to check probe target: %w", err)
+	} else if err = validateRange("number of unreachable routes", settings.UnreachableLimit, 1,
+		maxUnreachableLimit); err != nil {
+		return err
+	} else if err = validateRange("lifetime of unreachable routes", settings.UnreachableLifetime,
+		minUnreachableLifetime, maxUnreachableLifetime); err != nil {
+		return err
 	} else if !config.TargetExists(settings.DefaultTarget) {
 		return fmt.Errorf("default target '%v' does not exist", settings.DefaultTarget)
 	}

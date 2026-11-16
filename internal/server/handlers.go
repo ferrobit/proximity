@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -22,6 +23,18 @@ type outboundView struct {
 	Traffic  router.Traffic `json:"traffic"`
 	Usage    string         `json:"usage"`
 	Redacted bool           `json:"redacted"`
+}
+
+type inboundView struct {
+	config.Inbound
+	Status   link.InboundStatus `json:"status"`
+	Traffic  router.Traffic     `json:"traffic"`
+	Redacted bool               `json:"redacted"`
+}
+
+type generateRequest struct {
+	Kind string `json:"kind"`
+	config.Material
 }
 
 type targetView struct {
@@ -77,6 +90,8 @@ const (
 	usageUnused   = "unused"
 )
 
+const anonymousName = "anonymous"
+
 func redact(outbound config.Outbound) config.Outbound {
 	outbound = outbound.Clone()
 	if outbound.Socks5 != nil {
@@ -93,6 +108,21 @@ func redact(outbound config.Outbound) config.Outbound {
 		outbound.AmneziaWG.Config = ""
 	}
 	return outbound
+}
+
+func redactInbound(inbound config.Inbound) config.Inbound {
+	inbound = inbound.Clone()
+	for index := range inbound.Users {
+		inbound.Users[index].Password = ""
+	}
+	if inbound.Socks5 != nil {
+		inbound.Socks5.Key = ""
+	}
+	if server := inbound.OpenVPN; server != nil {
+		server.CAKey, server.Key, server.ClientKey = "", "", ""
+		server.TLSCrypt, server.OTPKey = "", ""
+	}
+	return inbound
 }
 
 func confirm(password string, repeated string) error {
@@ -138,6 +168,15 @@ func (server *Server) register() {
 	server.handle("PUT /api/routes/{key}", 2, server.updateRoute)
 	server.handle("DELETE /api/routes/{key}", 2, server.removeRoute)
 	server.handle("POST /api/routes/{key}/move", 2, server.moveRoute)
+	server.handle("GET /api/inbounds", 1, server.getInbounds)
+	server.handle("POST /api/inbounds", 2, server.addInbound)
+	server.handle("POST /api/inbounds/generate", 2, server.generateMaterial)
+	server.handle("PUT /api/inbounds/{id}", 2, server.updateInbound)
+	server.handle("DELETE /api/inbounds/{id}", 2, server.removeInbound)
+	server.handle("POST /api/inbounds/{id}/move", 2, server.moveInbound)
+	server.handle("POST /api/inbounds/{id}/restart", 2, server.restartInbound)
+	server.handle("GET /api/inbounds/{id}/log", 2, server.getInboundLog)
+	server.handle("GET /api/inbounds/{id}/config", 2, server.exportInbound)
 	server.handle("GET /api/settings", 1, server.getSettings)
 	server.handle("PUT /api/settings", 3, server.updateSettings)
 	server.handle("GET /api/users", 3, server.getUsers)
@@ -545,6 +584,111 @@ func (server *Server) moveRoute(request *http.Request, _ session) (any, error) {
 	})
 }
 
+func (server *Server) getInbounds(_ *http.Request, current session) (any, error) {
+	snapshot := server.store.Snapshot()
+	states, traffic := server.manager.Inbounds(), server.tracker.Inbounds()
+	views, groups := []inboundView{}, []string{}
+	for _, inbound := range snapshot.Inbounds {
+		view := inboundView{Inbound: inbound, Traffic: traffic[inbound.ID],
+			Redacted: current.level < 2, Status: link.InboundStatus{State: link.StateDisabled,
+				Clients: []link.InboundClient{}}}
+		if status, found := states[inbound.ID]; found {
+			view.Status = status
+		}
+		if current.level < 2 {
+			view.Inbound = redactInbound(inbound)
+		}
+		if inbound.Group != "" && !slices.Contains(groups, inbound.Group) {
+			groups = append(groups, inbound.Group)
+		}
+		views = append(views, view)
+	}
+	return map[string]any{"inbounds": views, "groups": groups,
+		"ports": []int{config.InboundPortFirst, config.InboundPortLast}}, nil
+}
+
+func (server *Server) addInbound(request *http.Request, _ session) (any, error) {
+	body, result := config.Inbound{}, config.Inbound{}
+	if err := decode(request, &body); err != nil {
+		return nil, err
+	} else if err = server.store.Update(func(config *config.Config) error {
+		var err error
+		result, err = config.AddInbound(body, time.Now())
+		return err
+	}); err != nil {
+		return nil, err
+	}
+	return result, nil
+}
+
+func (server *Server) generateMaterial(request *http.Request, _ session) (any, error) {
+	body := generateRequest{}
+	if err := decode(request, &body); err != nil {
+		return nil, err
+	}
+	return config.GenerateMaterial(body.Kind, body.Material, time.Now())
+}
+
+func (server *Server) updateInbound(request *http.Request, _ session) (any, error) {
+	body, result, id := config.Inbound{}, config.Inbound{}, request.PathValue("id")
+	if err := decode(request, &body); err != nil {
+		return nil, err
+	} else if err = server.store.Update(func(config *config.Config) error {
+		var err error
+		if result, err = config.UpdateInbound(id, body, time.Now()); err == nil {
+			server.tracker.RenameInbound(id, result.ID)
+		}
+		return err
+	}); err != nil {
+		return nil, err
+	}
+	return result, nil
+}
+
+func (server *Server) removeInbound(request *http.Request, _ session) (any, error) {
+	return map[string]bool{"ok": true}, server.store.Update(func(config *config.Config) error {
+		return config.RemoveInbound(request.PathValue("id"))
+	})
+}
+
+func (server *Server) moveInbound(request *http.Request, _ session) (any, error) {
+	body := moveRequest{}
+	if err := decode(request, &body); err != nil {
+		return nil, err
+	}
+	return map[string]bool{"ok": true}, server.store.Update(func(config *config.Config) error {
+		return config.MoveInbound(request.PathValue("id"), body.Delta)
+	})
+}
+
+func (server *Server) restartInbound(request *http.Request, _ session) (any, error) {
+	return map[string]bool{"ok": true}, server.manager.RestartInbound(request.PathValue("id"))
+}
+
+func (server *Server) getInboundLog(request *http.Request, _ session) (any, error) {
+	return map[string]any{"lines": server.manager.InboundLog(request.PathValue("id"))}, nil
+}
+
+func (server *Server) exportInbound(request *http.Request, _ session) (any, error) {
+	snapshot, query := server.store.Snapshot(), request.URL.Query()
+	inbound, found := snapshot.FindInbound(request.PathValue("id"))
+	if !found {
+		return nil, fail(http.StatusNotFound, "inbound '%v' does not exist",
+			request.PathValue("id"))
+	}
+	options := link.ExportOptions{User: query.Get("user"), Host: query.Get("host"),
+		Embed: query.Get("embed") == "true"}
+	text, err := link.ClientConfig(inbound, options)
+	if err != nil {
+		return nil, fmt.Errorf("failed to export configuration: %w", err)
+	}
+	name := options.User
+	if name == "" {
+		name = anonymousName
+	}
+	return map[string]string{"config": text, "file": inbound.ID + "-" + name + ".conf"}, nil
+}
+
 func (server *Server) getSettings(_ *http.Request, _ session) (any, error) {
 	return server.store.Snapshot().Settings, nil
 }
@@ -636,5 +780,6 @@ func (server *Server) importBackup(request *http.Request, current session) (any,
 	snapshot := server.store.Snapshot()
 	server.options.Logf("backup imported by '%v'", current.user.Name)
 	return map[string]int{"outbounds": len(snapshot.Outbounds),
-		"fallbacks": len(snapshot.Fallbacks), "routes": len(snapshot.Routes)}, nil
+		"fallbacks": len(snapshot.Fallbacks), "routes": len(snapshot.Routes),
+		"inbounds": len(snapshot.Inbounds)}, nil
 }

@@ -21,7 +21,7 @@ sites, a proxy for a couple of services, everything else straight to your ISP.
 | Docker | Docker Engine with Compose v2 | Docker Desktop |
 | Kernel features | `/dev/net/tun`, policy routing (`ip rule`) | provided by Docker Desktop |
 | Container privileges | `NET_ADMIN`, `SYS_PTRACE` (host mode) | `NET_ADMIN` |
-| Free ports | 8899 (UI), 7899 (proxy) | 8899, 7899 |
+| Free ports | 8899 (UI), 7899 (proxy), 7800–7898 (inbounds you create) | 8899, 7899, 7800–7898 |
 
 The image is built locally from the `Dockerfile`; it bundles mihomo, OpenVPN,
 `amneziawg-go`, `awg`, `oathtool` and the GeoIP/GeoSite databases.
@@ -153,7 +153,9 @@ a `.env` file next to the compose file):
 | `PROXIMITY_ADMIN_PASSWORD` | — | Password for `PROXIMITY_ADMIN_USER` |
 | `PROXIMITY_UI_BIND` | `0.0.0.0` | Address the web UI listens on (host side) |
 | `PROXIMITY_PROXY_BIND` | `127.0.0.1` | Address of the proxy port. In host mode it overrides *Bind address* from Settings |
-| `PROXIMITY_VERSION` | `1.1.0` | Version string compiled into the image |
+| `PROXIMITY_INBOUND_BIND` | `0.0.0.0` | Bridge mode: host address the inbound ports 7800–7898 (TCP and UDP) are published on |
+| `PROXIMITY_IPTABLES` | `iptables` | Host mode: tool used for forwarding rules and traffic counters of inbounds. Set `iptables-legacy` when the host firewall uses the legacy backend |
+| `PROXIMITY_VERSION` | `1.2.0` | Version string compiled into the image |
 | `TZ` | `UTC` | Time zone for logs |
 
 > [!CAUTION]

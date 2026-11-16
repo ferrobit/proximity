@@ -13,6 +13,7 @@ type Backup struct {
 	Outbounds []Outbound `json:"outbounds"`
 	Fallbacks []Fallback `json:"fallbacks"`
 	Routes    []Route    `json:"routes"`
+	Inbounds  []Inbound  `json:"inbounds"`
 	Legacy
 }
 
@@ -22,7 +23,8 @@ func (config *Config) Export(created time.Time) Backup {
 	clone := config.Clone()
 	return Backup{Format: BackupFormat, Version: clone.Version,
 		Created: created.UTC().Format(time.RFC3339), Settings: clone.Settings,
-		Outbounds: clone.Outbounds, Fallbacks: clone.Fallbacks, Routes: clone.Routes}
+		Outbounds: clone.Outbounds, Fallbacks: clone.Fallbacks, Routes: clone.Routes,
+		Inbounds: clone.Inbounds}
 }
 
 func (config *Config) Import(backup Backup, settings bool) error {
@@ -33,7 +35,7 @@ func (config *Config) Import(backup Backup, settings bool) error {
 	}
 	source := Config{Version: backup.Version, Settings: backup.Settings,
 		Outbounds: backup.Outbounds, Fallbacks: backup.Fallbacks, Routes: backup.Routes,
-		Legacy: backup.Legacy}
+		Inbounds: backup.Inbounds, Legacy: backup.Legacy}
 	source.adopt()
 	source = source.Clone()
 	target := source.Settings.DefaultTarget
@@ -61,5 +63,8 @@ func (config *Config) Import(backup Backup, settings bool) error {
 	}
 	config.Settings, config.Outbounds = source.Settings, source.Outbounds
 	config.Fallbacks, config.Routes = source.Fallbacks, source.Routes
+	if backup.Version >= inboundVersion {
+		config.Inbounds = source.Inbounds
+	}
 	return nil
 }

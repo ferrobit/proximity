@@ -1,6 +1,8 @@
 # Linux: the container shares the host network stack and routes all outgoing
 # connections of the host through Proximity (transparent mode).
 # macOS and Windows: use docker-compose.bridge.yml (scripts/proximity.sh picks it).
+# Inbounds (SOCKS5 and OpenVPN servers) listen on host ports 7800-7898 directly.
+# OpenVPN inbounds need net.ipv4.ip_forward=1 on the host (Docker enables it itself).
 name: proximity
 
 services:
@@ -9,7 +11,7 @@ services:
     build:
       context: .
       args:
-        VERSION: ${PROXIMITY_VERSION:-1.1.0}
+        VERSION: ${PROXIMITY_VERSION:-1.2.0}
     container_name: proximity
     restart: unless-stopped
     init: true
@@ -25,6 +27,7 @@ services:
       PROXIMITY_NETWORK: host
       PROXIMITY_LISTEN: ${PROXIMITY_UI_BIND:-0.0.0.0}:8899
       PROXIMITY_PROXY_BIND: ${PROXIMITY_PROXY_BIND:-127.0.0.1}
+      PROXIMITY_IPTABLES: ${PROXIMITY_IPTABLES:-iptables}
       PROXIMITY_ADMIN_USER: ${PROXIMITY_ADMIN_USER:-}
       PROXIMITY_ADMIN_PASSWORD: ${PROXIMITY_ADMIN_PASSWORD:-}
       TZ: ${TZ:-UTC}

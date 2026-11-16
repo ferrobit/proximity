@@ -101,7 +101,7 @@ Run the Go binary on port 8899 at the same time. Main files:
 |---|---|
 | `src/App.vue` | layout, header statistics, navigation, sign-in and first-run dialogs, theme |
 | `src/api.js` | fetch wrapper, session state, role helpers |
-| `src/views/*.vue` | one view per section: `Routes.vue` shows `Fallbacks.vue` at the bottom, `Inbounds.vue` is a placeholder; `OutboundDialog.vue` is the outbound editor |
+| `src/views/*.vue` | one view per section: `Routes.vue` shows `Fallbacks.vue` at the bottom, `Settings.vue` shows `Users.vue` as its second section; `OutboundDialog.vue` and `InboundDialog.vue` are the editors |
 | `src/components/TrafficChart.vue` | dependency-free SVG throughput chart |
 | `src/components/ConnectionsChart.vue` | dependency-free SVG chart of active connections |
 | `src/components/history.js` | shared `/api/history` loader for both Dashboard charts |
@@ -115,21 +115,22 @@ make cover    # with coverage per package
 go test -race ./...
 ```
 
-Current state (version 1.1.0): **87 tests, all passing, 92.9% total statement coverage.**
+Current state (version 1.2.0): **99 tests, all passing, 93.2% total statement coverage.**
 
 | Package | Coverage |
 |---|---|
-| `cmd/proximity` | 80.5% |
+| `cmd/proximity` | 81.4% |
 | `internal/auth` | 94.1% |
-| `internal/config` | 96.0% |
-| `internal/link` | 86.3% |
-| `internal/router` | 95.7% |
+| `internal/config` | 95.7% |
+| `internal/link` | 88.2% |
+| `internal/router` | 96.5% |
 | `internal/rules` | 99.1% |
-| `internal/server` | 93.9% |
+| `internal/server` | 94.0% |
 | `internal/wgconf` | 97.9% |
 
-Tests use fake tools (`ip`, `openvpn`, `ping` …) and a fake mihomo, so they run without
-root and without network access. Assertions use `testify/require`.
+Tests use fake tools (`ip`, `openvpn`, `iptables`, `ping` …) and a fake mihomo, so they run
+without root and without network access. `TestManager_Inbounds` binds one free TCP port in
+7800…7898 on the loopback address. Assertions use `testify/require`.
 
 ## Code style
 

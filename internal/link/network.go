@@ -21,12 +21,14 @@ import (
 )
 
 type Tools struct {
-	OpenVPN   string
-	AmneziaGo string
-	AmneziaWG string
-	IP        string
-	Ping      string
-	Oathtool  string
+	OpenVPN    string
+	AmneziaGo  string
+	AmneziaWG  string
+	IP         string
+	Ping       string
+	Oathtool   string
+	Iptables   string
+	Forwarding string
 }
 
 type Interface struct {
@@ -37,19 +39,32 @@ type Interface struct {
 
 const tableBase = 51000
 const tableLimit = 61000
+const inboundTableLimit = 61100
 const rulePriority = "5100"
+const inboundPriority = "5140"
+const forwardingPath = "/proc/sys/net/ipv4/ip_forward"
+const forwardChain = "FORWARD"
+const firewallWait = "5"
 const blackholeMetric = "4294967295"
 const devicePrefix = "proximity_"
 
 var tablePattern = regexp.MustCompile(`\btable (\d+)\b`)
-var devicePattern = regexp.MustCompile(`^` + devicePrefix + `[ao]\d+$`)
+var devicePattern = regexp.MustCompile(`^` + devicePrefix + `[aio]\d+$`)
+var forwardPattern = regexp.MustCompile(`^-A ` + forwardChain + ` (-[io] ` + devicePrefix +
+	`i\d+ -j ACCEPT)$`)
 var hookKeys = []string{"dev", "script_type", "ifconfig_", "route_", "foreign_option_"}
 
 func DefaultTools() Tools {
 	return Tools{OpenVPN: lookup("PROXIMITY_OPENVPN", "openvpn"),
 		AmneziaGo: lookup("PROXIMITY_AWG_GO", "amneziawg-go"),
 		AmneziaWG: lookup("PROXIMITY_AWG", "awg"), IP: lookup("PROXIMITY_IP", "ip"),
-		Ping: lookup("PROXIMITY_PING", "ping"), Oathtool: lookup("PROXIMITY_OATHTOOL", "oathtool")}
+		Ping: lookup("PROXIMITY_PING", "ping"), Oathtool: lookup("PROXIMITY_OATHTOOL", "oathtool"),
+		Iptables:   lookup("PROXIMITY_IPTABLES", "iptables"),
+		Forwarding: lookup("PROXIMITY_FORWARDING", forwardingPath)}
+}
+
+func InboundTable(slot int) int {
+	return tableLimit + slot
 }
 
 func Table(slot int) int {
@@ -258,9 +273,67 @@ func (tools Tools) teardownTable(table int) {
 
 func (tools Tools) removeRules(name string) {
 	for _, family := range []string{"-4", "-6"} {
-		for range 16 {
-			if _, err := tools.ip(family, "rule", "del", "priority", rulePriority, "lookup",
-				name); err != nil {
+		for _, priority := range []string{rulePriority, inboundPriority} {
+			for range 16 {
+				if _, err := tools.ip(family, "rule", "del", "priority", priority, "lookup",
+					name); err != nil {
+					break
+				}
+			}
+		}
+	}
+}
+
+func (tools Tools) setupInbound(table int, network string, device string) error {
+	name := strconv.Itoa(table)
+	tools.teardownTable(table)
+	if _, err := tools.ip("-4", "route", "replace", "blackhole", "default", "metric",
+		blackholeMetric, "table", name); err != nil {
+		return err
+	} else if _, err = tools.ip("-4", "route", "replace", network, "dev", device, "table",
+		name); err != nil {
+		return err
+	} else if _, err = tools.ip("-4", "rule", "add", "priority", inboundPriority, "from", network,
+		"lookup", name); err != nil {
+		return err
+	}
+	return nil
+}
+
+func (tools Tools) enableForwarding() error {
+	if data, err := os.ReadFile(tools.Forwarding); err == nil &&
+		strings.TrimSpace(string(data)) == "1" {
+		return nil
+	} else if err = os.WriteFile(tools.Forwarding, []byte("1\n"), 0o644); err != nil {
+		return fmt.Errorf("failed to enable IP forwarding (sysctl net.ipv4.ip_forward=1): %w", err)
+	}
+	return nil
+}
+
+func (tools Tools) firewall(arguments ...string) (string, error) {
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	return tools.run(ctx, tools.Iptables, append([]string{"-w", firewallWait}, arguments...)...)
+}
+
+func (tools Tools) allowForward(device string) error {
+	for _, direction := range []string{"-i", "-o"} {
+		if _, err := tools.firewall("-C", forwardChain, direction, device, "-j",
+			"ACCEPT"); err == nil {
+			continue
+		} else if _, err = tools.firewall("-I", forwardChain, "1", direction, device, "-j",
+			"ACCEPT"); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func (tools Tools) denyForward(device string) {
+	for _, direction := range []string{"-i", "-o"} {
+		for range 4 {
+			if _, err := tools.firewall("-D", forwardChain, direction, device, "-j",
+				"ACCEPT"); err != nil {
 				break
 			}
 		}
@@ -332,7 +405,7 @@ func (tools Tools) cleanup() error {
 		for _, match := range tablePattern.FindAllStringSubmatch(
 			strings.ReplaceAll(output, "lookup", "table"), -1) {
 			if table, err := strconv.Atoi(match[1]); err == nil && table > tableBase &&
-				table < tableLimit {
+				table < inboundTableLimit {
 				tables[match[1]] = true
 			}
 		}
@@ -342,8 +415,17 @@ func (tools Tools) cleanup() error {
 			tools.teardownTable(table)
 		}
 	}
-	capture := captureState{}
+	capture, account := captureState{}, accountState{}
 	capture.remove(tools)
+	account.remove(tools)
+	if output, err := tools.firewall("-S", forwardChain); err == nil {
+		for _, line := range strings.Split(output, "\n") {
+			if match := forwardPattern.FindStringSubmatch(strings.TrimSpace(line)); match != nil {
+				_, _ = tools.firewall(append([]string{"-D", forwardChain},
+					strings.Fields(match[1])...)...)
+			}
+		}
+	}
 	if _, err = exec.LookPath(tools.IP); err != nil {
 		return errors.New("ip tool does not exist")
 	}

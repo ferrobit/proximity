@@ -1,9 +1,11 @@
 <template>
-  <div>
-    <h2 class="pane-title"><TeamOutlined /> Users</h2>
+  <div class="pane-section">
+    <h3 class="pane-subtitle"><TeamOutlined /> Users</h3>
     <div class="toolbar">
       <a-button type="primary" @click="open(null)"><template #icon><UserAddOutlined /></template>Add user</a-button>
       <a-button @click="load"><template #icon><ReloadOutlined /></template>Refresh</a-button>
+      <span class="spacer" />
+      <a-checkbox :checked="session.anonymous_dashboard" :disabled="saving" @change="setAnonymous($event.target.checked)">Anonymous users can view the dashboard</a-checkbox>
     </div>
     <a-table :columns="columns" :data-source="users" row-key="name" size="middle" :pagination="false" :loading="loading">
       <template #bodyCell="{ column, record }">
@@ -59,8 +61,10 @@ const columns = [
   { title: 'Access level', key: 'access' },
   { title: '', key: 'actions', width: 110 }
 ]
+const emit = defineEmits(['changed'])
 const users = ref([])
 const loading = ref(false)
+const saving = ref(false)
 const visible = ref(false)
 const busy = ref(false)
 const editing = ref('')
@@ -75,6 +79,19 @@ async function load() {
     message.error(error.message)
   } finally {
     loading.value = false
+  }
+}
+
+async function setAnonymous(allowed) {
+  saving.value = true
+  try {
+    const current = await api.get('/api/settings', true)
+    await api.put('/api/settings', { ...current, anonymous_dashboard: allowed })
+    emit('changed')
+  } catch (error) {
+    message.error(error.message)
+  } finally {
+    saving.value = false
   }
 }
 

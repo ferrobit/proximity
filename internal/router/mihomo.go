@@ -21,11 +21,16 @@ import (
 	"proximity/internal/config"
 )
 
+type Metadata struct {
+	Inbound string `json:"inboundName"`
+}
+
 type Connection struct {
 	ID       string   `json:"id"`
 	Upload   int64    `json:"upload"`
 	Download int64    `json:"download"`
 	Chains   []string `json:"chains"`
+	Metadata Metadata `json:"metadata"`
 }
 
 type Connections struct {

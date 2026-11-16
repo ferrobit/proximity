@@ -11,7 +11,7 @@
 </p>
 
 <p align="center">
-  <img alt="Version" src="https://img.shields.io/badge/version-1.1.0-19c2b8">
+  <img alt="Version" src="https://img.shields.io/badge/version-1.2.0-19c2b8">
   <img alt="Go" src="https://img.shields.io/badge/Go-1.24-00ADD8?logo=go&logoColor=white">
   <img alt="Vue" src="https://img.shields.io/badge/Vue-3-42b883?logo=vuedotjs&logoColor=white">
   <img alt="mihomo" src="https://img.shields.io/badge/mihomo-v1.19.34-0b1f2a">
@@ -74,6 +74,7 @@ port **8899**.
 | 🌐 **Outbounds** | HOST Internet (default route or a specific interface/gateway), SOCKS5 (auth, TLS, UDP relay), HTTP proxy (separate HTTPS/FTP servers, TLS), OpenVPN (login, password, TOTP one-time codes, private key password), AmneziaWG (`.conf` upload, `vpn://` key import, QR code from an image) |
 | 🔀 **Fallbacks** | Proxy groups of outbounds in priority order (bottom of the Routes page): either "first outbound that Proximity sees as good" or a mihomo health check by URL |
 | 🧭 **Routes** | 15 mihomo directives, automatic normalization (URLs → domains, IDN → punycode, `IP:port` → `AND` rule, masks), `#` comments, overlap and duplicate warnings, up/down ordering |
+| 📥 **Inbounds** | SOCKS5 proxy servers and OpenVPN servers on ports 7800–7898 with their own users, optional anonymous access, TLS / TOTP, generated keys and certificates, one-click client configuration export; traffic goes to the host connection, to the routes or to a chosen outbound |
 | 📡 **VPN routes** | Routes pushed by OpenVPN appear as a read-only *provided* route you can enable with one switch |
 | 🩺 **Monitoring** | Link state, latency, configurable checks, retries and reconnects; states `good` / `connecting` / `reconnecting` / `failed`; per-outbound connection log with auto-scroll |
 | 📈 **Statistics** | Upload/download totals and rates per outbound, interactive throughput chart (5 min / 15 min / 1 h) with an active connections chart beside it, list of unreachable destinations with reason and matched rule |
@@ -89,7 +90,8 @@ port **8899**.
 | ![Outbounds](docs/images/outbounds.png) **Outbounds** — every exit with its state, latency and connection details | ![Routes](docs/images/routes.png) **Routes** — ordered rules with comments, overlap warnings and VPN-provided routes |
 | ![OpenVPN outbound](docs/images/outbound-openvpn.png) **OpenVPN outbound** — upload or edit `.ovpn`, credentials, TOTP | ![Connection log](docs/images/outbound-log.png) **Connection log** — live, auto-scrolling log of a tunnel |
 | ![Route editor](docs/images/route-dialog.png) **Route editor** — normalized preview before saving | ![Fallbacks](docs/images/fallbacks.png) **Fallbacks** — proxy groups in priority order, at the bottom of the Routes page |
-| ![Settings](docs/images/settings.png) **Settings** — router, access, backup and restore | ![Dark theme](docs/images/dashboard-dark.png) **Dark theme** |
+| ![Inbounds](docs/images/inbounds.png) **Inbounds** — SOCKS5 and OpenVPN servers with users, state and traffic | ![Client configuration](docs/images/inbound-export.png) **Client configuration** — preview, copy or download per user |
+| ![Settings](docs/images/settings.png) **Settings** — router, users, backup and restore | ![Dark theme](docs/images/dashboard-dark.png) **Dark theme** |
 
 More screenshots with explanations are in the [User guide](docs/user-guide.md).
 
@@ -113,6 +115,7 @@ The script picks the right compose file and configuration folder for your OS.
 |---|---|
 | Web UI | <http://localhost:8899> |
 | Proxy (HTTP and SOCKS5 on one port) | `127.0.0.1:7899` |
+| Inbounds (SOCKS5 and OpenVPN servers you create) | ports `7800`–`7898`, TCP and UDP |
 | Settings folder, Linux | `~/.config/proximity` |
 | Settings folder, macOS | `~/Library/Application Support/Proximity` |
 | Settings folder, Windows | `%APPDATA%\Proximity` |
@@ -232,8 +235,10 @@ Identifiers:
 - `proximity.json`, backups and the [HTTP API](docs/api.md) use the same names
   (`outbounds`, `routes`). Files written by older versions with `endpoints` and `filters`
   are read and converted automatically.
-- **Inbounds** (incoming connection points) have a placeholder page in the UI and will be
-  implemented in a future version.
+- **Inbounds** are incoming connection points: SOCKS5 and OpenVPN servers with their own
+  users on ports 7800–7898. Their IDs (`SOCKS5 <N>`, `OpenVPN <N>`) are unique among
+  inbounds only, because an inbound is never a route target. See the
+  [User guide](docs/user-guide.md#inbounds).
 
 ## Routes at a glance
 
@@ -269,21 +274,22 @@ Full reference: [Routes](docs/routes.md).
 
 ## Backup and restore
 
-**Settings → [Backup & Restore]**: *Export configuration* saves one JSON file (outbounds
-with passwords and VPN keys, fallbacks, routes, settings); *Import configuration*
-replaces the current ones. User accounts are not included. When an Operator imports a file,
+**Settings → [Backup and Restore]**: *Export configuration* saves one JSON file (outbounds
+and inbounds with passwords, VPN keys and certificates, fallbacks, routes, settings);
+*Import configuration* replaces the current ones. User accounts are not included. When an Operator imports a file,
 Settings stay unchanged.
 
 ## Configuration folder
 
 | File | Contents |
 |---|---|
-| `proximity.json` | users, outbounds, fallbacks, routes, settings |
+| `proximity.json` | users, outbounds, inbounds, fallbacks, routes, settings |
 | `state.json` | traffic counters and the list of unreachable destinations |
 | `mihomo/config.yaml` | generated mihomo configuration (JSON, which is valid YAML) |
 
 > [!WARNING]
-> Outbound passwords and VPN configurations are stored in `proximity.json` as plain text.
+> Outbound and inbound passwords, VPN configurations and private keys are stored in
+> `proximity.json` as plain text.
 > Protect the settings folder (and exported backup files) accordingly.
 
 ## Building and testing
@@ -300,13 +306,19 @@ Component versions are Docker build arguments in `Dockerfile`: `MIHOMO_IMAGE`,
 
 ## Project status
 
-Version **1.1.0**. 87 Go tests pass, total statement coverage 92.9% (80.5–99.1% per
+Version **1.2.0**. 99 Go tests pass, total statement coverage 93.2% (81.4–99.1% per
 package). Transparent capture has been verified in isolated network namespaces and in a
 real Docker image: DIRECT, REJECT, domain → OpenVPN / AmneziaWG, LAN and inbound
-connections untouched, `rp_filter=1`, container stop and kill.
+connections untouched, `rp_filter=1`, container stop and kill. Inbounds have been verified
+with real mihomo 1.19.34 and OpenVPN 2.6 in network namespaces: SOCKS5 authentication and
+TLS, an OpenVPN client with password + TOTP (appended and `static-challenge`), anonymous
+clients, token renegotiation, session kill on user change, traffic through the router,
+DNS hijack, traffic counters.
 
 Not verified yet:
 
+- Inbounds inside a real Docker container (published port range, host mode with Docker's
+  `FORWARD` policy, firewalld / ufw hosts), OpenVPN clients on Windows, macOS and phones.
 - `docker-compose.yml` with a real `network_mode: host` on a physical machine; `PROCESS-NAME` routes.
 - Interaction of capture with systemd-resolved, NetworkManager, firewalld and other VPN clients on the host.
 - macOS and Windows (Docker Desktop), the `proximity.ps1` script.

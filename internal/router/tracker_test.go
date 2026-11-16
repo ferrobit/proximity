@@ -130,14 +130,45 @@ func TestObserve_DialErrors(t *testing.T) {
 
 func TestObserve_Limit(t *testing.T) {
 	tracker := NewTracker("")
-	for index := range maxRefused + 20 {
-		tracker.Observe("[TCP] dial A (match Match/) 10.0.0.1:1 --> 10.1." +
-			string(rune('0'+index%10)) + "." + string(rune('0'+index/10%10)) +
-			string(rune('0'+index/100)) + ":80 error: connection reset by peer")
+	observe := func(count int) {
+		for index := range count {
+			tracker.Observe("[TCP] dial A (match Match/) 10.0.0.1:1 --> 10.1." +
+				string(rune('0'+index%10)) + "." + string(rune('0'+index/10%10)) +
+				string(rune('0'+index/100)) + ":80 error: connection reset by peer")
+		}
 	}
+	observe(defaultRefused + 20)
 	_, refused := tracker.Snapshot()
-	require.Len(t, refused, maxRefused)
+	require.Len(t, refused, defaultRefused)
 	require.Equal(t, "reset", refused[0].Reason)
+	{
+		tracker.SetLimits(7, time.Hour)
+		_, refused := tracker.Snapshot()
+		require.Len(t, refused, 7)
+		observe(30)
+		_, refused = tracker.Snapshot()
+		require.Len(t, refused, 7)
+		tracker.SetLimits(0, time.Hour)
+		_, refused = tracker.Snapshot()
+		require.Empty(t, refused)
+	}
+	{
+		tracker.SetLimits(50, time.Hour)
+		observe(3)
+		for _, item := range tracker.refused {
+			item.Last = time.Now().Add(-2 * time.Hour).Unix()
+			break
+		}
+		_, refused := tracker.Snapshot()
+		require.Len(t, refused, 2)
+		tracker.SetLimits(50, time.Second)
+		for _, item := range tracker.refused {
+			item.Last = time.Now().Add(-time.Minute).Unix()
+		}
+		tracker.dirty = false
+		require.EqualError(t, tracker.Save(), "router state path does not exist")
+		require.Empty(t, tracker.refused)
+	}
 }
 
 func TestRename_Traffic(t *testing.T) {
@@ -188,6 +219,75 @@ func TestSave_Reload(t *testing.T) {
 		broken := NewTracker("")
 		broken.Observe(dialRefused)
 		require.EqualError(t, broken.Save(), "router state path does not exist")
+	}
+}
+
+func TestUpdateInbounds_Traffic(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "state.json")
+	tracker := NewTracker(path)
+	tracker.SetInbounds([]config.Inbound{{ID: "S", Enabled: true, Statistics: true},
+		{ID: "V", Enabled: true, Statistics: true}, {ID: "Q", Enabled: true},
+		{ID: "D", Statistics: true}})
+	first := Connection{ID: "1", Upload: 100, Download: 1000, Metadata: Metadata{Inbound: "S"}}
+	quiet := Connection{ID: "2", Upload: 5, Download: 5, Metadata: Metadata{Inbound: "Q"}}
+	mixed := Connection{ID: "3", Upload: 7, Download: 7, Metadata: Metadata{Inbound: "DEFAULT"}}
+	tracker.UpdateInbounds(Connections{Items: []Connection{first, quiet, mixed}},
+		map[string][2]int64{"V": {1000, 2000}})
+	traffic := tracker.Inbounds()
+	require.Equal(t, int64(100), traffic["S"].Upload)
+	require.Equal(t, int64(1000), traffic["S"].Download)
+	require.Equal(t, 1, traffic["S"].Connections)
+	require.Positive(t, traffic["S"].DownloadRate)
+	require.Equal(t, Traffic{}, traffic["V"])
+	require.NotContains(t, traffic, "Q")
+	require.NotContains(t, traffic, "DEFAULT")
+	{
+		first.Upload, first.Download = 150, 1700
+		tracker.UpdateInbounds(Connections{Items: []Connection{first}},
+			map[string][2]int64{"V": {1500, 2600}, "Q": {1, 1}})
+		traffic := tracker.Inbounds()
+		require.Equal(t, int64(150), traffic["S"].Upload)
+		require.Equal(t, int64(1700), traffic["S"].Download)
+		require.Equal(t, int64(500), traffic["V"].Upload)
+		require.Equal(t, int64(600), traffic["V"].Download)
+		require.Equal(t, 0, traffic["V"].Connections)
+		require.NotContains(t, traffic, "Q")
+	}
+	{
+		tracker.UpdateInbounds(Connections{Items: []Connection{first}},
+			map[string][2]int64{"V": {10, 10}, "S": {5000, 5000}})
+		traffic := tracker.Inbounds()
+		require.Equal(t, int64(500), traffic["V"].Upload)
+		require.Equal(t, int64(0), traffic["V"].UploadRate)
+		require.Equal(t, int64(150), traffic["S"].Upload)
+		require.Equal(t, 1, traffic["S"].Connections)
+		tracker.UpdateInbounds(Connections{Items: []Connection{first}},
+			map[string][2]int64{"V": {30, 40}, "S": {5010, 5020}})
+		traffic = tracker.Inbounds()
+		require.Equal(t, int64(520), traffic["V"].Upload)
+		require.Equal(t, int64(630), traffic["V"].Download)
+		require.Equal(t, int64(160), traffic["S"].Upload)
+		require.Equal(t, int64(1720), traffic["S"].Download)
+	}
+	{
+		tracker.RenameInbound("V", "Office")
+		tracker.RenameInbound("missing", "other")
+		tracker.RenameInbound("S", "S")
+		tracker.UpdateInbounds(Connections{}, map[string][2]int64{"Office": {40, 60}})
+		traffic := tracker.Inbounds()
+		require.NotContains(t, traffic, "V")
+		require.NotContains(t, traffic, "other")
+		require.Equal(t, int64(530), traffic["Office"].Upload)
+		require.Equal(t, int64(650), traffic["Office"].Download)
+		require.Equal(t, 0, traffic["S"].Connections)
+	}
+	{
+		require.NoError(t, tracker.Save())
+		reloaded := NewTracker(path)
+		require.Equal(t, Traffic{Upload: 530, Download: 650}, reloaded.Inbounds()["Office"])
+		reloaded.SetInbounds([]config.Inbound{{ID: "S", Enabled: true, Statistics: true}})
+		require.NotContains(t, reloaded.Inbounds(), "Office")
+		require.Contains(t, reloaded.Inbounds(), "S")
 	}
 }
 

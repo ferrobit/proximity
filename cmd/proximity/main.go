@@ -30,6 +30,9 @@ func run(arguments []string) error {
 	if len(arguments) >= 2 && arguments[0] == "hook" {
 		return link.RunHook(arguments[1], os.Environ())
 	}
+	if len(arguments) >= 3 && arguments[0] == "verify" {
+		return link.RunVerify(arguments[1], arguments[2], time.Now())
+	}
 	if len(arguments) >= 1 && arguments[0] == "health" {
 		return checkHealth(lookup("PROXIMITY_LISTEN", ":8899"))
 	}

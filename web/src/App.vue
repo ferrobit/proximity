@@ -118,8 +118,7 @@ import { computed, onMounted, onUnmounted, reactive, ref } from 'vue'
 import { message, theme as antTheme } from 'ant-design-vue'
 import {
   ArrowDownOutlined, ArrowUpOutlined, BulbOutlined, DashboardOutlined, ExportOutlined, GatewayOutlined,
-  ImportOutlined, KeyOutlined, LoginOutlined, LogoutOutlined, SettingOutlined, SwapOutlined, TeamOutlined,
-  UserOutlined
+  ImportOutlined, KeyOutlined, LoginOutlined, LogoutOutlined, SettingOutlined, SwapOutlined, UserOutlined
 } from '@ant-design/icons-vue'
 import { api, events, loadSession, metrics, session } from './api'
 import { rate } from './format'
@@ -129,7 +128,6 @@ import Dashboard from './views/Dashboard.vue'
 import Outbounds from './views/Outbounds.vue'
 import Routes from './views/Routes.vue'
 import Inbounds from './views/Inbounds.vue'
-import Users from './views/Users.vue'
 import Settings from './views/Settings.vue'
 
 const sections = [
@@ -137,10 +135,9 @@ const sections = [
   { key: 'outbounds', title: 'Outbounds', icon: ExportOutlined, view: Outbounds, level: 1 },
   { key: 'routes', title: 'Routes', icon: SwapOutlined, view: Routes, level: 1 },
   { key: 'inbounds', title: 'Inbounds', icon: ImportOutlined, view: Inbounds, level: 1 },
-  { key: 'users', title: 'Users', icon: TeamOutlined, view: Users, level: 3 },
   { key: 'settings', title: 'Settings', icon: SettingOutlined, view: Settings, level: 1 }
 ]
-const aliases = { endpoints: 'outbounds', filters: 'routes', fallbacks: 'routes' }
+const aliases = { endpoints: 'outbounds', filters: 'routes', fallbacks: 'routes', users: 'settings' }
 const roleColors = { administrator: 'red', operator: 'blue', user: 'green' }
 const year = new Date().getFullYear()
 const dark = ref(localStorage.getItem('proximity-theme') === 'dark')

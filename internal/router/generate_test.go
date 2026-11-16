@@ -3,6 +3,7 @@ package router
 import (
 	"encoding/json"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/require"
 
@@ -118,6 +119,72 @@ func TestGenerate_Document(t *testing.T) {
 			"route 'Route 4' is skipped: target 'AmneziaWG 1' is disabled or does not exist",
 			"route 'Route 5' is skipped: target 'Fallback 2' is disabled or does not exist",
 			"default target 'Fallback 3' is disabled, using 'DIRECT'"}, warnings)
+	}
+}
+
+func TestGenerate_Inbounds(t *testing.T) {
+	snapshot := makeSnapshot(t)
+	now := time.Unix(1700000000, 0)
+	users := []config.InboundUser{{Enabled: true, Name: "alice", Password: "one"},
+		{Name: "off", Password: "two"}}
+	for _, inbound := range []config.Inbound{
+		{Type: config.TypeSocks5, Enabled: true, Users: users},
+		{Type: config.TypeSocks5, Enabled: true, Anonymous: true, Users: users,
+			Outbound: config.ViaHost, Socks5: &config.Socks5Server{Listen: "10.0.0.5", TLS: true}},
+		{Type: config.TypeSocks5, Enabled: true, Anonymous: true, Outbound: "HTTP 1"},
+		{Type: config.TypeSocks5, Enabled: true, Outbound: "HOST 1"},
+		{Type: config.TypeSocks5, Enabled: true, Anonymous: true, Outbound: "AmneziaWG 1"},
+		{Type: config.TypeSocks5, Anonymous: true},
+		{Type: config.TypeOpenVPN, Enabled: true, Anonymous: true, Outbound: "HTTP 1"},
+		{Type: config.TypeOpenVPN, Enabled: true, Users: users}} {
+		_, err := snapshot.AddInbound(inbound, now)
+		require.NoError(t, err)
+	}
+	data, warnings, err := Generate(snapshot, nil, Options{Socket: "/run/mihomo.sock"})
+	require.NoError(t, err)
+	result := document{}
+	require.NoError(t, json.Unmarshal(data, &result))
+	require.Len(t, result.Listeners, 3)
+	require.Equal(t, listener{Name: "SOCKS5 1", Type: "socks", Port: 7800, Listen: "0.0.0.0",
+		UDP: true, Users: []listenerUser{{"alice", "one"}}}, result.Listeners[0])
+	secure := snapshot.Inbounds[1].Socks5
+	require.Equal(t, listener{Name: "SOCKS5 2", Type: "socks", Port: 7801, Listen: "10.0.0.5",
+		Users: []listenerUser{}, Certificate: secure.Certificate, PrivateKey: secure.Key},
+		result.Listeners[1])
+	require.NotEmpty(t, secure.Certificate)
+	require.Equal(t, []listenerUser{}, result.Listeners[2].Users)
+	require.Contains(t, string(data), `"users": []`)
+	require.Equal(t, []string{"IN-NAME,SOCKS5 2,DIRECT",
+		"AND,((IN-NAME,SOCKS5 3),(DST-PORT,443)),HTTP 1~https",
+		"AND,((IN-NAME,SOCKS5 3),(DST-PORT,21)),HTTP 1~ftp", "IN-NAME,SOCKS5 3,HTTP 1",
+		"AND,((SRC-IP-CIDR,10.77.7.0/24),(DST-PORT,443)),HTTP 1~https",
+		"AND,((SRC-IP-CIDR,10.77.7.0/24),(DST-PORT,21)),HTTP 1~ftp",
+		"SRC-IP-CIDR,10.77.7.0/24,HTTP 1"}, result.Rules[:7])
+	require.NotContains(t, string(data), "10.77.8.0/24,")
+	require.Contains(t, warnings, "inbound 'SOCKS5 4' is skipped: anonymous connections are "+
+		"not allowed and enabled users do not exist")
+	require.Contains(t, warnings, "inbound 'SOCKS5 5' is skipped: outbound 'AmneziaWG 1' is disabled")
+	require.NotNil(t, result.Tun)
+	require.Equal(t, link.CaptureDevice, result.Tun.Device)
+	require.False(t, result.Tun.AutoRoute)
+	require.Zero(t, result.RoutingMark)
+	require.NotNil(t, result.Sniffer)
+	require.Equal(t, "fake-ip", result.DNS.EnhancedMode)
+	{
+		snapshot.Settings.IPv6 = true
+		for index := range snapshot.Inbounds {
+			snapshot.Inbounds[index].Enabled = index == 0
+		}
+		data, warnings, err := Generate(snapshot, nil, Options{Socket: "/run/mihomo.sock"})
+		require.NoError(t, err)
+		result := document{}
+		require.NoError(t, json.Unmarshal(data, &result))
+		require.Len(t, result.Listeners, 1)
+		require.Equal(t, "::", result.Listeners[0].Listen)
+		require.Nil(t, result.Tun)
+		for _, warning := range warnings {
+			require.NotContains(t, warning, "inbound")
+		}
 	}
 }
 

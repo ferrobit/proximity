@@ -36,6 +36,10 @@ func (config *Config) Clone() Config {
 	result.Outbounds = slices.Clone(config.Outbounds)
 	result.Fallbacks = slices.Clone(config.Fallbacks)
 	result.Routes = slices.Clone(config.Routes)
+	result.Inbounds = slices.Clone(config.Inbounds)
+	for index := range result.Inbounds {
+		result.Inbounds[index] = result.Inbounds[index].Clone()
+	}
 	for index := range result.Outbounds {
 		result.Outbounds[index] = result.Outbounds[index].Clone()
 	}
@@ -93,6 +97,25 @@ func (config *Config) Validate() error {
 			return fmt.Errorf("failed to check route %v: %w", index+1, err)
 		}
 	}
+	for index := range config.Inbounds {
+		inbound := &config.Inbounds[index]
+		if inbound.normalize(); config.findInbound(inbound.ID) != index {
+			return fmt.Errorf("duplicate inbound ID '%v'", inbound.ID)
+		} else if err := inbound.validate(); err != nil {
+			return fmt.Errorf("failed to check inbound '%v': %w", inbound.ID, err)
+		}
+		current, routed := inbound.network()
+		for _, other := range config.Inbounds[:index] {
+			if other.Port == inbound.Port {
+				return fmt.Errorf("duplicate inbound port (%v)", inbound.Port)
+			} else if prefix, found := other.network(); found && routed &&
+				prefix.Overlaps(current) {
+				return fmt.Errorf("network of inbound '%v' overlaps inbound '%v'", inbound.ID,
+					other.ID)
+			}
+		}
+	}
+	config.Settings.normalize()
 	if err := config.Settings.validate(config); err != nil {
 		return fmt.Errorf("failed to check settings: %w", err)
 	}
@@ -382,6 +405,11 @@ func (config *Config) renameTarget(previous string, current string) {
 			route.ID = providedPrefix + current
 		}
 	}
+	for index := range config.Inbounds {
+		if config.Inbounds[index].Outbound == previous {
+			config.Inbounds[index].Outbound = current
+		}
+	}
 	if config.Settings.DefaultTarget == previous {
 		config.Settings.DefaultTarget = current
 	}
@@ -426,6 +454,9 @@ func (config *Config) migrate() {
 			config.findRouteID(route.ID) != index {
 			route.ID = config.NextRouteID()
 		}
+	}
+	if config.Inbounds == nil {
+		config.Inbounds = []Inbound{}
 	}
 	config.Version = currentVersion
 }

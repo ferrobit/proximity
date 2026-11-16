@@ -28,7 +28,7 @@ RUN git clone --depth 1 --branch ${AWG_TOOLS_VERSION} \
     cp /src/amneziawg-tools/src/wg /out/awg
 
 FROM ${GO_IMAGE} AS build
-ARG VERSION=1.1.0
+ARG VERSION=1.2.0
 WORKDIR /src
 COPY go.mod go.sum ./
 RUN go mod download
@@ -42,7 +42,7 @@ RUN CGO_ENABLED=0 go build -trimpath -ldflags "-s -w -X main.version=${VERSION}"
 FROM ${BASE_IMAGE}
 LABEL org.opencontainers.image.title="proximity"
 RUN apt-get update && \
-    apt-get install -y --no-install-recommends ca-certificates iproute2 iputils-ping \
+    apt-get install -y --no-install-recommends ca-certificates iproute2 iptables iputils-ping \
         openvpn oathtool tzdata && \
     rm -rf /var/lib/apt/lists/* && \
     mkdir -p /config /run/proximity /usr/share/proximity/geodata
@@ -55,7 +55,7 @@ ENV PROXIMITY_CONFIG=/config \
     PROXIMITY_RUN=/run/proximity \
     PROXIMITY_LISTEN=:8899
 VOLUME ["/config"]
-EXPOSE 8899 7899
+EXPOSE 8899 7899 7800-7898/tcp 7800-7898/udp
 HEALTHCHECK --interval=30s --timeout=5s --start-period=20s --retries=3 \
     CMD ["/usr/local/bin/proximity", "health"]
 ENTRYPOINT ["/usr/local/bin/proximity"]
