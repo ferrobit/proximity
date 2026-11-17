@@ -157,8 +157,8 @@ Current state (version 1.2.0): **107 tests, all passing, 93.5% total statement c
 |---|---|
 | `cmd/proximity` | 81.4% |
 | `internal/auth` | 94.1% |
-| `internal/config` | 95.7% |
-| `internal/link` | 89.6% |
+| `internal/config` | 95.8% |
+| `internal/link` | 89.8% |
 | `internal/router` | 96.6% |
 | `internal/rules` | 99.1% |
 | `internal/server` | 93.7% |

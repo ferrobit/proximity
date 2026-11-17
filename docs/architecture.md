@@ -334,7 +334,7 @@ All persistent data lives in the settings folder mounted as `/config`:
 | `state.json` | every 30 s and on shutdown | traffic totals of outbounds and inbounds, unreachable routes |
 | `router.json` | on start, stop and restart of the router, and at startup | requested router state (`running`) |
 | `services.json` | on every service state change | state of tunnels and inbounds: `running`, `stopped`, `failed` with message |
-| `logs/<outbound\|inbound>-<N>.log` | on every log line (trimmed to 300 lines, 3000 for a verbose service) | logs of outbounds (by slot) and inbounds (by port) |
+| `logs/<outbound\|inbound>-<N>.log` | on every log line (trimmed to *Lines to keep*: 300 by default, 3000 for a verbose service) | logs of outbounds (by slot) and inbounds (by port) |
 | `mihomo/config.yaml` | on every synchronization | generated mihomo configuration |
 | `mihomo/geoip.metadb`, `geosite.dat` | first start | GeoIP / GeoSite databases |
 

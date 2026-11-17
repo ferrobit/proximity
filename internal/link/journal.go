@@ -89,12 +89,12 @@ func openJournal(directory string) (*journal, error) {
 	return result, nil
 }
 
-func openLogBook(path string) *logBook {
-	result := &logBook{path: path, lines: []string{}, limit: maxLogLines}
+func openLogBook(path string, limit int) *logBook {
+	result := &logBook{path: path, lines: []string{}, limit: limit}
 	if data, err := os.ReadFile(path); err == nil && len(data) != 0 && path != "" {
 		lines := strings.Split(strings.TrimRight(string(data), "\n"), "\n")
 		result.written = len(lines)
-		result.lines = lines[max(0, len(lines)-maxLogLines):]
+		result.lines = lines[max(0, len(lines)-limit):]
 	}
 	return result
 }
@@ -163,11 +163,11 @@ func (book *logBook) add(line string) {
 	}
 }
 
-func (book *logBook) resize(verbose bool) {
+func (book *logBook) resize(limit int) {
 	book.mutex.Lock()
 	defer book.mutex.Unlock()
-	if book.limit = maxLogLines; verbose {
-		book.limit = maxVerboseLines
+	if book.limit = limit; len(book.lines) > limit {
+		book.lines = book.lines[len(book.lines)-limit:]
 	}
 }
 

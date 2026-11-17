@@ -121,7 +121,9 @@ func (manager *Manager) ApplyInbounds(snapshot config.Config) {
 	manager.mutex.Lock()
 	defer manager.mutex.Unlock()
 	manager.snapshot = snapshot.Clone()
+	manager.limits = [2]int{snapshot.Settings.LogLines, snapshot.Settings.VerboseLogLines}
 	manager.applyInbounds()
+	manager.resizeBooks()
 }
 
 func (manager *Manager) ControlInbound(id string, action string) error {
@@ -288,7 +290,7 @@ func (manager *Manager) listen(inbound config.Inbound, signature string,
 		bypass: bypass, key: key, book: manager.book(key), cancel: cancel,
 		done: make(chan struct{}), id: inbound.ID,
 		status: emptyInboundStatus(StateConnecting, "")}
-	result.book.resize(inbound.Verbose)
+	result.book.resize(manager.logLimit(inbound.Verbose))
 	result.logf("starting")
 	result.debugSettings()
 	if inbound.Type == config.TypeOpenVPN {

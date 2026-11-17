@@ -27,6 +27,8 @@ type Settings struct {
 	UnreachableLimit    int    `json:"unreachable_limit"`
 	UnreachableLifetime int    `json:"unreachable_lifetime"`
 	Autostart           bool   `json:"autostart"`
+	LogLines            int    `json:"log_lines"`
+	VerboseLogLines     int    `json:"verbose_log_lines"`
 }
 
 type User struct {
@@ -196,6 +198,10 @@ const defaultUnreachableLifetime = 24 * 60 * 60
 const maxUnreachableLimit = 10000
 const minUnreachableLifetime = 60
 const maxUnreachableLifetime = 365 * 24 * 60 * 60
+const DefaultLogLines = 300
+const DefaultVerboseLogLines = 3000
+const minLogLines = 10
+const maxLogLines = 100000
 
 var typeLabels = map[string]string{TypeHost: "HOST", TypeSocks5: "SOCKS5", TypeHTTP: "HTTP",
 	TypeOpenVPN: "OpenVPN", TypeAmneziaWG: "AmneziaWG"}
@@ -212,7 +218,8 @@ func Default() Config {
 		DefaultTarget: TargetDirect, LogLevel: "warning", AnonymousDashboard: true,
 		ConnectivityChecks: true, ProbeTarget: defaultProbeTarget, CheckInterval: 30,
 		Capture: true, UnreachableLimit: defaultUnreachableLimit,
-		UnreachableLifetime: defaultUnreachableLifetime, Autostart: true}, Users: []User{},
+		UnreachableLifetime: defaultUnreachableLifetime, Autostart: true,
+		LogLines: DefaultLogLines, VerboseLogLines: DefaultVerboseLogLines}, Users: []User{},
 		Outbounds: []Outbound{}, Fallbacks: []Fallback{}, Routes: []Route{},
 		Inbounds: []Inbound{}}
 }
@@ -278,6 +285,12 @@ func (settings *Settings) normalize() {
 	if settings.UnreachableLifetime == 0 {
 		settings.UnreachableLifetime = defaultUnreachableLifetime
 	}
+	if settings.LogLines == 0 {
+		settings.LogLines = DefaultLogLines
+	}
+	if settings.VerboseLogLines == 0 {
+		settings.VerboseLogLines = DefaultVerboseLogLines
+	}
 }
 
 func (settings *Settings) validate(config *Config) error {
@@ -298,6 +311,12 @@ func (settings *Settings) validate(config *Config) error {
 		return err
 	} else if err = validateRange("lifetime of unreachable routes", settings.UnreachableLifetime,
 		minUnreachableLifetime, maxUnreachableLifetime); err != nil {
+		return err
+	} else if err = validateRange("number of log lines", settings.LogLines, minLogLines,
+		maxLogLines); err != nil {
+		return err
+	} else if err = validateRange("number of verbose log lines", settings.VerboseLogLines,
+		minLogLines, maxLogLines); err != nil {
 		return err
 	} else if !config.TargetExists(settings.DefaultTarget) {
 		return fmt.Errorf("default target '%v' does not exist", settings.DefaultTarget)

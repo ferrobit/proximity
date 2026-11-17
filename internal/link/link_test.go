@@ -374,7 +374,7 @@ func TestInterfaces_Loopback(t *testing.T) {
 
 func TestLogBook_Rotation(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "service.log")
-	book := openLogBook(path)
+	book := openLogBook(path, maxLogLines)
 	require.Empty(t, book.snapshot())
 	for index := range 2*maxLogLines + 5 {
 		book.add(fmt.Sprintf("line %v", index))
@@ -384,24 +384,26 @@ func TestLogBook_Rotation(t *testing.T) {
 	data, err := os.ReadFile(path)
 	require.NoError(t, err)
 	require.LessOrEqual(t, strings.Count(string(data), "\n"), 2*maxLogLines)
-	reopened := openLogBook(path)
+	reopened := openLogBook(path, maxLogLines)
 	require.Equal(t, book.snapshot(), reopened.snapshot())
+	require.Len(t, openLogBook(path, 10).snapshot(), 10)
 	{
-		memory := openLogBook("")
+		memory := openLogBook("", maxLogLines)
 		memory.add("only in memory")
 		require.Equal(t, []string{"only in memory"}, memory.snapshot())
-		blocked := openLogBook(filepath.Join(path, "sub.log"))
+		blocked := openLogBook(filepath.Join(path, "sub.log"), maxLogLines)
 		blocked.add("not written")
 		require.Equal(t, []string{"not written"}, blocked.snapshot())
 	}
 	{
-		verbose := openLogBook("")
-		verbose.resize(true)
+		verbose := openLogBook("", maxLogLines)
+		verbose.resize(maxVerboseLines)
 		for index := range maxLogLines + 5 {
 			verbose.add(fmt.Sprintf("line %v", index))
 		}
 		require.Len(t, verbose.snapshot(), maxLogLines+5)
-		verbose.resize(false)
+		verbose.resize(maxLogLines)
+		require.Len(t, verbose.snapshot(), maxLogLines)
 		verbose.add("trimmed")
 		require.Len(t, verbose.snapshot(), maxLogLines)
 		require.Equal(t, "trimmed", verbose.snapshot()[maxLogLines-1])
@@ -559,6 +561,8 @@ func TestManager_Inbounds(t *testing.T) {
 		require.Contains(t, strings.Join(manager.InboundLog("VPN"), "\n"), "debug: connection traced")
 		socks := strings.Join(manager.InboundLog("Socks"), "\n")
 		require.NotContains(t, socks, "debug:")
+		require.Equal(t, 3000, manager.book(inboundKey(port-1)).limit)
+		require.Equal(t, 300, manager.book(inboundKey(port)).limit)
 	}
 	{
 		renamed := snapshot.Clone()
@@ -907,6 +911,19 @@ func TestManager_Proxies(t *testing.T) {
 		require.NotContains(t, log, fmt.Sprintf("debug: connection %v", maxTracedLines))
 		require.Contains(t, log, "debug: 3 more connections are not shown")
 		require.NotContains(t, strings.Join(manager.Log("H"), "\n"), "debug: connection")
+	}
+	{
+		limited := settings
+		limited.LogLines, limited.VerboseLogLines = 10, 15
+		manager.Apply(outbounds, limited)
+		require.Len(t, manager.Log("S"), 15)
+		require.LessOrEqual(t, len(manager.Log("H")), 10)
+		manager.TraceOutbound("S", []string{"after limit"})
+		require.Len(t, manager.Log("S"), 15)
+		require.Equal(t, 15, manager.logLimit(true))
+		manager.Apply(outbounds, settings)
+		require.Equal(t, maxVerboseLines, manager.logLimit(true))
+		require.Equal(t, maxLogLines, manager.logLimit(false))
 	}
 	require.Empty(t, manager.Counters())
 	{

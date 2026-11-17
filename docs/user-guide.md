@@ -171,7 +171,8 @@ Every outbound dialog has a **General** tab:
 All fields are validated before saving. Changes are applied immediately.
 
 **Verbose** is meant for finding problems. A verbose outbound is marked *verbose log* in the
-table, and its log keeps the last 3000 lines instead of 300. It adds:
+table, and its log keeps more lines: 3000 instead of 300 by default, both numbers are set in
+[Settings → Miscellaneous](#miscellaneous). It adds:
 
 - `debug:` lines from Proximity: the settings in effect, every attempt and state change,
   every connectivity check with its time, the routing table and the command line of the
@@ -268,7 +269,8 @@ OpenVPN is checked by pinging the VPN gateway through the tunnel.
 
 ![Connection log](images/outbound-log.png)
 
-The live log of an outbound (last 300 lines, 3000 with *Verbose*): process output, answered prompts, applied
+The live log of an outbound (last 300 lines, 3000 with *Verbose*; see
+[Miscellaneous](#miscellaneous)): process output, answered prompts, applied
 routes, check results, starts and stops. It is saved in `logs/` of the settings folder and
 survives container restarts. It refreshes every 1.5 s; **Follow new lines** keeps it scrolled to
 the bottom, **Copy** copies the whole log, **Download** saves it as
@@ -364,7 +366,7 @@ keeps its state after a container restart.
 | Connection attempts | Default 3. Failed starts in a row before the inbound is `failed`; it then stays stopped until **Start** / **Restart** |
 | Reconnection timeout, seconds | Default 10. Pause between attempts |
 | Collect statistics | Count upload and download traffic of the inbound |
-| Verbose | Off by default. The inbound log gets `debug:` lines: settings, attempts, state changes, clients that connect and disconnect (OpenVPN), and every connection of its clients with its duration and traffic. The OpenVPN server runs with at least `verb 6`, and the log keeps 3000 lines |
+| Verbose | Off by default. The inbound log gets `debug:` lines: settings, attempts, state changes, clients that connect and disconnect (OpenVPN), and every connection of its clients with its duration and traffic. The OpenVPN server runs with at least `verb 6`, and the log keeps more lines (3000 by default) |
 | Port number | Unique, `7800…7898` (the range published by the Docker files); empty → the first free port |
 | Outbound | **Router** — the routes decide, like for the proxy port; **Host** — the host network connection, routes are skipped; or one of the outbounds — everything goes there |
 
@@ -422,7 +424,7 @@ of that user at once.
 
 ![Settings](images/settings.png)
 
-The page has four sections.
+The page has five sections.
 
 ### Router service
 
@@ -459,6 +461,18 @@ The router state is saved to `router.json` in the settings folder.
 | Unreachable routes: Maximum lifetime | Entries that did not repeat for this time are removed, default 1 day |
 
 Only an administrator can change these settings; other roles see them read-only.
+
+### Miscellaneous
+
+**Event log** — how many lines the log of every outbound and inbound keeps:
+
+| Field | Meaning |
+|---|---|
+| Lines to keep in normal mode | Default 300, 10…100000. For connections with *Verbose* off |
+| Lines to keep in Verbose mode | Default 3000, 10…100000. For connections with *Verbose* on |
+
+The limits apply at once to all logs, also of stopped connections: older lines are removed,
+connections are not restarted. The log files in `logs/` are rewritten on the next line.
 
 ### Users
 

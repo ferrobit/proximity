@@ -78,6 +78,22 @@
         </a-form>
       </a-card>
     </div>
+    <div class="pane-section">
+      <h3 class="pane-subtitle"><AppstoreOutlined /> Miscellaneous</h3>
+      <a-card size="small" class="settings-card">
+        <a-form ref="logsRef" layout="vertical" :model="logs" :disabled="!isAdmin()">
+          <a-divider orientation="left" style="margin-top: 0"><FileTextOutlined /> Event log</a-divider>
+          <a-row :gutter="16">
+            <a-col :span="12"><a-form-item label="Lines to keep in normal mode" name="log_lines" :rules="logLineRules"
+              extra="Log of a connection with Verbose off (10…100000)"><a-input-number v-model:value="logs.log_lines" style="width: 100%" /></a-form-item></a-col>
+            <a-col :span="12"><a-form-item label="Lines to keep in Verbose mode" name="verbose_log_lines" :rules="logLineRules"
+              extra="Log of a connection with Verbose on (10…100000)"><a-input-number v-model:value="logs.verbose_log_lines" style="width: 100%" /></a-form-item></a-col>
+          </a-row>
+          <p class="muted">The limits apply to the logs of outbounds and inbounds at once: older lines are removed, connections are not restarted.</p>
+          <a-button v-if="isAdmin()" type="primary" :loading="savingLogs" @click="saveLogs"><template #icon><SaveOutlined /></template>Save settings</a-button>
+        </a-form>
+      </a-card>
+    </div>
     <Users v-if="isAdmin()" @changed="reload" />
     <div v-if="canEdit()" class="pane-section">
       <h3 class="pane-subtitle"><DatabaseOutlined /> Backup and Restore</h3>
@@ -101,7 +117,7 @@
 import { computed, onMounted, reactive, ref } from 'vue'
 import { message, Modal } from 'ant-design-vue'
 import {
-  ApiOutlined, DatabaseOutlined, DeploymentUnitOutlined, DownloadOutlined, HeartOutlined, PauseCircleOutlined, PlayCircleOutlined,
+  ApiOutlined, AppstoreOutlined, DatabaseOutlined, DeploymentUnitOutlined, DownloadOutlined, FileTextOutlined, HeartOutlined, PauseCircleOutlined, PlayCircleOutlined,
   PoweroffOutlined, ReloadOutlined, SaveOutlined, SettingOutlined, StopOutlined, UploadOutlined
 } from '@ant-design/icons-vue'
 import { api, canEdit, isAdmin, loadSession, session } from '../api'
@@ -115,7 +131,10 @@ const lifetimeUnits = [
   { value: 3600, label: 'hours' },
   { value: 86400, label: 'days' }
 ]
+const logLineRules = [{ required: true, type: 'number', min: 10, max: 100000, message: '10…100000' }]
 const formRef = ref()
+const logsRef = ref()
+const savingLogs = ref(false)
 const busy = ref(false)
 const exporting = ref(false)
 const importing = ref(false)
@@ -137,6 +156,7 @@ const form = reactive({
   connectivity_checks: true, probe_target: '1.1.1.1:443', check_interval: 30, capture: true, unreachable_limit: 100,
   unreachable_lifetime: 86400, lifetime: 1, lifetime_unit: 86400
 })
+const logs = reactive({ log_lines: 300, verbose_log_lines: 3000 })
 
 function splitLifetime(seconds) {
   const unit = [...lifetimeUnits].reverse().find((item) => seconds % item.value === 0) || lifetimeUnits[0]
@@ -153,7 +173,9 @@ async function checkLifetime() {
 
 async function load() {
   try {
-    Object.assign(form, await api.get('/api/settings'))
+    const settings = await api.get('/api/settings')
+    Object.assign(form, settings)
+    Object.assign(logs, { log_lines: settings.log_lines, verbose_log_lines: settings.verbose_log_lines })
     splitLifetime(form.unreachable_lifetime)
   } catch (error) {
     message.error(error.message)
@@ -173,7 +195,8 @@ async function save() {
     const { lifetime, lifetime_unit: unit, ...settings } = form
     await api.put('/api/settings', {
       ...settings, default_target: current.default_target, anonymous_dashboard: current.anonymous_dashboard,
-      autostart: current.autostart, unreachable_lifetime: lifetime * unit
+      autostart: current.autostart, unreachable_lifetime: lifetime * unit,
+      log_lines: current.log_lines, verbose_log_lines: current.verbose_log_lines
     })
     await reload()
     emit('refresh')
@@ -182,6 +205,21 @@ async function save() {
     message.error(error.message)
   } finally {
     busy.value = false
+  }
+}
+
+async function saveLogs() {
+  await logsRef.value.validate()
+  savingLogs.value = true
+  try {
+    const current = await api.get('/api/settings', true)
+    await api.put('/api/settings', { ...current, log_lines: logs.log_lines, verbose_log_lines: logs.verbose_log_lines })
+    await reload()
+    message.success('Settings saved')
+  } catch (error) {
+    message.error(error.message)
+  } finally {
+    savingLogs.value = false
   }
 }
 

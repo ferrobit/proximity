@@ -76,7 +76,7 @@ A request below the required level gets `401` (not signed in) or `403` (role too
 | `POST /api/outbounds/{id}/start` | 2 | Start an outbound |
 | `POST /api/outbounds/{id}/stop` | 2 | Stop an outbound; it stays stopped after restarts |
 | `POST /api/outbounds/{id}/restart` | 2 | Reconnect; starts a stopped or failed outbound |
-| `GET /api/outbounds/{id}/log` | 2 | Connection log (last 300 lines, kept across restarts) |
+| `GET /api/outbounds/{id}/log` | 2 | Connection log (last `log_lines` lines, `verbose_log_lines` when `verbose` is on; kept across restarts) |
 | `POST /api/import/amneziawg` | 2 | `{text: "vpn://…"}` → `{config: "<.conf text>"}` |
 | `GET /api/interfaces` | 1 | Host network interfaces (for HOST outbounds) |
 | `GET /api/targets` | 1 | Outbounds and fallbacks usable as route targets |
@@ -137,7 +137,7 @@ stopped by a user, by the router stop, or not started because `autostart` is off
 | `POST /api/inbounds/{id}/start` | 2 | Start the listener or the VPN server |
 | `POST /api/inbounds/{id}/stop` | 2 | Stop it; it stays stopped after restarts |
 | `POST /api/inbounds/{id}/restart` | 2 | Restart; starts a stopped or failed inbound |
-| `GET /api/inbounds/{id}/log` | 2 | `{lines}` — last 300 log lines, kept across restarts |
+| `GET /api/inbounds/{id}/log` | 2 | `{lines}` — last `log_lines` log lines (`verbose_log_lines` when `verbose` is on), kept across restarts |
 | `GET /api/inbounds/{id}/config?user=&embed=&host=` | 2 | OpenVPN client configuration → `{config, file}`; `file` is `<ID>-<username>.conf`. Empty `user` = anonymous, `embed=true` writes the credentials into the file, `host` is used when the inbound has no public address |
 | `POST /api/inbounds/generate` | 2 | `{kind, ca_certificate, ca_key}` → new key material. `kind`: `all`, `pki` (CA + server + client), `server`, `client` (both signed by the given CA), `tls_crypt`, `otp_key`, `tls` (self-signed certificate for SOCKS5) |
 
@@ -203,7 +203,8 @@ Settings object:
   "log_level": "warning", "ipv6": false, "anonymous_dashboard": true,
   "connectivity_checks": true, "probe_target": "1.1.1.1:443",
   "check_interval": 30, "capture": true,
-  "unreachable_limit": 100, "unreachable_lifetime": 86400, "autostart": true
+  "unreachable_limit": 100, "unreachable_lifetime": 86400, "autostart": true,
+  "log_lines": 300, "verbose_log_lines": 3000
 }
 ```
 
@@ -213,6 +214,9 @@ restart. Configurations and backups older than version 5 get `true`.
 
 `unreachable_limit` (1…10000) and `unreachable_lifetime` (seconds, 60…31536000) bound the
 *Unreachable routes* list; omitted or zero values mean the defaults.
+
+`log_lines` and `verbose_log_lines` (10…100000) — lines kept in the log of an outbound or
+inbound with `verbose` off and on; omitted or zero values mean 300 and 3000.
 
 ## Examples
 

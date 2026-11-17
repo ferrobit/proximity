@@ -1,6 +1,7 @@
 package link
 
 import (
+	"cmp"
 	"context"
 	"encoding/json"
 	"errors"
@@ -53,6 +54,7 @@ type Manager struct {
 	outbounds []config.Outbound
 	settings  config.Settings
 	snapshot  config.Config
+	limits    [2]int
 	active    bool
 	changed   int64
 }
@@ -94,8 +96,8 @@ const (
 	StateStopped      = "stopped"
 )
 
-const maxLogLines = 300
-const maxVerboseLines = 3000
+const maxLogLines = config.DefaultLogLines
+const maxVerboseLines = config.DefaultVerboseLogLines
 const debugPrefix = "debug: "
 const maxTracedLines = 20
 const defaultCheckTimeout = 5 * time.Second
@@ -157,7 +159,9 @@ func (manager *Manager) Apply(outbounds []config.Outbound, settings config.Setti
 	manager.mutex.Lock()
 	defer manager.mutex.Unlock()
 	manager.outbounds, manager.settings = slices.Clone(outbounds), settings
+	manager.limits = [2]int{settings.LogLines, settings.VerboseLogLines}
 	manager.applyOutbounds()
+	manager.resizeBooks()
 }
 
 func (manager *Manager) Control(id string, action string) error {
@@ -374,9 +378,29 @@ func (manager *Manager) book(key string) *logBook {
 	if manager.options.StateDir != "" {
 		path = filepath.Join(manager.options.StateDir, logsDirectory, key+logSuffix)
 	}
-	result := openLogBook(path)
+	result := openLogBook(path, max(manager.logLimit(false), manager.logLimit(true)))
 	manager.books[key] = result
 	return result
+}
+
+func (manager *Manager) logLimit(verbose bool) int {
+	if verbose {
+		return cmp.Or(manager.limits[1], maxVerboseLines)
+	}
+	return cmp.Or(manager.limits[0], maxLogLines)
+}
+
+func (manager *Manager) resizeBooks() {
+	verbose := map[string]bool{}
+	for _, outbound := range manager.outbounds {
+		verbose[outboundKey(outbound.Slot)] = outbound.Verbose
+	}
+	for _, inbound := range manager.snapshot.Inbounds {
+		verbose[inboundKey(inbound.Port)] = inbound.Verbose
+	}
+	for key, book := range manager.books {
+		book.resize(manager.logLimit(verbose[key]))
+	}
 }
 
 func (manager *Manager) launch(outbound config.Outbound, settings config.Settings,
@@ -388,7 +412,7 @@ func (manager *Manager) launch(outbound config.Outbound, settings config.Setting
 		done: make(chan struct{}), id: outbound.ID, status: Status{State: StateConnecting,
 			Since: time.Now().Unix(), Latency: -1, DNS: []string{}, Domains: []string{},
 			Routes: []string{}}}
-	result.book.resize(outbound.Verbose)
+	result.book.resize(manager.logLimit(outbound.Verbose))
 	result.logf("starting")
 	result.debugSettings()
 	go result.run(ctx)

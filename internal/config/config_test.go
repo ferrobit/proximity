@@ -1101,6 +1101,10 @@ func TestValidate_Problems(t *testing.T) {
 			"invalid number of unreachable routes (10001), expected 1..10000"},
 		{func(config *Config) { config.Settings.UnreachableLifetime = 59 },
 			"invalid lifetime of unreachable routes (59), expected 60..31536000"},
+		{func(config *Config) { config.Settings.LogLines = 9 },
+			"invalid number of log lines (9), expected 10..100000"},
+		{func(config *Config) { config.Settings.VerboseLogLines = 100001 },
+			"invalid number of verbose log lines (100001), expected 10..100000"},
 		{func(config *Config) { config.Inbounds[1].ID = "SOCKS5 1" },
 			"duplicate inbound ID 'SOCKS5 1'"},
 		{func(config *Config) { config.Inbounds[1].Port = InboundPortFirst },
@@ -1125,9 +1129,12 @@ func TestValidate_Problems(t *testing.T) {
 	{
 		config := makeConfig(t)
 		config.Settings.UnreachableLimit, config.Settings.UnreachableLifetime = 0, 0
+		config.Settings.LogLines, config.Settings.VerboseLogLines = 0, 0
 		config.Inbounds = nil
 		require.NoError(t, config.Validate())
 		require.Equal(t, 100, config.Settings.UnreachableLimit)
 		require.Equal(t, 86400, config.Settings.UnreachableLifetime)
+		require.Equal(t, 300, config.Settings.LogLines)
+		require.Equal(t, 3000, config.Settings.VerboseLogLines)
 	}
 }
