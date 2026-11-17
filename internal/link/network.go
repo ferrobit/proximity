@@ -29,6 +29,7 @@ type Tools struct {
 	Oathtool   string
 	Iptables   string
 	Forwarding string
+	Faketime   string
 }
 
 type Interface struct {
@@ -60,7 +61,8 @@ func DefaultTools() Tools {
 		AmneziaWG: lookup("PROXIMITY_AWG", "awg"), IP: lookup("PROXIMITY_IP", "ip"),
 		Ping: lookup("PROXIMITY_PING", "ping"), Oathtool: lookup("PROXIMITY_OATHTOOL", "oathtool"),
 		Iptables:   lookup("PROXIMITY_IPTABLES", "iptables"),
-		Forwarding: lookup("PROXIMITY_FORWARDING", forwardingPath)}
+		Forwarding: lookup("PROXIMITY_FORWARDING", forwardingPath),
+		Faketime:   lookup("PROXIMITY_FAKETIME", findFaketime())}
 }
 
 func InboundTable(slot int) int {

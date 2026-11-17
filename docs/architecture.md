@@ -13,6 +13,7 @@ meant for people who want to understand, debug or extend the project.
 - [Monitoring and states](#monitoring-and-states)
 - [OpenVPN driver](#openvpn-driver)
 - [AmneziaWG driver](#amneziawg-driver)
+- [Time synchronization](#time-synchronization)
 - [Inbounds](#inbounds)
 - [Statistics and unreachable routes](#statistics-and-unreachable-routes)
 - [Storage](#storage)
@@ -52,6 +53,7 @@ flowchart TB
 | `internal/link` | Outbound drivers (HOST, proxy, OpenVPN, AmneziaWG), monitoring, routing tables, transparent capture |
 | `internal/auth` | Password hashing (PBKDF2-SHA256, 600 000 iterations), signed session tokens, bootstrap admin |
 | `internal/wgconf` | Parsing WireGuard/AmneziaWG configuration, Amnezia `vpn://` import |
+| `internal/clock` | SNTP client, host clock check, Proximity's own time (offset) |
 | `web` | Vue 3 single-page app, built by Vite and embedded with `go:embed` |
 
 The only third-party Go dependency is `testify`, used in tests. The binary is built with
@@ -67,7 +69,7 @@ The `Dockerfile` is a multi-stage build:
 | `web` | `node:22-bookworm-slim` | `web/dist` |
 | `amnezia` | `golang:1.25-bookworm` | `amneziawg-go` (`v3.1.20260828`), `awg` (`v3.1.20260812`) |
 | `build` | `golang:1.25-bookworm` | `proximity` with the UI embedded |
-| final | `debian:bookworm-slim` | + `iproute2`, `iptables`, `iputils-ping`, `openvpn`, `oathtool`, `ca-certificates`, `tzdata` |
+| final | `debian:bookworm-slim` | + `iproute2`, `iptables`, `iputils-ping`, `openvpn`, `oathtool`, `libfaketime`, `ca-certificates`, `tzdata` |
 
 Exposed ports: `8899` (UI/API), `7899` (mixed HTTP/SOCKS5 proxy) and `7800-7898` TCP + UDP
 (inbounds). Volume: `/config`.
@@ -245,6 +247,36 @@ its **General** tab.
   would remove the socket, try the kernel module and fail), then applies the configuration with `awg setconf`, addresses and MTU
   (default 1280) are set, and the default route goes into the tunnel's table.
 - The connection log ends with the output of `awg show` for the device.
+
+## Time synchronization
+
+A container shares the kernel clock with the host (Linux time namespaces cover only the
+monotonic clocks), so setting the clock from the container would change the host clock.
+Proximity never does it and keeps its own time instead: the host clock plus an offset.
+
+- `internal/clock` sends SNTP requests (UDP 123, NTP version 4, client mode) to all servers
+  at once, 3 s timeout each, rejects answers in a wrong mode, from unsynchronized servers
+  (leap indicator 3, stratum 0) and with a foreign originate timestamp, and takes the
+  median offset. With transparent capture the requests carry the capture mark and bypass
+  the TUN device.
+- The kernel synchronization flag is read with `adjtimex` (read-only, no privileges).
+- States: `host` — the median offset is within the tolerance, or no server answers but the
+  kernel reports a synchronized clock; `corrected` — the offset is larger, Proximity uses
+  it (when servers stop answering later, the last offset is kept); `unsynchronized` — no
+  answer and no kernel synchronization; the check is repeated every 10 s instead of the
+  normal interval.
+- The applied offset is written to `/run/proximity/clock.json`.
+- Every OpenVPN client and server waits in `start` until the state is `host` or
+  `corrected`, at most *Wait for synchronization*; otherwise the start fails with a fatal
+  error and the service becomes `failed` without further attempts.
+- With an offset OpenVPN runs with `LD_PRELOAD=libfaketime.so.1`,
+  `FAKETIME=±seconds` and `FAKETIME_DONT_FAKE_MONOTONIC=1`: certificate validity is
+  checked with the corrected time, timers keep the real monotonic clock. Without
+  `libfaketime` (`PROXIMITY_FAKETIME` or `/usr/lib/*/faketime/libfaketime.so.1`) the start
+  fails.
+- One-time codes of OpenVPN outbounds are generated with the corrected time
+  (`oathtool --now`); `proximity verify` of OpenVPN inbounds reads `clock.json` (its path is
+  in `auth.json`). Certificates and keys generated in the UI use the corrected time too.
 
 ## Inbounds
 

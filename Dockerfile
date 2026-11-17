@@ -43,7 +43,7 @@ FROM ${BASE_IMAGE}
 LABEL org.opencontainers.image.title="proximity"
 RUN apt-get update && \
     apt-get install -y --no-install-recommends ca-certificates iproute2 iptables iputils-ping \
-        openvpn oathtool tzdata && \
+        openvpn oathtool tzdata libfaketime && \
     rm -rf /var/lib/apt/lists/* && \
     mkdir -p /config /run/proximity /usr/share/proximity/geodata
 COPY --from=mihomo /mihomo /usr/local/bin/mihomo

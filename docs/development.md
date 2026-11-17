@@ -17,6 +17,7 @@ proximity/
 ├── cmd/proximity/          entry point (flags, env, `health` and `hook` subcommands)
 ├── internal/
 │   ├── auth/               password hashing, session tokens, bootstrap administrator
+│   ├── clock/              SNTP client, host clock check, Proximity's own time
 │   ├── config/             model, validation, renames, JSON store, backup
 │   ├── link/               outbound drivers, monitoring, routing tables, transparent capture
 │   ├── router/             mihomo config generator, mihomo process, traffic tracker
@@ -107,7 +108,8 @@ sudo ../proximity-build/bin/proximity \
 ```
 
 Without `PROXIMITY_NETWORK=host` Proximity works in bridge mode: no transparent capture,
-programs use the proxy port.
+programs use the proxy port. Install `libfaketime` too (Debian/Ubuntu package
+`libfaketime`): OpenVPN needs it when the host clock is wrong.
 
 > [!NOTE]
 > The screenshots in this repository were taken from exactly such a local run: real
@@ -152,17 +154,18 @@ make cover    # with coverage per package; profile in ../proximity-build/coverag
 go test -race ./...   # by hand: uses the default Go caches
 ```
 
-Current state (version 1.2.0): **107 tests, all passing, 93.5% total statement coverage.**
+Current state (version 1.2.0): **116 tests, all passing, 93.7% total statement coverage.**
 
 | Package | Coverage |
 |---|---|
 | `cmd/proximity` | 81.4% |
 | `internal/auth` | 94.1% |
-| `internal/config` | 95.8% |
-| `internal/link` | 89.7% |
+| `internal/clock` | 97.4% |
+| `internal/config` | 95.9% |
+| `internal/link` | 89.8% |
 | `internal/router` | 96.6% |
 | `internal/rules` | 99.1% |
-| `internal/server` | 94.0% |
+| `internal/server` | 94.1% |
 | `internal/wgconf` | 97.9% |
 
 Tests use fake tools (`ip`, `openvpn`, `iptables`, `ping` …) and a fake mihomo, so they run

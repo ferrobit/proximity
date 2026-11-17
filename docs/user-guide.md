@@ -474,6 +474,30 @@ Only an administrator can change these settings; other roles see them read-only.
 
 ### Miscellaneous
 
+**Time synchronization.** OpenVPN needs exact time: certificates have a validity period and
+one-time codes (TOTP) change every 30 seconds. Proximity never changes the host clock.
+Instead it compares the host clock with NTP servers:
+
+| Result | State | What happens |
+|---|---|---|
+| The host clock differs by no more than the allowed deviation | 🟢 *Host clock is used* | Everything uses the host clock |
+| The host clock is wrong | 🟡 *Proximity's own time is used* | OpenVPN clients and servers run with the measured offset (through `libfaketime`), one-time codes are generated and checked with the corrected time |
+| NTP servers do not answer, but the host reports a synchronized clock (NTP daemon on the host) | 🟢 *Host clock is used* | As above |
+| NTP servers do not answer and the host clock is not synchronized | 🔴 *Time is not synchronized* | OpenVPN does not start; the check is repeated every 10 s |
+
+The state, the last result and **Check now** are shown at the top of the section.
+
+| Field | Meaning |
+|---|---|
+| Synchronize automatically | On by default: NTP servers `time.cloudflare.com`, `time.google.com`, `pool.ntp.org`, allowed deviation 1 s, check every hour. Off: the fields below |
+| NTP servers | 1…10 host names or IP addresses, optionally with `:port` (default port 123) |
+| Allowed deviation, seconds | 1…600. A larger deviation of the host clock switches to Proximity's own time |
+| Check interval, seconds | 60…86400 |
+| Wait for synchronization, seconds | Default 60, 5…600, also in automatic mode. Every OpenVPN client and server waits for synchronized time before it starts; when the time is still not synchronized after this wait, the connection fails (*failed*) and is started again with **Start** / **Restart** |
+
+UDP port 123 to the NTP servers must be open. When Proximity captures the host traffic, its
+own NTP requests bypass the capture.
+
 **Event log** — how many lines the log of every outbound and inbound keeps:
 
 | Field | Meaning |

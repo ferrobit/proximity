@@ -22,6 +22,7 @@ import (
 	"syscall"
 	"time"
 
+	"proximity/internal/clock"
 	"proximity/internal/config"
 )
 
@@ -40,6 +41,7 @@ type authState struct {
 	Anonymous bool       `json:"anonymous"`
 	OTPKey    string     `json:"otp_key"`
 	Users     []authUser `json:"users"`
+	Clock     string     `json:"clock,omitempty"`
 }
 
 type openvpnAcceptor struct {
@@ -144,6 +146,12 @@ func RunVerify(path string, credentials string, now time.Time) error {
 	}
 	name, rest, _ := strings.Cut(strings.ReplaceAll(string(data), "\r", ""), "\n")
 	password, _, _ := strings.Cut(rest, "\n")
+	if state.Clock != "" {
+		// NOTE: Without the clock file the host clock is used.
+		if offset, err := clock.ReadOffset(state.Clock); err == nil {
+			now = now.Add(offset)
+		}
+	}
 	return state.verify(name, password, now)
 }
 
@@ -250,11 +258,15 @@ func (state authState) revoked(current authState) []string {
 }
 
 func (acceptor *openvpnAcceptor) start(ctx context.Context) error {
+	environment, err := acceptor.runner.manager.synchronize(ctx, acceptor.runner.logf)
+	if err != nil {
+		return err
+	}
 	path := filepath.Join(acceptor.directory, "server.conf")
 	acceptor.mutex.Lock()
 	state := acceptor.state
 	acceptor.mutex.Unlock()
-	if err := os.MkdirAll(acceptor.directory, 0o700); err != nil {
+	if err = os.MkdirAll(acceptor.directory, 0o700); err != nil {
 		return fmt.Errorf("failed to create directory '%v': %w", acceptor.directory, err)
 	} else if err = acceptor.tools.enableForwarding(); err != nil {
 		return err
@@ -267,6 +279,9 @@ func (acceptor *openvpnAcceptor) start(ctx context.Context) error {
 	command := exec.Command(acceptor.tools.OpenVPN, "--config", path)
 	if acceptor.runner.bypass != 0 {
 		command.Args = append(command.Args, "--mark", strconv.Itoa(acceptor.runner.bypass))
+	}
+	if len(environment) != 0 {
+		command.Env = append(os.Environ(), environment...)
 	}
 	command.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
 	reader, writer := io.Pipe()
@@ -381,7 +396,9 @@ func (acceptor *openvpnAcceptor) dispose() {
 }
 
 func (acceptor *openvpnAcceptor) store(state authState) error {
-	data, err := json.Marshal(state)
+	stored := state
+	stored.Clock = acceptor.runner.manager.options.Clock.Path()
+	data, err := json.Marshal(stored)
 	if err != nil {
 		return fmt.Errorf("failed to encode users: %w", err)
 	} else if err = config.WriteFile(filepath.Join(acceptor.directory, "auth.json"),

@@ -4,9 +4,12 @@ import (
 	"encoding/base32"
 	"errors"
 	"fmt"
+	"net"
 	"net/netip"
 	"net/url"
 	"regexp"
+	"slices"
+	"strconv"
 	"strings"
 
 	"proximity/internal/rules"
@@ -14,21 +17,26 @@ import (
 )
 
 type Settings struct {
-	MixedPort           int    `json:"mixed_port"`
-	BindAddress         string `json:"bind_address"`
-	DefaultTarget       string `json:"default_target"`
-	LogLevel            string `json:"log_level"`
-	IPv6                bool   `json:"ipv6"`
-	AnonymousDashboard  bool   `json:"anonymous_dashboard"`
-	ConnectivityChecks  bool   `json:"connectivity_checks"`
-	ProbeTarget         string `json:"probe_target"`
-	CheckInterval       int    `json:"check_interval"`
-	Capture             bool   `json:"capture"`
-	UnreachableLimit    int    `json:"unreachable_limit"`
-	UnreachableLifetime int    `json:"unreachable_lifetime"`
-	Autostart           bool   `json:"autostart"`
-	LogLines            int    `json:"log_lines"`
-	VerboseLogLines     int    `json:"verbose_log_lines"`
+	MixedPort           int      `json:"mixed_port"`
+	BindAddress         string   `json:"bind_address"`
+	DefaultTarget       string   `json:"default_target"`
+	LogLevel            string   `json:"log_level"`
+	IPv6                bool     `json:"ipv6"`
+	AnonymousDashboard  bool     `json:"anonymous_dashboard"`
+	ConnectivityChecks  bool     `json:"connectivity_checks"`
+	ProbeTarget         string   `json:"probe_target"`
+	CheckInterval       int      `json:"check_interval"`
+	Capture             bool     `json:"capture"`
+	UnreachableLimit    int      `json:"unreachable_limit"`
+	UnreachableLifetime int      `json:"unreachable_lifetime"`
+	Autostart           bool     `json:"autostart"`
+	LogLines            int      `json:"log_lines"`
+	VerboseLogLines     int      `json:"verbose_log_lines"`
+	TimeManual          bool     `json:"time_manual"`
+	TimeServers         []string `json:"time_servers"`
+	TimeTolerance       int      `json:"time_tolerance"`
+	TimeInterval        int      `json:"time_interval"`
+	TimeWait            int      `json:"time_wait"`
 }
 
 type User struct {
@@ -202,12 +210,17 @@ const DefaultLogLines = 300
 const DefaultVerboseLogLines = 3000
 const minLogLines = 10
 const maxLogLines = 100000
+const defaultTimeTolerance = 1
+const defaultTimeInterval = 60 * 60
+const defaultTimeWait = 60
+const maxTimeServers = 10
 
 var typeLabels = map[string]string{TypeHost: "HOST", TypeSocks5: "SOCKS5", TypeHTTP: "HTTP",
 	TypeOpenVPN: "OpenVPN", TypeAmneziaWG: "AmneziaWG"}
 var reservedTargets = []string{TargetDirect, TargetReject, "REJECT-DROP", "PASS", "COMPATIBLE",
 	"GLOBAL"}
 var logLevels = []string{"silent", "error", "warning", "info", "debug"}
+var defaultTimeServers = []string{"time.cloudflare.com", "time.google.com", "pool.ntp.org"}
 var identifierPattern = regexp.MustCompile(`^[A-Za-z0-9]([A-Za-z0-9 _.-]{0,46}[A-Za-z0-9_.-])?$`)
 var userPattern = regexp.MustCompile(`^[a-z0-9][a-z0-9_.-]{0,31}$`)
 var hostPattern = regexp.MustCompile(`^[A-Za-z0-9]([A-Za-z0-9.-]{0,251}[A-Za-z0-9])?$`)
@@ -219,7 +232,9 @@ func Default() Config {
 		ConnectivityChecks: true, ProbeTarget: defaultProbeTarget, CheckInterval: 30,
 		Capture: true, UnreachableLimit: defaultUnreachableLimit,
 		UnreachableLifetime: defaultUnreachableLifetime, Autostart: true,
-		LogLines: DefaultLogLines, VerboseLogLines: DefaultVerboseLogLines}, Users: []User{},
+		LogLines: DefaultLogLines, VerboseLogLines: DefaultVerboseLogLines,
+		TimeServers: slices.Clone(defaultTimeServers), TimeTolerance: defaultTimeTolerance,
+		TimeInterval: defaultTimeInterval, TimeWait: defaultTimeWait}, Users: []User{},
 		Outbounds: []Outbound{}, Fallbacks: []Fallback{}, Routes: []Route{},
 		Inbounds: []Inbound{}}
 }
@@ -291,6 +306,38 @@ func (settings *Settings) normalize() {
 	if settings.VerboseLogLines == 0 {
 		settings.VerboseLogLines = DefaultVerboseLogLines
 	}
+	if len(settings.TimeServers) == 0 {
+		settings.TimeServers = slices.Clone(defaultTimeServers)
+	}
+	if settings.TimeTolerance == 0 {
+		settings.TimeTolerance = defaultTimeTolerance
+	}
+	if settings.TimeInterval == 0 {
+		settings.TimeInterval = defaultTimeInterval
+	}
+	if settings.TimeWait == 0 {
+		settings.TimeWait = defaultTimeWait
+	}
+}
+
+func (settings Settings) TimeSync() ([]string, int, int) {
+	if !settings.TimeManual {
+		return slices.Clone(defaultTimeServers), defaultTimeTolerance, defaultTimeInterval
+	}
+	return slices.Clone(settings.TimeServers), settings.TimeTolerance, settings.TimeInterval
+}
+
+func validateTimeServer(server string) error {
+	host, port, err := net.SplitHostPort(server)
+	if err != nil {
+		host, port = server, "123"
+	}
+	if number, err := strconv.Atoi(port); err != nil || number < 1 || number > 65535 {
+		return fmt.Errorf("invalid port of time server '%v'", server)
+	} else if _, err = netip.ParseAddr(host); err != nil && !hostPattern.MatchString(host) {
+		return fmt.Errorf("invalid time server '%v'", server)
+	}
+	return nil
 }
 
 func (settings *Settings) validate(config *Config) error {
@@ -318,11 +365,27 @@ func (settings *Settings) validate(config *Config) error {
 	} else if err = validateRange("number of verbose log lines", settings.VerboseLogLines,
 		minLogLines, maxLogLines); err != nil {
 		return err
+	} else if err = validateRange("number of time servers", len(settings.TimeServers), 1,
+		maxTimeServers); err != nil {
+		return err
+	} else if err = validateRange("time tolerance", settings.TimeTolerance, 1, 600); err != nil {
+		return err
+	} else if err = validateRange("time check interval", settings.TimeInterval, 60,
+		24*60*60); err != nil {
+		return err
+	} else if err = validateRange("time synchronization wait", settings.TimeWait, 5,
+		600); err != nil {
+		return err
 	} else if !config.TargetExists(settings.DefaultTarget) {
 		return fmt.Errorf("default target '%v' does not exist", settings.DefaultTarget)
 	}
 	if _, err := netip.ParseAddr(settings.BindAddress); err != nil && settings.BindAddress != "*" {
 		return fmt.Errorf("invalid bind address '%v'", settings.BindAddress)
+	}
+	for _, server := range settings.TimeServers {
+		if err := validateTimeServer(server); err != nil {
+			return err
+		}
 	}
 	return nil
 }

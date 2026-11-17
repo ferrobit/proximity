@@ -188,6 +188,8 @@ func (server *Server) register() {
 	server.handle("GET /api/inbounds/{id}/log", 2, server.getInboundLog)
 	server.handle("GET /api/inbounds/{id}/config", 2, server.exportInbound)
 	server.handle("GET /api/settings", 1, server.getSettings)
+	server.handle("GET /api/time", 1, server.getTime)
+	server.handle("POST /api/time/check", 2, server.checkTime)
 	server.handle("PUT /api/settings", 3, server.updateSettings)
 	server.handle("GET /api/users", 3, server.getUsers)
 	server.handle("POST /api/users", 3, server.addUser)
@@ -638,7 +640,7 @@ func (server *Server) addInbound(request *http.Request, _ session) (any, error) 
 		return nil, err
 	} else if err = server.store.Update(func(config *config.Config) error {
 		var err error
-		result, err = config.AddInbound(body, time.Now())
+		result, err = config.AddInbound(body, server.clock.Now())
 		return err
 	}); err != nil {
 		return nil, err
@@ -651,7 +653,7 @@ func (server *Server) generateMaterial(request *http.Request, _ session) (any, e
 	if err := decode(request, &body); err != nil {
 		return nil, err
 	}
-	return config.GenerateMaterial(body.Kind, body.Material, time.Now())
+	return config.GenerateMaterial(body.Kind, body.Material, server.clock.Now())
 }
 
 func (server *Server) updateInbound(request *http.Request, _ session) (any, error) {
@@ -660,7 +662,7 @@ func (server *Server) updateInbound(request *http.Request, _ session) (any, erro
 		return nil, err
 	} else if err = server.store.Update(func(config *config.Config) error {
 		var err error
-		if result, err = config.UpdateInbound(id, body, time.Now()); err == nil {
+		if result, err = config.UpdateInbound(id, body, server.clock.Now()); err == nil {
 			server.tracker.RenameInbound(id, result.ID)
 		}
 		return err
@@ -720,6 +722,14 @@ func (server *Server) exportInbound(request *http.Request, _ session) (any, erro
 		name = anonymousName
 	}
 	return map[string]string{"config": text, "file": inbound.ID + "-" + name + ".conf"}, nil
+}
+
+func (server *Server) getTime(_ *http.Request, _ session) (any, error) {
+	return server.clock.Status(), nil
+}
+
+func (server *Server) checkTime(request *http.Request, _ session) (any, error) {
+	return server.clock.Check(request.Context()), nil
 }
 
 func (server *Server) getSettings(_ *http.Request, _ session) (any, error) {

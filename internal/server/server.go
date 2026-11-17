@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"proximity/internal/auth"
+	"proximity/internal/clock"
 	"proximity/internal/config"
 	"proximity/internal/link"
 	"proximity/internal/router"
@@ -31,6 +32,7 @@ type Options struct {
 	HostNetwork  bool
 	ProxyBind    string
 	Tools        link.Tools
+	Clock        *clock.Clock
 	Logf         func(format string, arguments ...any)
 }
 
@@ -38,6 +40,7 @@ type Server struct {
 	options   Options
 	store     *config.Store
 	manager   *link.Manager
+	clock     *clock.Clock
 	mihomo    *router.Mihomo
 	tracker   *router.Tracker
 	dirty     chan struct{}
@@ -118,12 +121,15 @@ func internalNew(options Options) (*Server, error) {
 	}
 	server := &Server{options: options, store: store, dirty: make(chan struct{}, 1),
 		started: time.Now(), warnings: []string{}, mux: http.NewServeMux(),
-		traced: map[string]tracedConnection{}}
+		traced: map[string]tracedConnection{}, clock: options.Clock}
+	if server.clock == nil {
+		server.clock = clock.New(filepath.Join(options.RunPath, "clock.json"))
+	}
 	home := filepath.Join(options.ConfigPath, "mihomo")
 	server.tracker = router.NewTracker(filepath.Join(options.ConfigPath, "state.json"))
 	if server.manager, err = link.NewManager(link.Options{Directory: options.RunPath,
 		StateDir: options.ConfigPath, Executable: options.Executable, Tools: options.Tools,
-		HostNetwork: options.HostNetwork, Changed: server.notify}); err != nil {
+		HostNetwork: options.HostNetwork, Changed: server.notify, Clock: server.clock}); err != nil {
 		return nil, err
 	} else if server.mihomo, err = router.NewMihomo(options.MihomoBinary, home,
 		filepath.Join(options.RunPath, "mihomo.sock"), server.print); err != nil {
@@ -223,6 +229,7 @@ func (server *Server) Run(ctx context.Context) error {
 	stop()
 	<-finished
 	server.manager.Close()
+	server.clock.Close()
 	server.mihomo.Close()
 	if err := server.tracker.Save(); err != nil {
 		server.options.Logf("%v", err)
@@ -389,6 +396,7 @@ func (server *Server) synchronize() {
 	if !server.options.HostNetwork || !snapshot.Settings.Capture || !running {
 		server.capture()
 	}
+	server.clock.Apply(server.clockOptions(snapshot.Settings))
 	server.manager.SetActive(running, snapshot)
 	server.manager.Apply(snapshot.Outbounds, snapshot.Settings)
 	links := server.manager.Status()
@@ -515,4 +523,15 @@ func (lines traceLines) add(item tracedConnection, line string) {
 	if item.inbound != "" {
 		lines.inbounds[item.inbound] = append(lines.inbounds[item.inbound], line)
 	}
+}
+
+func (server *Server) clockOptions(settings config.Settings) clock.Options {
+	servers, tolerance, interval := settings.TimeSync()
+	result := clock.Options{Servers: servers, Tolerance: time.Duration(tolerance) * time.Second,
+		Interval: time.Duration(interval) * time.Second,
+		Wait:     time.Duration(settings.TimeWait) * time.Second}
+	if server.options.HostNetwork && settings.Capture {
+		result.Mark = link.CaptureMark
+	}
+	return result
 }

@@ -81,16 +81,45 @@
     <div class="pane-section">
       <h3 class="pane-subtitle"><AppstoreOutlined /> Miscellaneous</h3>
       <a-card size="small" class="settings-card">
-        <a-form ref="logsRef" layout="vertical" :model="logs" :disabled="!isAdmin()">
-          <a-divider orientation="left" style="margin-top: 0"><FileTextOutlined /> Event log</a-divider>
+        <a-form ref="miscRef" layout="vertical" :model="misc" :disabled="!isAdmin()">
+          <a-divider orientation="left" style="margin-top: 0"><ClockCircleOutlined /> Time synchronization</a-divider>
+          <div class="time-status">
+            <a-badge :status="timeView.badge" :text="timeView.title" />
+            <span class="muted">{{ time.message }}</span>
+            <span class="muted" v-if="time.checked">· checked {{ ago(time.checked) }}</span>
+            <a-button v-if="canEdit()" size="small" :disabled="false" :loading="checkingTime" @click="checkTime">
+              <template #icon><SyncOutlined /></template>Check now</a-button>
+          </div>
+          <a-form-item extra="Proximity compares the host clock with NTP servers and never changes it. When the host clock is wrong, OpenVPN clients and servers run with Proximity's own time: certificates and one-time codes (TOTP) need exact time.">
+            <a-checkbox :checked="!misc.time_manual" @change="misc.time_manual = !$event.target.checked">Synchronize automatically</a-checkbox>
+          </a-form-item>
+          <p v-if="!misc.time_manual" class="muted">NTP servers {{ defaultTimeServers.join(', ') }}; allowed deviation of the host clock 1 s; checked every hour.</p>
+          <a-row v-else :gutter="16">
+            <a-col :span="12"><a-form-item label="NTP servers" name="time_servers"
+              :rules="[{ required: true, type: 'array', min: 1, max: 10, message: '1…10 servers' }]" extra="Host name or IP address, optionally with :port">
+              <a-select v-model:value="misc.time_servers" mode="tags" :open="false" :token-separators="[',', ' ']" placeholder="time.example.com" /></a-form-item></a-col>
+            <a-col :span="6"><a-form-item label="Allowed deviation, seconds" name="time_tolerance"
+              :rules="[{ required: true, type: 'number', min: 1, max: 600, message: '1…600' }]" extra="A larger deviation switches to Proximity's own time">
+              <a-input-number v-model:value="misc.time_tolerance" style="width: 100%" /></a-form-item></a-col>
+            <a-col :span="6"><a-form-item label="Check interval, seconds" name="time_interval"
+              :rules="[{ required: true, type: 'number', min: 60, max: 86400, message: '60…86400' }]">
+              <a-input-number v-model:value="misc.time_interval" style="width: 100%" /></a-form-item></a-col>
+          </a-row>
+          <a-row :gutter="16">
+            <a-col :span="12"><a-form-item label="Wait for synchronization, seconds" name="time_wait"
+              :rules="[{ required: true, type: 'number', min: 5, max: 600, message: '5…600' }]"
+              extra="OpenVPN starts only with synchronized time; after this wait the connection fails (5…600)">
+              <a-input-number v-model:value="misc.time_wait" style="width: 100%" /></a-form-item></a-col>
+          </a-row>
+          <a-divider orientation="left"><FileTextOutlined /> Event log</a-divider>
           <a-row :gutter="16">
             <a-col :span="12"><a-form-item label="Lines to keep in normal mode" name="log_lines" :rules="logLineRules"
-              extra="Log of a connection with Verbose off (10…100000)"><a-input-number v-model:value="logs.log_lines" style="width: 100%" /></a-form-item></a-col>
+              extra="Log of a connection with Verbose off (10…100000)"><a-input-number v-model:value="misc.log_lines" style="width: 100%" /></a-form-item></a-col>
             <a-col :span="12"><a-form-item label="Lines to keep in Verbose mode" name="verbose_log_lines" :rules="logLineRules"
-              extra="Log of a connection with Verbose on (10…100000)"><a-input-number v-model:value="logs.verbose_log_lines" style="width: 100%" /></a-form-item></a-col>
+              extra="Log of a connection with Verbose on (10…100000)"><a-input-number v-model:value="misc.verbose_log_lines" style="width: 100%" /></a-form-item></a-col>
           </a-row>
           <p class="muted">The limits apply to the logs of outbounds and inbounds at once: older lines are removed, connections are not restarted.</p>
-          <a-button v-if="isAdmin()" type="primary" :loading="savingLogs" @click="saveLogs"><template #icon><SaveOutlined /></template>Save settings</a-button>
+          <a-button v-if="isAdmin()" type="primary" :loading="savingMisc" @click="saveMisc"><template #icon><SaveOutlined /></template>Save settings</a-button>
         </a-form>
       </a-card>
     </div>
@@ -117,10 +146,11 @@
 import { computed, onMounted, reactive, ref } from 'vue'
 import { message, Modal } from 'ant-design-vue'
 import {
-  ApiOutlined, AppstoreOutlined, DatabaseOutlined, DeploymentUnitOutlined, DownloadOutlined, FileTextOutlined, HeartOutlined, PauseCircleOutlined, PlayCircleOutlined,
-  PoweroffOutlined, ReloadOutlined, SaveOutlined, SettingOutlined, StopOutlined, UploadOutlined
+  ApiOutlined, AppstoreOutlined, ClockCircleOutlined, DatabaseOutlined, DeploymentUnitOutlined, DownloadOutlined, FileTextOutlined, HeartOutlined, PauseCircleOutlined, PlayCircleOutlined,
+  PoweroffOutlined, ReloadOutlined, SaveOutlined, SettingOutlined, StopOutlined, SyncOutlined, UploadOutlined
 } from '@ant-design/icons-vue'
 import { api, canEdit, isAdmin, loadSession, session } from '../api'
+import { ago } from '../format'
 import Users from './Users.vue'
 
 const props = defineProps({ overview: { type: Object, default: null } })
@@ -133,8 +163,8 @@ const lifetimeUnits = [
 ]
 const logLineRules = [{ required: true, type: 'number', min: 10, max: 100000, message: '10…100000' }]
 const formRef = ref()
-const logsRef = ref()
-const savingLogs = ref(false)
+const miscRef = ref()
+const savingMisc = ref(false)
 const busy = ref(false)
 const exporting = ref(false)
 const importing = ref(false)
@@ -156,7 +186,24 @@ const form = reactive({
   connectivity_checks: true, probe_target: '1.1.1.1:443', check_interval: 30, capture: true, unreachable_limit: 100,
   unreachable_lifetime: 86400, lifetime: 1, lifetime_unit: 86400
 })
-const logs = reactive({ log_lines: 300, verbose_log_lines: 3000 })
+const miscFields = ['log_lines', 'verbose_log_lines', 'time_manual', 'time_servers', 'time_tolerance', 'time_interval', 'time_wait']
+const defaultTimeServers = ['time.cloudflare.com', 'time.google.com', 'pool.ntp.org']
+const misc = reactive({
+  log_lines: 300, verbose_log_lines: 3000, time_manual: false, time_servers: [...defaultTimeServers], time_tolerance: 1,
+  time_interval: 3600, time_wait: 60
+})
+const time = ref({ state: 'checking', message: '', checked: 0 })
+const checkingTime = ref(false)
+const timeStates = {
+  host: ['success', 'Host clock is used'],
+  corrected: ['warning', "Proximity's own time is used"],
+  unsynchronized: ['error', 'Time is not synchronized'],
+  checking: ['processing', 'Checking time']
+}
+const timeView = computed(() => {
+  const [badge, title] = timeStates[time.value.state] || timeStates.checking
+  return { badge, title }
+})
 
 function splitLifetime(seconds) {
   const unit = [...lifetimeUnits].reverse().find((item) => seconds % item.value === 0) || lifetimeUnits[0]
@@ -175,7 +222,8 @@ async function load() {
   try {
     const settings = await api.get('/api/settings')
     Object.assign(form, settings)
-    Object.assign(logs, { log_lines: settings.log_lines, verbose_log_lines: settings.verbose_log_lines })
+    Object.assign(misc, Object.fromEntries(miscFields.map((key) => [key, Array.isArray(settings[key]) ? [...settings[key]] : settings[key]])))
+    await loadTime()
     splitLifetime(form.unreachable_lifetime)
   } catch (error) {
     message.error(error.message)
@@ -196,7 +244,7 @@ async function save() {
     await api.put('/api/settings', {
       ...settings, default_target: current.default_target, anonymous_dashboard: current.anonymous_dashboard,
       autostart: current.autostart, unreachable_lifetime: lifetime * unit,
-      log_lines: current.log_lines, verbose_log_lines: current.verbose_log_lines
+      ...Object.fromEntries(miscFields.map((key) => [key, current[key]]))
     })
     await reload()
     emit('refresh')
@@ -208,18 +256,37 @@ async function save() {
   }
 }
 
-async function saveLogs() {
-  await logsRef.value.validate()
-  savingLogs.value = true
+async function loadTime() {
+  try {
+    time.value = await api.get('/api/time', true)
+  } catch (error) {
+    time.value = { state: 'checking', message: error.message, checked: 0 }
+  }
+}
+
+async function checkTime() {
+  checkingTime.value = true
+  try {
+    time.value = await api.post('/api/time/check')
+  } catch (error) {
+    message.error(error.message)
+  } finally {
+    checkingTime.value = false
+  }
+}
+
+async function saveMisc() {
+  await miscRef.value.validate()
+  savingMisc.value = true
   try {
     const current = await api.get('/api/settings', true)
-    await api.put('/api/settings', { ...current, log_lines: logs.log_lines, verbose_log_lines: logs.verbose_log_lines })
+    await api.put('/api/settings', { ...current, ...Object.fromEntries(miscFields.map((key) => [key, misc[key]])) })
     await reload()
     message.success('Settings saved')
   } catch (error) {
     message.error(error.message)
   } finally {
-    savingLogs.value = false
+    savingMisc.value = false
   }
 }
 
@@ -316,4 +383,5 @@ onMounted(load)
 .service-alert { margin-top: 12px; }
 .service-autostart { margin-top: 12px; }
 .service-hint { margin: 4px 0 0 24px; font-size: 13px; }
+.time-status { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin-bottom: 16px; }
 </style>

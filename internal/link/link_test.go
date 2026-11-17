@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net"
 	"os"
@@ -19,6 +20,7 @@ import (
 
 	"github.com/stretchr/testify/require"
 
+	"proximity/internal/clock"
 	"proximity/internal/config"
 	"proximity/internal/wgconf"
 )
@@ -48,6 +50,7 @@ exit 0
 `
 const fakeOpenVPN = `#!/bin/bash
 echo "$*" > "$(dirname "$0")/openvpn.log"
+env | grep -E '^(FAKETIME|LD_PRELOAD)=' | sort > "$(dirname "$0")/environment.log"
 hook=""
 while [ $# -gt 0 ]; do
 	if [ "$1" = "--up" ]; then hook="${2##* }"; fi
@@ -1065,6 +1068,103 @@ func TestManager_Services(t *testing.T) {
 	}
 }
 
+func TestManager_Time(t *testing.T) {
+	makeClock := func(offset time.Duration, reachable bool) *clock.Clock {
+		result := clock.NewWith(filepath.Join(t.TempDir(), "clock.json"),
+			func(_ context.Context, _ string, _ int) (time.Duration, error) {
+				if !reachable {
+					return 0, errors.New("unreachable")
+				}
+				return offset, nil
+			}, func() (bool, error) {
+				return false, nil
+			})
+		result.Apply(clock.Options{Servers: []string{"ntp.test"}, Tolerance: time.Second,
+			Wait: 300 * time.Millisecond, Interval: time.Hour})
+		t.Cleanup(result.Close)
+		return result
+	}
+	outbound := config.Outbound{ID: "VPN", Type: config.TypeOpenVPN, Enabled: true, Slot: 7,
+		Attempts: 3, ReconnectTimeout: 1, OpenVPN: &config.OpenVPNOptions{Config: sampleOpenVPN,
+			Username: "alice", Password: "wonderland", OTPKey: "GEZDGNBVGY3TQOJQ"}}
+	start := func(timeClock *clock.Clock, faketime string) (*Manager, string) {
+		tools, directory := makeTools(t)
+		tools.Faketime = faketime
+		manager, err := NewManager(Options{Directory: filepath.Join(directory, "run"),
+			Executable: "/usr/local/bin/proximity", Tools: tools, Clock: timeClock})
+		require.NoError(t, err)
+		manager.SetActive(true, config.Config{})
+		t.Cleanup(manager.Close)
+		manager.Apply([]config.Outbound{outbound}, config.Settings{CheckInterval: 5})
+		return manager, directory
+	}
+	{
+		manager, _ := start(makeClock(0, false), "")
+		status := waitState(t, manager, "VPN", StateFailed)
+		require.Equal(t, "time is not synchronized after 300ms: NTP servers are unreachable "+
+			"and host clock is not synchronized", status.Message)
+		log := strings.Join(manager.Log("VPN"), "\n")
+		require.Contains(t, log, "waiting for time synchronization, at most 300ms")
+		require.NotContains(t, log, "attempt 2")
+	}
+	{
+		manager, _ := start(makeClock(90*time.Second, true), "")
+		status := waitState(t, manager, "VPN", StateFailed)
+		require.Equal(t, "host clock is 1m30s off and libfaketime is not installed",
+			status.Message)
+	}
+	{
+		timeClock := makeClock(90*time.Second, true)
+		manager, directory := start(timeClock, "/lib/libfaketime.so.1")
+		waitState(t, manager, "VPN", StateUp)
+		data, err := os.ReadFile(filepath.Join(directory, "environment.log"))
+		require.NoError(t, err)
+		require.Equal(t, "FAKETIME=+90.000\nLD_PRELOAD=/lib/libfaketime.so.1\n", string(data))
+		require.Contains(t, strings.Join(manager.Log("VPN"), "\n"), "time: host clock is 1m30s "+
+			"off 'ntp.test', Proximity uses its own time; OpenVPN runs with offset 1m30s")
+		data, err = os.ReadFile(filepath.Join(directory, "run", "answers.txt"))
+		require.NoError(t, err)
+		code := strings.Split(strings.TrimSpace(string(data)), "|")[2]
+		codes := []string{}
+		for _, shift := range []time.Duration{-otpStep, 0, otpStep} {
+			expected, err := computeOTP(outbound.OpenVPN.OTPKey, timeClock.Now().Add(shift))
+			require.NoError(t, err)
+			codes = append(codes, expected)
+		}
+		require.Contains(t, codes, code)
+	}
+	{
+		manager, directory := start(makeClock(0, true), "/lib/libfaketime.so.1")
+		waitState(t, manager, "VPN", StateUp)
+		data, err := os.ReadFile(filepath.Join(directory, "environment.log"))
+		require.NoError(t, err)
+		require.Empty(t, string(data))
+		require.Contains(t, strings.Join(manager.Log("VPN"), "\n"),
+			"time: host clock is accurate: 0s from 'ntp.test'")
+	}
+	{
+		tools, directory := makeTools(t)
+		tools.OpenVPN = writeScript(t, directory, "openvpn-server", fakeServer)
+		tools.Iptables = writeScript(t, directory, "iptables", fakeFirewall)
+		tools.Forwarding = writeScript(t, directory, "ip_forward", "0\n")
+		port, _ := makeInboundPort(t)
+		manager, err := NewManager(Options{Directory: filepath.Join(directory, "run"),
+			Executable: "/usr/local/bin/proximity", Tools: tools, HostNetwork: true,
+			Clock: makeClock(0, false)})
+		require.NoError(t, err)
+		manager.SetActive(true, config.Config{})
+		t.Cleanup(manager.Close)
+		snapshot := config.Default()
+		_, err = snapshot.AddInbound(config.Inbound{Type: config.TypeOpenVPN, ID: "Server",
+			Port: port, Enabled: true, Attempts: 3, Anonymous: true}, time.Now())
+		require.NoError(t, err)
+		manager.ApplyInbounds(snapshot)
+		status := waitInbound(t, manager, "Server", StateFailed)
+		require.Contains(t, status.Message, "time is not synchronized after 300ms")
+		require.NotContains(t, strings.Join(manager.InboundLog("Server"), "\n"), "attempt 2")
+	}
+}
+
 func TestMaskBits_Values(t *testing.T) {
 	bits, err := maskBits("255.255.255.0")
 	require.NoError(t, err)
@@ -1207,6 +1307,21 @@ func TestRunVerify_Credentials(t *testing.T) {
 		state.OTPKey = "1"
 		require.EqualError(t, verify(state, "bob\nbuilder"+code+"\n"),
 			"invalid one-time code of user 'bob'")
+	}
+	{
+		key := "GEZDGNBVGY3TQOJQGEZDGNBVGY3TQOJQ"
+		offsetPath := filepath.Join(directory, "clock.json")
+		require.NoError(t, os.WriteFile(offsetPath, []byte(`{"offset":600000}`), 0o600))
+		state := authState{Users: users, OTPKey: key, Clock: offsetPath}
+		corrected, err := computeOTP(key, now.Add(10*time.Minute))
+		require.NoError(t, err)
+		host, err := computeOTP(key, now)
+		require.NoError(t, err)
+		require.NoError(t, verify(state, "bob\nbuilder"+corrected+"\n"))
+		require.EqualError(t, verify(state, "bob\nbuilder"+host+"\n"),
+			"invalid one-time code of user 'bob'")
+		state.Clock = filepath.Join(directory, "missing.json")
+		require.NoError(t, verify(state, "bob\nbuilder"+host+"\n"))
 	}
 	{
 		require.ErrorContains(t, RunVerify(filepath.Join(directory, "missing"), credentials, now),

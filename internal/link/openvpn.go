@@ -96,10 +96,14 @@ func makeOpenVPNDriver(runner *runner) *openvpnDriver {
 }
 
 func (driver *openvpnDriver) start(ctx context.Context) error {
+	environment, err := driver.runner.manager.synchronize(ctx, driver.runner.logf)
+	if err != nil {
+		return err
+	}
 	hook := filepath.Join(driver.directory, "environment.json")
 	path := filepath.Join(driver.directory, "client.ovpn")
 	text, kind := sanitizeOpenVPN(driver.options.Config, driver.options.Username != "")
-	if err := os.MkdirAll(driver.directory, 0o700); err != nil {
+	if err = os.MkdirAll(driver.directory, 0o700); err != nil {
 		return fmt.Errorf("failed to create directory '%v': %w", driver.directory, err)
 	} else if err = os.WriteFile(path, []byte(text), 0o600); err != nil {
 		return fmt.Errorf("failed to write file '%v': %w", path, err)
@@ -121,6 +125,9 @@ func (driver *openvpnDriver) start(ctx context.Context) error {
 		"register-dns")
 	if driver.runner.bypass != 0 {
 		command.Args = append(command.Args, "--mark", strconv.Itoa(driver.runner.bypass))
+	}
+	if len(environment) != 0 {
+		command.Env = append(os.Environ(), environment...)
 	}
 	driver.runner.debugf("routing table %v, command: %v", driver.table,
 		strings.Join(command.Args, " "))
@@ -212,7 +219,8 @@ func (driver *openvpnDriver) prompts() []prompt {
 		if driver.options.OTPKey == "" || driver.options.OTPMode != config.OTPAppend {
 			return credential(driver.options.Password, "password")()
 		}
-		code, err := GenerateOTP(driver.tools, driver.options.OTPKey, time.Now())
+		code, err := GenerateOTP(driver.tools, driver.options.OTPKey,
+			driver.runner.manager.options.Clock.Now())
 		if err != nil {
 			return "", &fatalError{err}
 		}
@@ -222,7 +230,8 @@ func (driver *openvpnDriver) prompts() []prompt {
 		if driver.options.OTPKey == "" {
 			return "", &fatalError{errors.New("OTP key is required by server")}
 		}
-		code, err := GenerateOTP(driver.tools, driver.options.OTPKey, time.Now())
+		code, err := GenerateOTP(driver.tools, driver.options.OTPKey,
+			driver.runner.manager.options.Clock.Now())
 		if err != nil {
 			return "", &fatalError{err}
 		}

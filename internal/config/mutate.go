@@ -32,6 +32,7 @@ func makeKey() (string, error) {
 
 func (config *Config) Clone() Config {
 	result := *config
+	result.Settings.TimeServers = slices.Clone(config.Settings.TimeServers)
 	result.Users = slices.Clone(config.Users)
 	result.Outbounds = slices.Clone(config.Outbounds)
 	result.Fallbacks = slices.Clone(config.Fallbacks)

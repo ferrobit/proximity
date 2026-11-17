@@ -3,7 +3,9 @@ package server
 import (
 	"bytes"
 	"context"
+	"crypto/x509"
 	"encoding/json"
+	"encoding/pem"
 	"io/fs"
 	"net/http"
 	"net/http/httptest"
@@ -17,6 +19,7 @@ import (
 
 	"github.com/stretchr/testify/require"
 
+	"proximity/internal/clock"
 	"proximity/internal/config"
 	"proximity/internal/link"
 	"proximity/internal/router"
@@ -37,12 +40,19 @@ func makeServer(t *testing.T) *Server {
 	require.NoError(t, os.WriteFile(filepath.Join(geodata, "geosite.dat"), []byte("geo"), 0o600))
 	t.Setenv("PROXIMITY_ADMIN_USER", "admin")
 	t.Setenv("PROXIMITY_ADMIN_PASSWORD", "secret123")
+	timeClock := clock.NewWith(filepath.Join(directory, "clock.json"),
+		func(_ context.Context, _ string, _ int) (time.Duration, error) {
+			return 250 * time.Millisecond, nil
+		}, func() (bool, error) {
+			return true, nil
+		})
 	server, err := New(Options{Version: "test", Listen: "127.0.0.1:0",
 		ConfigPath: filepath.Join(directory, "config"), RunPath: filepath.Join(directory, "run"),
 		GeodataPath: geodata, Executable: "/usr/local/bin/proximity", MihomoBinary: "/bin/false",
-		Tools: link.Tools{IP: tool}, Logf: t.Logf})
+		Tools: link.Tools{IP: tool}, Clock: timeClock, Logf: t.Logf})
 	require.NoError(t, err)
 	t.Cleanup(server.manager.Close)
+	t.Cleanup(timeClock.Close)
 	require.FileExists(t, filepath.Join(directory, "config", "mihomo", "geosite.dat"))
 	return server
 }
@@ -1088,6 +1098,46 @@ func TestServer_Setup(t *testing.T) {
 		code, body, _ := call(t, server, nil, http.MethodGet, "/api/dashboard", nil)
 		require.Equal(t, http.StatusOK, code)
 		require.Equal(t, false, body["capture"])
+	}
+}
+
+func TestServer_Time(t *testing.T) {
+	server := makeServer(t)
+	admin := login(t, server, "admin", "secret123")
+	server.clock.Apply(server.clockOptions(server.store.Snapshot().Settings))
+	code, _, _ := call(t, server, nil, http.MethodGet, "/api/time", nil)
+	require.Equal(t, http.StatusUnauthorized, code)
+	code, body, _ := call(t, server, admin, http.MethodPost, "/api/time/check", nil)
+	require.Equal(t, http.StatusOK, code)
+	require.Equal(t, "host", body["state"])
+	require.Equal(t, 250.0, body["offset"])
+	code, body, _ = call(t, server, admin, http.MethodGet, "/api/time", nil)
+	require.Equal(t, http.StatusOK, code)
+	require.Equal(t, "host clock is accurate: 250ms from 'time.google.com'", body["message"])
+	{
+		settings := config.Default().Settings
+		options := server.clockOptions(settings)
+		require.Equal(t, []string{"time.cloudflare.com", "time.google.com", "pool.ntp.org"},
+			options.Servers)
+		require.Equal(t, []time.Duration{time.Second, time.Hour, time.Minute},
+			[]time.Duration{options.Tolerance, options.Interval, options.Wait})
+		require.Zero(t, options.Mark)
+		server.options.HostNetwork = true
+		settings.TimeManual, settings.TimeServers, settings.TimeWait = true, []string{"ntp.test"}, 5
+		options = server.clockOptions(settings)
+		require.Equal(t, []string{"ntp.test"}, options.Servers)
+		require.Equal(t, 5*time.Second, options.Wait)
+		require.Equal(t, link.CaptureMark, options.Mark)
+	}
+	{
+		inbound := config.Inbound{Type: config.TypeOpenVPN, Enabled: true, Anonymous: true}
+		code, body, _ := call(t, server, admin, http.MethodPost, "/api/inbounds", inbound)
+		require.Equal(t, http.StatusOK, code, body)
+		certificate := server.store.Snapshot().Inbounds[0].OpenVPN.Certificate
+		block, _ := pem.Decode([]byte(certificate))
+		parsed, err := x509.ParseCertificate(block.Bytes)
+		require.NoError(t, err)
+		require.WithinDuration(t, time.Now().Add(-time.Hour), parsed.NotBefore, time.Hour)
 	}
 }
 

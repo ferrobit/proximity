@@ -192,6 +192,8 @@ failure).
 |---|---|---|
 | `GET /api/settings` | 1 | Settings |
 | `PUT /api/settings` | 3 | Replace settings |
+| `GET /api/time` | 1 | Time synchronization state (see below) |
+| `POST /api/time/check` | 2 | Check the time now → the new state |
 | `GET /api/backup` | 2 | Export the configuration (without users) |
 | `POST /api/backup` | 2 | Import; an Operator's import keeps the current settings |
 
@@ -204,7 +206,10 @@ Settings object:
   "connectivity_checks": true, "probe_target": "1.1.1.1:443",
   "check_interval": 30, "capture": true,
   "unreachable_limit": 100, "unreachable_lifetime": 86400, "autostart": true,
-  "log_lines": 300, "verbose_log_lines": 3000
+  "log_lines": 300, "verbose_log_lines": 3000,
+  "time_manual": false,
+  "time_servers": ["time.cloudflare.com", "time.google.com", "pool.ntp.org"],
+  "time_tolerance": 1, "time_interval": 3600, "time_wait": 60
 }
 ```
 
@@ -217,6 +222,27 @@ restart. Configurations and backups older than version 5 get `true`.
 
 `log_lines` and `verbose_log_lines` (10…100000) — lines kept in the log of an outbound or
 inbound with `verbose` off and on; omitted or zero values mean 300 and 3000.
+
+`time_manual` — `false` (default): NTP servers, tolerance and interval are the defaults
+shown above; `true`: `time_servers` (1…10 `host` or `host:port`), `time_tolerance`
+(seconds, 1…600) and `time_interval` (seconds, 60…86400) are used. `time_wait` (seconds,
+5…600) is always used: how long an OpenVPN client or server waits for synchronized time
+before it fails. Omitted or zero values mean the defaults.
+
+Time state:
+
+```json
+{
+  "state": "corrected", "offset": -150000, "applied": -150000, "server": "time.google.com",
+  "host_synchronized": false, "checked": 1794958709, "servers": 3, "answered": 3,
+  "message": "host clock is -2m30s off 'time.google.com', Proximity uses its own time"
+}
+```
+
+`state`: `checking`, `host` (the host clock is used), `corrected` (Proximity's own time is
+used), `unsynchronized`. `offset` is the measured difference to the NTP servers and
+`applied` the offset Proximity uses, both in milliseconds; `host_synchronized` is the
+synchronization flag of the host kernel.
 
 ## Examples
 

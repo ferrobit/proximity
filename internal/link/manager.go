@@ -14,6 +14,7 @@ import (
 	"sync"
 	"time"
 
+	"proximity/internal/clock"
 	"proximity/internal/config"
 )
 
@@ -39,6 +40,7 @@ type Options struct {
 	Tools       Tools
 	HostNetwork bool
 	Changed     func()
+	Clock       *clock.Clock
 }
 
 type Manager struct {

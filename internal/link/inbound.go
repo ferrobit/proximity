@@ -329,8 +329,8 @@ func (runner *inboundRunner) run(ctx context.Context) {
 			break
 		}
 		runner.logf("inbound failed: %v", err)
-		state := StateReconnecting
-		if failures++; failures >= max(1, runner.inbound.Attempts) {
+		state, fatal := StateReconnecting, &fatalError{}
+		if failures++; errors.As(err, &fatal) || failures >= max(1, runner.inbound.Attempts) {
 			state = StateFailed
 		}
 		runner.update(func(status *InboundStatus) {

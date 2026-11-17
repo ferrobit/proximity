@@ -1105,6 +1105,18 @@ func TestValidate_Problems(t *testing.T) {
 			"invalid number of log lines (9), expected 10..100000"},
 		{func(config *Config) { config.Settings.VerboseLogLines = 100001 },
 			"invalid number of verbose log lines (100001), expected 10..100000"},
+		{func(config *Config) { config.Settings.TimeServers = make([]string, 11) },
+			"invalid number of time servers (11), expected 1..10"},
+		{func(config *Config) { config.Settings.TimeTolerance = 601 },
+			"invalid time tolerance (601), expected 1..600"},
+		{func(config *Config) { config.Settings.TimeInterval = 59 },
+			"invalid time check interval (59), expected 60..86400"},
+		{func(config *Config) { config.Settings.TimeWait = 4 },
+			"invalid time synchronization wait (4), expected 5..600"},
+		{func(config *Config) { config.Settings.TimeServers = []string{"bad server"} },
+			"invalid time server 'bad server'"},
+		{func(config *Config) { config.Settings.TimeServers = []string{"ntp.example:0"} },
+			"invalid port of time server 'ntp.example:0'"},
 		{func(config *Config) { config.Inbounds[1].ID = "SOCKS5 1" },
 			"duplicate inbound ID 'SOCKS5 1'"},
 		{func(config *Config) { config.Inbounds[1].Port = InboundPortFirst },
@@ -1130,8 +1142,27 @@ func TestValidate_Problems(t *testing.T) {
 		config := makeConfig(t)
 		config.Settings.UnreachableLimit, config.Settings.UnreachableLifetime = 0, 0
 		config.Settings.LogLines, config.Settings.VerboseLogLines = 0, 0
+		config.Settings.TimeServers, config.Settings.TimeTolerance = nil, 0
+		config.Settings.TimeInterval, config.Settings.TimeWait = 0, 0
 		config.Inbounds = nil
 		require.NoError(t, config.Validate())
+		require.Equal(t, []string{"time.cloudflare.com", "time.google.com", "pool.ntp.org"},
+			config.Settings.TimeServers)
+		require.Equal(t, []int{1, 3600, 60}, []int{config.Settings.TimeTolerance,
+			config.Settings.TimeInterval, config.Settings.TimeWait})
+		config.Settings.TimeServers = []string{"10.0.0.1", "ntp.example:1123", "[fd00::1]:123"}
+		config.Settings.TimeTolerance, config.Settings.TimeInterval = 5, 600
+		require.NoError(t, config.Validate())
+		servers, tolerance, interval := config.Settings.TimeSync()
+		require.Equal(t, defaultTimeServers, servers)
+		require.Equal(t, []int{1, 3600}, []int{tolerance, interval})
+		config.Settings.TimeManual = true
+		servers, tolerance, interval = config.Settings.TimeSync()
+		require.Equal(t, config.Settings.TimeServers, servers)
+		require.Equal(t, []int{5, 600}, []int{tolerance, interval})
+		clone := config.Clone()
+		clone.Settings.TimeServers[0] = "changed"
+		require.Equal(t, "10.0.0.1", config.Settings.TimeServers[0])
 		require.Equal(t, 100, config.Settings.UnreachableLimit)
 		require.Equal(t, 86400, config.Settings.UnreachableLifetime)
 		require.Equal(t, 300, config.Settings.LogLines)
