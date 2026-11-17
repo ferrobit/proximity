@@ -1,27 +1,29 @@
 <template>
   <div class="pane-section">
     <h3 class="pane-subtitle"><TeamOutlined /> Users</h3>
-    <div class="toolbar">
-      <a-button type="primary" @click="open(null)"><template #icon><UserAddOutlined /></template>Add user</a-button>
-      <a-button @click="load"><template #icon><ReloadOutlined /></template>Refresh</a-button>
-      <span class="spacer" />
-      <a-checkbox :checked="session.anonymous_dashboard" :disabled="saving" @change="setAnonymous($event.target.checked)">Anonymous users can view the dashboard</a-checkbox>
-    </div>
-    <a-table :columns="columns" :data-source="users" row-key="name" size="middle" :pagination="false" :loading="loading">
-      <template #bodyCell="{ column, record }">
-        <template v-if="column.key === 'name'"><UserOutlined /> <b>{{ record.name }}</b> <a-tag v-if="record.name === session.user">you</a-tag></template>
-        <template v-else-if="column.key === 'role'"><a-tag :color="roleColors[record.role]">{{ record.role }}</a-tag></template>
-        <template v-else-if="column.key === 'access'">{{ access[record.role] }}</template>
-        <template v-else-if="column.key === 'actions'">
-          <a-space>
-            <a-tooltip title="Edit"><a-button size="small" @click="open(record)"><template #icon><EditOutlined /></template></a-button></a-tooltip>
-            <a-popconfirm :title="`Delete user '${record.name}'?`" :disabled="record.name === session.user" @confirm="remove(record)">
-              <a-button size="small" danger :disabled="record.name === session.user"><template #icon><DeleteOutlined /></template></a-button>
-            </a-popconfirm>
-          </a-space>
+    <a-card size="small" class="settings-card">
+      <div class="toolbar">
+        <a-button type="primary" @click="open(null)"><template #icon><UserAddOutlined /></template>Add user</a-button>
+        <a-button @click="load"><template #icon><ReloadOutlined /></template>Refresh</a-button>
+        <span class="spacer" />
+        <a-checkbox :checked="session.anonymous_dashboard" :disabled="saving" @change="setAnonymous($event.target.checked)">Anonymous users can view the dashboard</a-checkbox>
+      </div>
+      <a-table :columns="columns" :data-source="users" row-key="name" size="middle" :pagination="false" :loading="loading">
+        <template #bodyCell="{ column, record }">
+          <template v-if="column.key === 'name'"><UserOutlined /> <b>{{ record.name }}</b> <a-tag v-if="record.name === session.user">you</a-tag></template>
+          <template v-else-if="column.key === 'role'"><a-tag :color="roleColors[record.role]">{{ record.role }}</a-tag></template>
+          <template v-else-if="column.key === 'access'">{{ access[record.role] }}</template>
+          <template v-else-if="column.key === 'actions'">
+            <a-space>
+              <a-tooltip title="Edit"><a-button size="small" @click="open(record)"><template #icon><EditOutlined /></template></a-button></a-tooltip>
+              <a-popconfirm :title="`Delete user '${record.name}'?`" :disabled="record.name === session.user" @confirm="remove(record)">
+                <a-button size="small" danger :disabled="record.name === session.user"><template #icon><DeleteOutlined /></template></a-button>
+              </a-popconfirm>
+            </a-space>
+          </template>
         </template>
-      </template>
-    </a-table>
+      </a-table>
+    </a-card>
     <a-modal v-model:open="visible" :title="editing ? `Edit user '${editing}'` : 'Add user'" :confirm-loading="busy" destroy-on-close @ok="save">
       <a-form ref="formRef" layout="vertical" :model="form">
         <a-form-item label="User name" name="name" :rules="[{ required: true, pattern: /^[a-z0-9][a-z0-9_.-]{0,31}$/, message: 'Lower-case letters, digits, _ . - (up to 32)' }]">

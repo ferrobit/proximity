@@ -273,7 +273,6 @@ onMounted(load)
 </script>
 
 <style scoped>
-.settings-card { max-width: 860px; }
 .service { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; }
 .service-state { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
 .service-alert { margin-top: 12px; }
