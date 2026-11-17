@@ -3,11 +3,7 @@
     <template #title><ApartmentOutlined /> Connection map</template>
     <template #extra>
       <div class="map-tools">
-        <span class="legend"><i class="swatch good" />good</span>
-        <span class="legend"><i class="swatch busy" />connecting</span>
-        <span class="legend"><i class="swatch warn" />warning</span>
-        <span class="legend"><i class="swatch bad" />down</span>
-        <span class="legend"><i class="swatch off" />off</span>
+        <span v-for="[tone, label] in toneLegend" :key="tone" class="legend"><i class="swatch" :style="{ background: `var(--tone-${tone})` }" />{{ label }}</span>
         <span class="legend"><svg width="28" height="8" class="legend-flow" :style="palette"><path d="M 1 4 L 27 4" /></svg>traffic</span>
         <a-divider type="vertical" />
         <a-switch v-model:checked="showDisabled" size="small" /><span>Show disabled</span>
@@ -120,6 +116,7 @@ import {
 import { api, canEdit, id } from '../api'
 import { activeStates, targetOptions } from '../format'
 import { buildGraph, layoutGraph, nodeHeight, related } from './topology'
+import { toneLegend, toneTokens } from '../states'
 import OutboundDialog from '../views/OutboundDialog.vue'
 import InboundDialog from '../views/InboundDialog.vue'
 import RouteDialog from '../views/RouteDialog.vue'
@@ -158,9 +155,8 @@ let observer = null
 const palette = computed(() => ({
   '--map-surface': token.value.colorBgLayout, '--map-dots': token.value.colorBorder, '--node-surface': token.value.colorBgContainer,
   '--node-border': token.value.colorBorderSecondary, '--node-shadow': token.value.boxShadowTertiary, '--text': token.value.colorText,
-  '--text-secondary': token.value.colorTextSecondary, '--good': token.value.colorSuccess, '--busy': token.value.colorInfo,
-  '--warn': token.value.colorWarning, '--bad': token.value.colorError, '--off': token.value.colorTextQuaternary,
-  '--accent': token.value.colorPrimary
+  '--text-secondary': token.value.colorTextSecondary, '--accent': token.value.colorPrimary,
+  ...Object.fromEntries(Object.keys(toneTokens).map((tone) => [`--${tone}`, `var(--tone-${tone})`]))
 }))
 const graph = computed(() => data.value ? buildGraph(data.value, props.overview, showDisabled.value) : { nodes: new Map(), edges: [] })
 const layout = computed(() => layoutGraph(graph.value, width.value))
@@ -386,11 +382,6 @@ onUnmounted(() => {
 .map-tools { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; font-size: 12px; }
 .legend { display: inline-flex; align-items: center; gap: 5px; opacity: .8; }
 .swatch { width: 9px; height: 9px; border-radius: 50%; display: inline-block; }
-.swatch.good { background: #52c41a; }
-.swatch.busy { background: #1677ff; }
-.swatch.warn { background: #faad14; }
-.swatch.bad { background: #ff4d4f; }
-.swatch.off { background: #bfbfbf; }
 .legend-flow path { stroke: var(--accent); stroke-width: 2.4; stroke-dasharray: 5 6; animation: flow .9s linear infinite; }
 .map-card :deep(.ant-card-body) { padding: 0; }
 .map-viewport { position: relative; overflow: auto; border-radius: 0 0 8px 8px;

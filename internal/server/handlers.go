@@ -1,6 +1,7 @@
 package server
 
 import (
+	"cmp"
 	"errors"
 	"fmt"
 	"net/http"
@@ -42,6 +43,7 @@ type targetView struct {
 	ID      string `json:"id"`
 	Kind    string `json:"kind"`
 	Enabled bool   `json:"enabled"`
+	State   string `json:"state"`
 }
 
 type userView struct {
@@ -383,14 +385,28 @@ func (server *Server) clearRefused(_ *http.Request, _ session) (any, error) {
 }
 
 func (server *Server) getTargets(_ *http.Request, _ session) (any, error) {
-	snapshot := server.store.Snapshot()
-	result := []targetView{{config.TargetDirect, "builtin", true},
-		{config.TargetReject, "builtin", true}}
+	snapshot, links := server.store.Snapshot(), server.manager.Status()
+	result := []targetView{{config.TargetDirect, "builtin", true, link.StateUp},
+		{config.TargetReject, "builtin", true, link.StateUp}}
+	states := map[string]string{}
 	for _, outbound := range snapshot.Outbounds {
-		result = append(result, targetView{outbound.ID, "outbound", outbound.Enabled})
+		if states[outbound.ID] = link.StateDisabled; outbound.Enabled {
+			states[outbound.ID] = cmp.Or(links[outbound.ID].State, link.StateStopped)
+		}
+		result = append(result, targetView{outbound.ID, "outbound", outbound.Enabled,
+			states[outbound.ID]})
 	}
 	for _, fallback := range snapshot.Fallbacks {
-		result = append(result, targetView{fallback.ID, "fallback", fallback.Enabled})
+		state := link.StateDisabled
+		if fallback.Enabled {
+			state = link.StateDown
+			if slices.ContainsFunc(fallback.Outbounds, func(member string) bool {
+				return states[member] == link.StateUp
+			}) {
+				state = link.StateUp
+			}
+		}
+		result = append(result, targetView{fallback.ID, "fallback", fallback.Enabled, state})
 	}
 	return result, nil
 }

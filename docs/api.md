@@ -79,7 +79,7 @@ A request below the required level gets `401` (not signed in) or `403` (role too
 | `GET /api/outbounds/{id}/log` | 2 | Connection log (last `log_lines` lines, `verbose_log_lines` when `verbose` is on; kept across restarts) |
 | `POST /api/import/amneziawg` | 2 | `{text: "vpn://…"}` → `{config: "<.conf text>"}` |
 | `GET /api/interfaces` | 1 | Host network interfaces (for HOST outbounds) |
-| `GET /api/targets` | 1 | Outbounds and fallbacks usable as route targets |
+| `GET /api/targets` | 1 | Route targets: `[{id, kind, enabled, state}]`. `kind` is `builtin`, `outbound` or `fallback`; `state` is the outbound state (`disabled` when it is off), `up` / `down` for a fallback (`up` when one of its outbounds is up), `up` for `DIRECT` and `REJECT` |
 
 Outbound object (fields depend on `type`):
 

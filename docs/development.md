@@ -137,6 +137,7 @@ repository every second, so edits in `web/src` reload the page. Run the Go binar
 | `src/components/ruleSyntax.js` | tokenizers for route parameters and generated router rules, the sort used by the editor |
 | `src/components/rule-colors.css`, `ruleTheme.js` | token colors for the light and dark themes shared by the editor and the preview |
 | `src/clipboard.js` | copy to the clipboard with a fallback for plain HTTP (no secure context) |
+| `src/states.js` | state colors shared by the connection map, state badges and tables: state → tone (`good`, `busy`, `warn`, `bad`, `off`), tone → theme token, row classes; `components/TonePalette.vue` publishes the tones as CSS variables `--tone-*` for the current theme |
 | `src/components/topology.js` | builds the map graph from the API data and lays it out in columns (pure functions) |
 | `src/components/TrafficChart.vue` | dependency-free SVG throughput chart |
 | `src/components/ConnectionsChart.vue` | dependency-free SVG chart of active connections |
@@ -158,10 +159,10 @@ Current state (version 1.2.0): **107 tests, all passing, 93.5% total statement c
 | `cmd/proximity` | 81.4% |
 | `internal/auth` | 94.1% |
 | `internal/config` | 95.8% |
-| `internal/link` | 89.8% |
+| `internal/link` | 89.7% |
 | `internal/router` | 96.6% |
 | `internal/rules` | 99.1% |
-| `internal/server` | 93.7% |
+| `internal/server` | 94.0% |
 | `internal/wgconf` | 97.9% |
 
 Tests use fake tools (`ip`, `openvpn`, `iptables`, `ping` …) and a fake mihomo, so they run

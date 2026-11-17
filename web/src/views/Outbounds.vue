@@ -14,7 +14,8 @@
       <span class="spacer" />
       <span class="muted">Outbound is an outgoing connection: host uplink, proxy or VPN.</span>
     </div>
-    <a-table :columns="columns" :data-source="outbounds" row-key="id" size="middle" :pagination="false" :loading="loading" :scroll="{ x: 980 }">
+    <a-table :columns="columns" :data-source="outbounds" row-key="id" size="middle" :pagination="false" :loading="loading" :scroll="{ x: 980 }"
+      :row-class-name="(record) => rowTone(linkTone(record), record.enabled)">
       <template #bodyCell="{ column, record, index }">
         <template v-if="column.key === 'order'">
           <a-button-group size="small">
@@ -81,6 +82,7 @@ import {
 } from '@ant-design/icons-vue'
 import { api, canEdit, id } from '../api'
 import { activeStates, typeColors, typeLabels } from '../format'
+import { linkTone, rowTone } from '../states'
 import StateTag from '../components/StateTag.vue'
 import LogView from '../components/LogView.vue'
 import OutboundDialog from './OutboundDialog.vue'
@@ -88,9 +90,9 @@ import OutboundDialog from './OutboundDialog.vue'
 const typeIcons = { host: GlobalOutlined, socks5: SendOutlined, http: CloudServerOutlined, openvpn: LockOutlined, amneziawg: SafetyCertificateOutlined }
 const columns = [
   { title: '', key: 'order', width: 90 },
+  { title: 'Enabled', key: 'enabled', width: 80 },
   { title: 'ID', key: 'id' },
   { title: 'Type', key: 'type' },
-  { title: 'Enabled', key: 'enabled', width: 80 },
   { title: '', key: 'statistics', width: 40 },
   { title: 'Status', key: 'state' },
   { title: 'Connection', key: 'details' },

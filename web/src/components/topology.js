@@ -1,4 +1,5 @@
 import { inboundLabels, rate, stateLabels, typeLabels } from '../format'
+import { stateTone } from '../states'
 
 export const nodeHeight = 62
 export const columnTitles = ['Sources', 'Router', 'Routes', 'Fallbacks', 'Outbounds', 'Internet']
@@ -8,7 +9,6 @@ const gap = 14
 const pad = 22
 const header = 40
 const minimumSpace = 34
-const linkStates = { up: 'good', connecting: 'busy', reconnecting: 'busy', down: 'bad', failed: 'bad', disabled: 'off', stopped: 'off' }
 
 const speed = (traffic) => traffic ? (traffic.upload_rate || 0) + (traffic.download_rate || 0) : 0
 
@@ -84,7 +84,7 @@ export function buildGraph(data, overview, showDisabled) {
     if (outbound.usage === 'unused') details.push(['Usage', 'not used by routes, fallbacks or inbounds'])
     const id = add({ id: `outbound:${outbound.id}`, column: 4, kind: 'outbound', type: outbound.type, record: outbound,
       title: outbound.id, subtitle: remote(outbound), disabled: !outbound.enabled,
-      state: outbound.enabled ? linkStates[status.state] || 'off' : 'off', message: status.message,
+      state: outbound.enabled ? stateTone(status.state) : 'off', message: status.message,
       active: outbound.statistics && speed(outbound.traffic) > 0, rate: speed(outbound.traffic),
       metric: status.latency >= 0 ? `${status.latency} ms` : stateLabels[status.state] || '',
       extra: outbound.statistics && speed(outbound.traffic) > 0 ? rates(outbound.traffic) : '',
@@ -127,7 +127,7 @@ export function buildGraph(data, overview, showDisabled) {
     }
     const id = add({ id: `inbound:${inbound.id}`, column: 0, kind: 'inbound', type: inbound.type, record: inbound, title: inbound.id,
       subtitle: `${inboundLabels[inbound.type]} :${inbound.port}/${protocol}`, disabled: !inbound.enabled,
-      state: inbound.enabled ? linkStates[status.state] || 'off' : 'off', message: status.message,
+      state: inbound.enabled ? stateTone(status.state) : 'off', message: status.message,
       active: inbound.statistics && speed(inbound.traffic) > 0, rate: speed(inbound.traffic),
       extra: inbound.statistics && speed(inbound.traffic) > 0 ? rates(inbound.traffic) : '',
       metric: inbound.type === 'openvpn' && status.state === 'up' ? `${clients.length} client${clients.length === 1 ? '' : 's'}`

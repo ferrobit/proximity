@@ -20,7 +20,7 @@
       <span class="muted">Routes are checked from top to bottom, the first match wins.</span>
     </div>
     <a-table :columns="columns" :data-source="routes" row-key="key" size="middle" :pagination="false" :loading="loading"
-      :row-class-name="(record) => warned.has(record.key) ? 'row-warned' : ''">
+      :row-class-name="(record) => rowTone(routeTone(record, targets, warned.has(record.key)), record.enabled)">
       <template #bodyCell="{ column, record, index }">
         <template v-if="column.key === 'order'">
           <a-button-group size="small">
@@ -37,7 +37,7 @@
           <a-tooltip v-if="record.provided" title="Read-only routes provided by the VPN connection. Enable to send them to this outbound.">
             <a-tag color="gold" style="margin-left: 6px"><LockOutlined /> provided</a-tag>
           </a-tooltip>
-          <a-tooltip v-if="warned.has(record.key)" title="See warnings above"><WarningOutlined style="margin-left: 6px; color: #faad14" /></a-tooltip>
+          <a-tooltip v-if="warned.has(record.key)" title="See warnings above"><WarningOutlined style="margin-left: 6px; color: var(--tone-warn)" /></a-tooltip>
         </template>
         <template v-else-if="column.key === 'directive'"><a-tag color="blue">{{ record.directive }}</a-tag></template>
         <template v-else-if="column.key === 'params'">
@@ -76,7 +76,7 @@
 </template>
 
 <script setup>
-import { computed, onMounted, ref } from 'vue'
+import { computed, onMounted, onUnmounted, ref } from 'vue'
 import { message } from 'ant-design-vue'
 import {
   ArrowDownOutlined, ArrowUpOutlined, CodeOutlined, DeleteOutlined, EditOutlined, EyeOutlined, LockOutlined,
@@ -84,6 +84,7 @@ import {
 } from '@ant-design/icons-vue'
 import { api, canEdit, id } from '../api'
 import { targetOptions as groupTargets } from '../format'
+import { routeTone, rowTone } from '../states'
 import Fallbacks from './Fallbacks.vue'
 import RouteDialog from './RouteDialog.vue'
 
@@ -169,9 +170,20 @@ async function showConfig() {
   }
 }
 
-onMounted(load)
+let timer = null
+
+async function refreshTargets() {
+  try {
+    targets.value = await api.get('/api/targets', true)
+  } catch (error) {
+    clearInterval(timer)
+  }
+}
+
+onMounted(() => {
+  load()
+  timer = setInterval(refreshTargets, 3000)
+})
+onUnmounted(() => clearInterval(timer))
 </script>
 
-<style scoped>
-:deep(.row-warned) td:first-child { box-shadow: inset 3px 0 0 #faad14; }
-</style>

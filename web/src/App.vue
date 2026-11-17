@@ -1,5 +1,6 @@
 <template>
   <a-config-provider :theme="theme">
+    <TonePalette />
     <a-layout v-if="session.loaded" class="shell">
       <a-layout-header class="header" :style="{ background: dark ? '#0b1f2a' : '#0b1f2a' }">
         <div class="brand">
@@ -123,6 +124,7 @@ import {
 import { api, events, loadSession, metrics, session } from './api'
 import { rate } from './format'
 import Logo from './components/Logo.vue'
+import TonePalette from './components/TonePalette.vue'
 import LoginForm from './components/LoginForm.vue'
 import Dashboard from './views/Dashboard.vue'
 import Outbounds from './views/Outbounds.vue'

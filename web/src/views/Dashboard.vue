@@ -54,7 +54,8 @@
         <a-tab-pane key="outbounds">
           <template #tab><ExportOutlined /> Outbounds <span class="tab-count">{{ overview.counts.outbounds_up }}/{{ overview.counts.outbounds }}</span></template>
           <a-card size="small">
-            <a-table :columns="outboundColumns" :data-source="overview.outbounds" row-key="id" size="small" :pagination="false" :scroll="{ x: 900 }">
+            <a-table :columns="outboundColumns" :data-source="overview.outbounds" row-key="id" size="small" :pagination="false" :scroll="{ x: 900 }"
+              :row-class-name="(record) => rowTone(linkTone(record), record.enabled)">
               <template #bodyCell="{ column, record }">
                 <template v-if="column.key === 'id'">
                   <b>{{ record.id }}</b>
@@ -129,6 +130,7 @@ import {
 } from '@ant-design/icons-vue'
 import { api, canEdit, session } from '../api'
 import { ago, bytes, duration, rate, reasonColors, typeColors, typeLabels, usageColors } from '../format'
+import { linkTone, rowTone } from '../states'
 import StateTag from '../components/StateTag.vue'
 import TrafficChart from '../components/TrafficChart.vue'
 import ConnectionsChart from '../components/ConnectionsChart.vue'
@@ -180,7 +182,7 @@ async function clearRefused() {
 <style scoped>
 .dashboard-tabs :deep(.ant-tabs-nav) { margin-bottom: 16px; }
 .tab-count { margin-left: 4px; padding: 0 7px; border-radius: 10px; font-size: 12px; background: rgba(127, 127, 127, .15); }
-.tab-alert { background: rgba(255, 77, 79, .15); color: #ff4d4f; }
+.tab-alert { background: color-mix(in srgb, var(--tone-bad) 15%, transparent); color: var(--tone-bad); }
 .charts { display: flex; gap: 16px; align-items: stretch; }
 .chart-main { flex: 1 1 0; min-width: 0; }
 .chart-side { flex: 0 0 30%; min-width: 0; }

@@ -137,10 +137,14 @@ every 3 seconds.
 
 ![Outbounds](images/outbounds.png)
 
-An outbound is one outgoing connection. The table shows the order (↑ ↓), ID (*manual
-start* when autostart is off), type, the *Enabled* switch, whether statistics
-are collected, state with latency, and connection details (server, interface and tunnel
+An outbound is one outgoing connection. The table shows the order (↑ ↓), the *Enabled* switch,
+ID (*manual start* when autostart is off), type, whether statistics are collected, state with latency, and connection details (server, interface and tunnel
 address).
+
+Rows are tinted by state with the colors of the connection map: blue while the outbound is
+connecting or reconnecting, red when it is down or failed. Disabled and stopped rows are gray
+with dimmed text (the switches and buttons stay clear). Rows in good state are not tinted. The same applies to the inbounds table, to the *Outbounds* tab
+of the Dashboard, to routes and to fallbacks (see below).
 
 Row actions: ✏️ **Edit**, ▶ **Start**, ⏸ **Stop** (with confirmation), 🔄 **Restart**,
 📄 **Connection log**, 🗑️ **Delete**. A stopped HOST or proxy outbound is no longer checked
@@ -301,6 +305,11 @@ the *On* switch, ID, directive, parameters (comments dimmed), and the target. Ro
 ⚠ are involved in a warning listed at the top. **Everything else (MATCH)** at the bottom
 sets the default target.
 
+A route row is tinted by the state of its target: red when the target outbound is down or
+failed, the fallback has no alive outbound, or the target does not exist; blue while the
+target is connecting or reconnecting; yellow when the route is involved in a warning; gray
+when the route is off. The states refresh every 3 seconds.
+
 - **Add route** / ✏️ — the editor with syntax highlighting, a toolbar (**Load from file**,
   **Save to file**, **Sort A–Z**) and a live preview of the generated router rules:
 
@@ -330,7 +339,8 @@ The full reference, with all directives, normalization rules and recipes, is in
 
 The **Fallbacks** section at the bottom of the Routes page lists proxy groups. A fallback
 is a group of outbounds that routes can target as one. Order matters: the
-first usable member is used.
+first usable member is used. The *Enabled* switch stands before the ID. A fallback row is
+red when none of its outbounds is in good state.
 
 ![Fallback dialog](images/fallback-dialog.png)
 
@@ -351,7 +361,7 @@ their traffic leaves through the selected outbound. **Add inbound** offers two t
 Changes are applied immediately: saving restarts only the affected inbound, and a change
 of users does not interrupt other clients.
 
-The table shows the port, the outbound, the state, connected OpenVPN clients (hover the
+The table shows the *Enabled* switch before the ID, then the port, the outbound, the state, connected OpenVPN clients (hover the
 counter for names and addresses), users and traffic. Actions: ▶ **Start**, ⏸ **Stop** (with
 confirmation), 🔄 **Restart**, 📄 log (kept across restarts). A stopped or failed inbound
 keeps its state after a container restart.

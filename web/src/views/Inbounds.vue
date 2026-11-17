@@ -14,7 +14,8 @@
       <span class="spacer" />
       <span class="muted">Inbound is an incoming connection point: clients connect to ports {{ ports[0] }}…{{ ports[1] }} and their traffic goes to the selected outbound.</span>
     </div>
-    <a-table :columns="columns" :data-source="inbounds" row-key="id" size="middle" :pagination="false" :loading="loading" :scroll="{ x: 1080 }">
+    <a-table :columns="columns" :data-source="inbounds" row-key="id" size="middle" :pagination="false" :loading="loading" :scroll="{ x: 1080 }"
+      :row-class-name="(record) => rowTone(linkTone(record), record.enabled)">
       <template #bodyCell="{ column, record, index }">
         <template v-if="column.key === 'order'">
           <a-button-group size="small">
@@ -102,6 +103,7 @@ import {
 } from '@ant-design/icons-vue'
 import { api, canEdit, id } from '../api'
 import { activeStates, bytes, inboundColors, inboundLabels, rate } from '../format'
+import { linkTone, rowTone } from '../states'
 import StateTag from '../components/StateTag.vue'
 import LogView from '../components/LogView.vue'
 import InboundDialog from './InboundDialog.vue'
@@ -109,9 +111,9 @@ import InboundDialog from './InboundDialog.vue'
 const typeIcons = { socks5: SendOutlined, openvpn: LockOutlined }
 const columns = [
   { title: '', key: 'order', width: 90 },
+  { title: 'Enabled', key: 'enabled', width: 80 },
   { title: 'ID', key: 'id' },
   { title: 'Type', key: 'type' },
-  { title: 'Enabled', key: 'enabled', width: 80 },
   { title: '', key: 'statistics', width: 40 },
   { title: 'Port', key: 'port' },
   { title: 'Outbound', key: 'outbound' },

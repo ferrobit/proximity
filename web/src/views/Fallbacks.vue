@@ -7,7 +7,8 @@
       <span class="spacer" />
       <span class="muted">A fallback is a route target that uses the first outbound in the list that is alive.</span>
     </div>
-    <a-table :columns="columns" :data-source="fallbacks" row-key="id" size="middle" :pagination="false" :loading="loading">
+    <a-table :columns="columns" :data-source="fallbacks" row-key="id" size="middle" :pagination="false" :loading="loading"
+      :row-class-name="(record) => rowTone(targets.length ? targetTone(targets, record.id) : 'good', record.enabled)">
       <template #bodyCell="{ column, record, index }">
         <template v-if="column.key === 'order'">
           <a-button-group size="small">
@@ -47,20 +48,21 @@
 </template>
 
 <script setup>
-import { onMounted, ref } from 'vue'
+import { onMounted, onUnmounted, ref } from 'vue'
 import { message } from 'ant-design-vue'
 import {
   ArrowDownOutlined, ArrowUpOutlined, BranchesOutlined, DeleteOutlined, EditOutlined,
   PlusOutlined, ReloadOutlined, RightOutlined
 } from '@ant-design/icons-vue'
 import { api, canEdit, id } from '../api'
+import { rowTone, targetTone } from '../states'
 import FallbackDialog from './FallbackDialog.vue'
 
 const emit = defineEmits(['changed'])
 const columns = [
   { title: '', key: 'order', width: 90 },
-  { title: 'ID', key: 'id' },
   { title: 'Enabled', key: 'enabled', width: 90 },
+  { title: 'ID', key: 'id' },
   { title: 'Outbounds', key: 'outbounds' },
   { title: 'Health check', key: 'check' },
   { title: '', key: 'actions', width: 110 }
@@ -109,5 +111,19 @@ const toggle = (record, enabled) => act(() => api.put(`/api/fallbacks/${id(recor
 const move = (record, delta) => act(() => api.post(`/api/fallbacks/${id(record.id)}/move`, { delta }))
 const remove = (record) => act(() => api.remove(`/api/fallbacks/${id(record.id)}`))
 
-onMounted(load)
+let timer = null
+
+async function refreshTargets() {
+  try {
+    targets.value = await api.get('/api/targets', true)
+  } catch (error) {
+    clearInterval(timer)
+  }
+}
+
+onMounted(() => {
+  load()
+  timer = setInterval(refreshTargets, 3000)
+})
+onUnmounted(() => clearInterval(timer))
 </script>

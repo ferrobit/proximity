@@ -679,8 +679,32 @@ func TestServer_Outbounds(t *testing.T) {
 		code, body, _ = call(t, server, admin, http.MethodGet, "/api/targets", nil)
 		require.Equal(t, http.StatusOK, code)
 		require.Len(t, body["list"], 7)
-		require.Equal(t, map[string]any{"id": "DIRECT", "kind": "builtin", "enabled": true},
-			body["list"].([]any)[0])
+		require.Equal(t, map[string]any{"id": "DIRECT", "kind": "builtin", "enabled": true,
+			"state": "up"}, body["list"].([]any)[0])
+		require.Equal(t, "disabled", body["list"].([]any)[4].(map[string]any)["state"])
+		for _, fallback := range []config.Fallback{{ID: "Alive", Enabled: true,
+			Outbounds: []string{"HTTP 1", "HOST 1"}}, {ID: "Dead", Enabled: true,
+			Outbounds: []string{"HTTP 1"}}, {ID: "Off", Outbounds: []string{"HOST 1"}}} {
+			code, _, _ = call(t, server, admin, http.MethodPost, "/api/fallbacks", fallback)
+			require.Equal(t, http.StatusOK, code)
+		}
+		states := func() map[string]any {
+			_, body, _ := call(t, server, admin, http.MethodGet, "/api/targets", nil)
+			result := map[string]any{}
+			for _, item := range body["list"].([]any) {
+				result[item.(map[string]any)["id"].(string)] = item.(map[string]any)["state"]
+			}
+			return result
+		}
+		require.Eventually(t, func() bool {
+			return states()["Alive"] == "up"
+		}, 10*time.Second, 50*time.Millisecond)
+		require.Equal(t, "down", states()["Dead"])
+		require.Equal(t, "disabled", states()["Off"])
+		for _, id := range []string{"Alive", "Dead", "Off"} {
+			code, _, _ = call(t, server, admin, http.MethodDelete, "/api/fallbacks/"+id, nil)
+			require.Equal(t, http.StatusOK, code)
+		}
 		code, body, _ = call(t, server, admin, http.MethodPost, "/api/import/amneziawg",
 			importRequest{Text: sampleTunnel})
 		require.Equal(t, http.StatusOK, code)

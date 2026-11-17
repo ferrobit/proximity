@@ -16,3 +16,16 @@ textarea, textarea.ant-input { font-family: var(--font-mono); }
 .pane-subtitle { display: flex; align-items: center; gap: 8px; margin: 0 0 16px; font-size: 16px; font-weight: 600; }
 .fallbacks, .pane-section { margin-top: 32px; }
 .settings-card { max-width: 860px; }
+
+.row-tone-busy { --tone: var(--tone-busy); }
+.row-tone-warn { --tone: var(--tone-warn); }
+.row-tone-bad { --tone: var(--tone-bad); }
+.row-tone-off { --tone: var(--tone-off); }
+.ant-table-wrapper .ant-table-tbody > tr.row-tone > td { background: color-mix(in srgb, var(--tone) 9%, var(--tone-surface)); }
+.ant-table-wrapper .ant-table-tbody > tr.row-tone:hover > td { background: color-mix(in srgb, var(--tone) 15%, var(--tone-surface)); }
+.ant-table-wrapper .ant-table-tbody > tr.row-tone > td:first-child { box-shadow: inset 3px 0 0 var(--tone); }
+.ant-table-wrapper .ant-table-tbody > tr.row-off { background: color-mix(in srgb, var(--tone) 9%, var(--tone-surface)); }
+.ant-table-wrapper .ant-table-tbody > tr.row-off:hover { background: color-mix(in srgb, var(--tone) 15%, var(--tone-surface)); }
+.ant-table-wrapper .ant-table-tbody > tr.row-tone.row-off > td,
+.ant-table-wrapper .ant-table-tbody > tr.row-tone.row-off:hover > td { background: transparent; }
+.ant-table-wrapper .ant-table-tbody > tr.row-off > td:not(:has(.ant-switch, .ant-btn)) { opacity: .5; filter: grayscale(1); }
