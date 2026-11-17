@@ -41,9 +41,42 @@ Order is changed with the ↑ ↓ buttons. The new order is saved and applied at
 
 ![Route editor with preview](images/route-dialog.png)
 
+The parameters editor highlights every line as you type:
+
+| Color | Meaning |
+|---|---|
+| gray, italic | `# comment` |
+| green, bold | the domain itself (`corp.example`) |
+| teal | subdomains in front of it (`jira.`, `wiki.eu.`) |
+| amber | wildcards: `*.`, `+.`, `*`, `?` |
+| blue, bold | IP addresses, IPv4 and IPv6 |
+| orange | network masks (`/16`, `/48`) |
+| pink | ports and port ranges (`:443`, `8000-8100`) |
+| violet | keywords, GeoIP and GeoSite codes, process names |
+| gray | options after a comma (`,no-resolve`) and the scheme and path of a pasted URL |
+| red, wavy underline | an impossible value: an octet above 255, a mask above 32/128, a port above 65535, a domain in an `IP-CIDR` route |
+
+The toolbar above the lines:
+
+- **Load from file** — replace the parameters with the lines of a text file (`.txt`,
+  `.list`, `.conf`, up to 4 MB; Windows line endings are converted);
+- **Save to file** — download the parameters as `<route ID>.txt`;
+- **Sort A–Z** — sort the lines alphabetically (numbers in IP addresses are compared as
+  numbers); comments at the top stay there, and every other comment moves together with
+  the line below it;
+- the counter on the right shows the number of entries and comments.
+
+Line numbers on the left match the line numbers in error messages. **Tab** inserts two
+spaces.
+
+![Route editor with IP networks](images/route-editor-ip.png)
+
 The editor shows a live **preview**: the normalized parameters and the exact rule lines
 that will be sent to mihomo. Invalid lines are reported with their line number before you
-can save.
+can save. Expand **Router rules** to see them numbered and highlighted the same way:
+directives in bold, logical operators (`AND`) in violet, the target as a colored label,
+values with the colors above. **Copy** puts all rules on the clipboard (it also works when
+the UI is opened over plain HTTP by IP address).
 
 ## Directives
 

@@ -238,6 +238,7 @@ import {
   ReloadOutlined, SafetyOutlined, TeamOutlined, ThunderboltOutlined, UserAddOutlined
 } from '@ant-design/icons-vue'
 import { api, id } from '../api'
+import { copyText } from '../clipboard'
 import { inboundLabels } from '../format'
 
 const props = defineProps({
@@ -387,7 +388,7 @@ async function checkTimeout(rule, value) {
 
 async function copy(text, done) {
   try {
-    await navigator.clipboard.writeText(text)
+    await copyText(text)
     message.success(done)
   } catch (error) {
     message.error('Clipboard is not available')

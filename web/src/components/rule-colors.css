@@ -1,0 +1,32 @@
+.rule-comment { color: #8c8c8c; font-style: italic; }
+.rule-ip { color: #1d4ed8; font-weight: 600; }
+.rule-mask { color: #c2410c; font-weight: 600; }
+.rule-port { color: #be185d; }
+.rule-domain { color: #15803d; font-weight: 600; }
+.rule-subdomain { color: #0f766e; }
+.rule-wildcard { color: #b45309; font-weight: 700; }
+.rule-keyword { color: #7e22ce; }
+.rule-regex { color: #a16207; }
+.rule-number { color: #be185d; }
+.rule-option { color: #6b7280; font-style: italic; }
+.rule-punctuation, .rule-muted { color: #9ca3af; }
+.rule-error { color: #dc2626; text-decoration: underline wavy #dc2626; text-underline-offset: 3px; }
+.rule-dark .rule-comment { color: #6b7a83; }
+.rule-dark .rule-ip { color: #60a5fa; }
+.rule-dark .rule-mask { color: #fb923c; }
+.rule-dark .rule-port { color: #f472b6; }
+.rule-dark .rule-domain { color: #4ade80; }
+.rule-dark .rule-subdomain { color: #2dd4bf; }
+.rule-dark .rule-wildcard { color: #fbbf24; }
+.rule-dark .rule-keyword { color: #c084fc; }
+.rule-dark .rule-regex { color: #facc15; }
+.rule-dark .rule-number { color: #f472b6; }
+.rule-dark .rule-option { color: #9ca3af; }
+.rule-dark .rule-punctuation, .rule-dark .rule-muted { color: #6b7280; }
+.rule-dark .rule-error { color: #f87171; text-decoration-color: #f87171; }
+.rule-directive { color: #475569; font-weight: 600; }
+.rule-logic { color: #9333ea; font-weight: 700; }
+.rule-target { color: #0e7f78; font-weight: 600; background: rgba(14, 159, 151, .12); border-radius: 4px; padding: 0 4px; }
+.rule-dark .rule-directive { color: #cbd5e1; }
+.rule-dark .rule-logic { color: #d8b4fe; }
+.rule-dark .rule-target { color: #5eead4; background: rgba(45, 212, 191, .14); }

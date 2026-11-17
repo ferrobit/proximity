@@ -131,6 +131,12 @@ repository every second, so edits in `web/src` reload the page. Run the Go binar
 | `src/api.js` | fetch wrapper, session state, role helpers |
 | `src/views/*.vue` | one view per section: `Dashboard.vue` has the Overview, Connection map, Outbounds and Unreachable routes tabs, `Routes.vue` shows `Fallbacks.vue` at the bottom, `Settings.vue` shows `Users.vue` as its third section; `OutboundDialog.vue`, `InboundDialog.vue`, `RouteDialog.vue` and `FallbackDialog.vue` are the editors, shared by the section pages and the connection map |
 | `src/components/ConnectionMap.vue` | connection map: rendering, hover highlight, popups, edit dialogs, zoom, fit to screen and full screen |
+| `src/components/RuleEditor.vue` | route parameters editor: highlighting overlay, line numbers, load, save and sort |
+| `src/components/logSyntax.js` | log line parser for `LogView.vue`: time stamp, severity, IP addresses, quoted text, level words, links |
+| `src/components/RulePreview.vue` | highlighted, numbered list of the generated router rules with **Copy** |
+| `src/components/ruleSyntax.js` | tokenizers for route parameters and generated router rules, the sort used by the editor |
+| `src/components/rule-colors.css`, `ruleTheme.js` | token colors for the light and dark themes shared by the editor and the preview |
+| `src/clipboard.js` | copy to the clipboard with a fallback for plain HTTP (no secure context) |
 | `src/components/topology.js` | builds the map graph from the API data and lays it out in columns (pure functions) |
 | `src/components/TrafficChart.vue` | dependency-free SVG throughput chart |
 | `src/components/ConnectionsChart.vue` | dependency-free SVG chart of active connections |

@@ -1,5 +1,5 @@
 <template>
-  <a-modal :open="open" :title="title" width="680px" :confirm-loading="busy" destroy-on-close
+  <a-modal :open="open" :title="title" width="760px" :confirm-loading="busy" destroy-on-close
     :ok-button-props="{ disabled: readOnly }" ok-text="Save" @ok="save" @cancel="$emit('update:open', false)">
     <a-form ref="formRef" layout="vertical" :model="form">
       <a-row :gutter="16">
@@ -12,12 +12,13 @@
           <a-select v-model:value="form.target" :disabled="readOnly" show-search :options="targetOptions(targets)" @change="preview" /></a-form-item></a-col>
       </a-row>
       <a-form-item label="Rule parameters (one per line, lines starting with # are comments)" name="text" :rules="[{ required: true, message: 'Enter at least one parameter' }]" :extra="hints[form.directive]">
-        <a-textarea v-model:value="form.text" class="mono" :rows="8" :disabled="readOnly" spellcheck="false" @change="preview" />
+        <RuleEditor v-model:value="form.text" :directive="form.directive" :disabled="readOnly" :file-name="form.id || (route && route.id) || 'route'"
+          :placeholder="placeholders[form.directive]" @change="preview" />
       </a-form-item>
       <a-alert v-if="previewError" type="error" show-icon :message="previewError" />
-      <a-collapse v-else-if="previewLines.length" ghost>
+      <a-collapse v-else-if="previewLines.length" ghost class="rule-collapse">
         <a-collapse-panel key="lines" :header="`Router rules: ${previewLines.length}`">
-          <pre class="mono log-view" style="max-height: 180px">{{ previewLines.join('\n') }}</pre>
+          <RulePreview :lines="previewLines" />
         </a-collapse-panel>
       </a-collapse>
     </a-form>
@@ -29,6 +30,8 @@ import { computed, reactive, ref, watch } from 'vue'
 import { message } from 'ant-design-vue'
 import { api, id } from '../api'
 import { targetOptions } from '../format'
+import RuleEditor from '../components/RuleEditor.vue'
+import RulePreview from '../components/RulePreview.vue'
 
 const props = defineProps({
   open: Boolean,
@@ -54,6 +57,23 @@ const hints = {
   'NETWORK': 'tcp or udp',
   'PROCESS-NAME': 'Process name, works only with host network mode, for example: curl',
   'PROCESS-PATH': 'Full path of the process, works only with host network mode'
+}
+const placeholders = {
+  'DOMAIN': '# Exact host names\nwww.example.com',
+  'DOMAIN-SUFFIX': '# Domains with all subdomains\nexample.com\ncorp.example',
+  'DOMAIN-KEYWORD': 'google',
+  'DOMAIN-WILDCARD': '*.cdn.example.com',
+  'DOMAIN-REGEX': '^ads\\d+\\.example\\.com$',
+  'GEOSITE': 'youtube',
+  'GEOIP': 'RU',
+  'IP-CIDR': '# Networks, addresses and IP:port\n10.0.0.0/8\n1.2.3.4\n1.2.3.4:443',
+  'IP-ASN': '13335',
+  'SRC-IP-CIDR': '192.168.1.0/24',
+  'DST-PORT': '443',
+  'SRC-PORT': '8000-8100',
+  'NETWORK': 'udp',
+  'PROCESS-NAME': 'curl',
+  'PROCESS-PATH': '/usr/bin/curl'
 }
 const formRef = ref()
 const busy = ref(false)
@@ -113,3 +133,8 @@ async function save() {
   }
 }
 </script>
+
+<style scoped>
+.rule-collapse :deep(.ant-collapse-header) { padding-left: 0 !important; padding-right: 0 !important; }
+.rule-collapse :deep(.ant-collapse-content-box) { padding: 0 0 4px !important; }
+</style>

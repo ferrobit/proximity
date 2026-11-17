@@ -257,6 +257,22 @@ routes, check results, starts and stops. It is saved in `logs/` of the settings 
 survives container restarts. It refreshes every 1.5 s; **Follow new lines** keeps it scrolled to
 the bottom, **Copy** copies the whole log.
 
+Lines are highlighted (the same in the inbound log):
+
+| Look | Lines |
+|---|---|
+| gray date, bold time | the time stamp of every line |
+| red text, red bar on the left | errors: *failed*, *refused*, *timeout*, *panic*, *fatal*, *AUTH_FAILED* … |
+| amber text, amber bar | warnings: *warning*, *retry*, *reconnect*, OpenVPN *Note:* lines |
+| green | success: *Initialization Sequence Completed*, *Peer Connection Initiated*, *VERIFY OK* |
+| teal | Proximity's own events: *starting*, *stopped* |
+| dimmed | debug details: `net_route_…`, `TLS:`, `Timers:` |
+
+Inside a line, IP addresses (with mask and port) are blue, quoted text is teal, and level
+words such as `level=warning` or `[ERROR]` become colored labels. Web links (`http://`,
+`https://`) are clickable and open in a new browser tab. The counters next to the line
+count show how many errors and warnings the log has.
+
 ## Routes
 
 ![Routes](images/routes.png)
@@ -266,9 +282,16 @@ the *On* switch, ID, directive, parameters (comments dimmed), and the target. Ro
 ⚠ are involved in a warning listed at the top. **Everything else (MATCH)** at the bottom
 sets the default target.
 
-- **Add route** / ✏️ — the editor with a live preview of the generated router rules:
+- **Add route** / ✏️ — the editor with syntax highlighting, a toolbar (**Load from file**,
+  **Save to file**, **Sort A–Z**) and a live preview of the generated router rules:
 
   ![Route editor](images/route-dialog.png)
+
+  Domains, subdomains, wildcards, IP addresses, masks, ports, options and comments get
+  their own colors; impossible values (an octet above 255, a mask above 32) are underlined
+  in red. The expandable **Router rules** list below the editor is highlighted the same
+  way, numbered, and has a **Copy** button. The colors are listed in
+  [Routes](routes.md#fields-of-a-route).
 
 - 🔒 **provided** routes come from a VPN; they are read-only (👁 to view) but can be
   enabled and moved.
