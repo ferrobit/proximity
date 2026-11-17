@@ -17,7 +17,6 @@ import (
 	"proximity/internal/config"
 	"proximity/internal/link"
 	"proximity/internal/router"
-	"proximity/web"
 )
 
 type Options struct {
@@ -396,8 +395,8 @@ func (server *Server) handle(pattern string, level int, action action) {
 	})
 }
 
-func (server *Server) static() http.Handler {
-	content, err := fs.Sub(web.Dist, "dist")
+func (server *Server) static(dist fs.FS) http.Handler {
+	content, err := fs.Sub(dist, "dist")
 	if err != nil {
 		return http.NotFoundHandler()
 	}
@@ -406,6 +405,10 @@ func (server *Server) static() http.Handler {
 		path := strings.TrimPrefix(request.URL.Path, "/")
 		if strings.HasPrefix(path, "api/") {
 			http.NotFound(writer, request)
+			return
+		} else if _, err := fs.Stat(content, "index.html"); err != nil {
+			http.Error(writer, "web UI is not built: run 'make web' before 'make build'",
+				http.StatusServiceUnavailable)
 			return
 		} else if _, err := fs.Stat(content, path); err != nil || path == "" {
 			request.URL.Path = "/"

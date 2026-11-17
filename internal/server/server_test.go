@@ -12,6 +12,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"testing/fstest"
 	"time"
 
 	"github.com/stretchr/testify/require"
@@ -1067,35 +1068,49 @@ func TestServer_Setup(t *testing.T) {
 
 func TestStatic_Files(t *testing.T) {
 	server := makeServer(t)
-	assets, err := fs.Glob(web.Dist, "dist/assets/*.js")
-	require.NoError(t, err)
-	require.NotEmpty(t, assets)
+	dist := fstest.MapFS{"dist/index.html": {Data: []byte(`<div id="app"></div>`)},
+		"dist/favicon.svg":       {Data: []byte("<svg></svg>")},
+		"dist/assets/index-1.js": {Data: []byte("console.log(1)")}}
+	serve := func(handler http.Handler, path string) *httptest.ResponseRecorder {
+		recorder := httptest.NewRecorder()
+		handler.ServeHTTP(recorder, httptest.NewRequest(http.MethodGet, path, nil))
+		return recorder
+	}
+	handler := server.static(dist)
 	{
-		recorder := fetch(server, "/")
+		recorder := serve(handler, "/")
 		require.Equal(t, http.StatusOK, recorder.Code)
 		require.Equal(t, "no-cache", recorder.Header().Get("Cache-Control"))
 		require.Contains(t, recorder.Body.String(), "<div id=\"app\">")
 	}
 	{
-		recorder := fetch(server, "/unknown/page")
+		recorder := serve(handler, "/unknown/page")
 		require.Equal(t, http.StatusOK, recorder.Code)
 		require.Equal(t, "no-cache", recorder.Header().Get("Cache-Control"))
 		require.Contains(t, recorder.Body.String(), "<div id=\"app\">")
 	}
 	{
-		recorder := fetch(server, "/favicon.svg")
+		recorder := serve(handler, "/favicon.svg")
 		require.Equal(t, http.StatusOK, recorder.Code)
 		require.Empty(t, recorder.Header().Get("Cache-Control"))
 		require.Contains(t, recorder.Body.String(), "<svg")
 	}
 	{
-		recorder := fetch(server, strings.TrimPrefix(assets[0], "dist"))
+		recorder := serve(handler, "/assets/index-1.js")
 		require.Equal(t, http.StatusOK, recorder.Code)
 		require.Equal(t, "public, max-age=31536000, immutable",
 			recorder.Header().Get("Cache-Control"))
 	}
 	{
-		recorder := fetch(server, "/api/unknown")
+		recorder := serve(server.mux, "/api/unknown")
 		require.Equal(t, http.StatusNotFound, recorder.Code)
+		require.Equal(t, http.StatusNotFound, serve(handler, "/api/unknown").Code)
+	}
+	{
+		recorder := serve(server.static(fstest.MapFS{"dist/.gitkeep": {}}), "/")
+		require.Equal(t, http.StatusServiceUnavailable, recorder.Code)
+		require.Contains(t, recorder.Body.String(), "web UI is not built")
+		_, err := fs.Stat(web.Dist, "dist")
+		require.NoError(t, err)
 	}
 }

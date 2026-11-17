@@ -15,6 +15,7 @@ import (
 	"proximity/internal/router"
 	"proximity/internal/rules"
 	"proximity/internal/wgconf"
+	"proximity/web"
 )
 
 type outboundView struct {
@@ -194,7 +195,7 @@ func (server *Server) register() {
 	server.handle("POST /api/router/{action}", 2, server.controlRouter)
 	server.handle("GET /api/backup", 2, server.exportBackup)
 	server.handle("POST /api/backup", 2, server.importBackup)
-	server.mux.Handle("/", server.static())
+	server.mux.Handle("/", server.static(web.Dist))
 }
 
 func (server *Server) problems() ([]string, string) {

@@ -23,11 +23,11 @@ proximity/
 │   ├── rules/              route parsing, normalization, consistency checks
 │   ├── server/             HTTP API and control loop
 │   └── wgconf/             WireGuard / AmneziaWG config parser, vpn:// import
-├── web/                    Vue 3 + Ant Design Vue UI (Vite); dist/ is embedded into the binary
+├── web/                    Vue 3 + Ant Design Vue UI (Vite); dist/ is built, embedded, not committed
 ├── scripts/
 │   ├── proximity.sh        compose wrapper for Linux and macOS
 │   ├── proximity.ps1       compose wrapper for Windows
-│   └── githooks/pre-commit rebuilds the UI and binary before commit
+│   └── githooks/pre-commit gofmt, go vet and go build before commit
 ├── docs/                   documentation and screenshots
 ├── Dockerfile              multi-stage image build
 ├── docker-compose.yml          Linux, host network, transparent capture
@@ -57,8 +57,17 @@ make logs     # follow container logs
 make down     # stop
 ```
 
-`web/dist` is committed: the Go binary embeds it with `//go:embed all:dist`, so
-`go build` works without Node.js. Enable the pre-commit hook to keep it fresh:
+`web/dist` is **not** committed: only the empty placeholder `web/dist/.gitkeep` is, so
+`go build`, `go vet` and `go test` work without Node.js. Such a binary answers the web UI
+with *503 web UI is not built*; run `make web` (or `make all`) first for a local binary
+with the UI. The Vite build keeps the placeholder.
+
+The Docker image does not use the local `web/dist` at all (`.dockerignore` excludes it):
+the `web` stage of the `Dockerfile` runs `npm ci` and `vite build` inside the builder and
+the `build` stage embeds the result. `docker compose build` / `make up` never change
+files in the working tree.
+
+Optional pre-commit hook (gofmt, go vet, go build; no UI build):
 
 ```bash
 git config core.hooksPath scripts/githooks
@@ -166,7 +175,7 @@ new ones after an upgrade.
 ## Release checklist
 
 1. `make vet test` — clean.
-2. `make all` — commit the updated `web/dist`.
+2. `make all` — the UI and the binary build without errors.
 3. Bump `VERSION` in `Makefile`, `Dockerfile` and the default `PROXIMITY_VERSION` in the
    compose files.
 4. Update the *Project status* section in `README.md` and screenshots if the UI changed.

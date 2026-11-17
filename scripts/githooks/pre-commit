@@ -1,6 +1,4 @@
 #!/bin/sh
 set -e
-make all
-if [ -n "$(git status --porcelain -- web/dist)" ]; then
-	echo "pre-commit: web/dist changed after 'make all', stage it with 'git add web/dist'" >&2
-fi
+make vet
+go build ./...
