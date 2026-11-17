@@ -83,18 +83,15 @@ signing in (secrets and the unreachable routes list are hidden).
 ![Outbounds](images/outbounds.png)
 
 An outbound is one outgoing connection. The table shows the order (↑ ↓), ID (*manual
-start* under a tunnel without autostart), type, the *Enabled* switch, whether statistics
+start* when autostart is off), type, the *Enabled* switch, whether statistics
 are collected, state with latency, and connection details (server, interface and tunnel
 address).
 
-Row actions: ✏️ **Edit**, 📄 **Connection log**, 🗑️ **Delete**, and:
+Row actions: ✏️ **Edit**, ▶ **Start**, ⏸ **Stop** (with confirmation), 🔄 **Restart**,
+📄 **Connection log**, 🗑️ **Delete**. A stopped HOST or proxy outbound is no longer checked
+and is skipped by fallbacks; routes that name it directly still use it.
 
-| Outbound | Actions |
-|---|---|
-| OpenVPN, AmneziaWG (tunnels) | ▶ **Start**, ⏸ **Stop** (with confirmation), 🔄 **Restart** |
-| HOST, SOCKS5, HTTP | 🔄 **Reconnect** |
-
-A stopped or failed tunnel keeps its state after a container restart: it is not started
+A stopped or failed outbound keeps its state after a container restart: it is not started
 again until **Start** or **Restart** is pressed (or its settings change, for a failed one).
 The log is kept too, so the reason of the last failure stays visible.
 
@@ -110,7 +107,9 @@ Every outbound dialog has a **General** tab:
 |---|---|
 | ID | Unique among outbounds *and* fallbacks; empty → `<Type> <N>`. Renaming updates all references and does not interrupt a tunnel |
 | Enabled | Off: the outbound is stopped and its routes are skipped |
-| Start automatically when the router starts | Tunnels only, on by default. Off: after the router starts, the tunnel stays stopped until **Start** |
+| Start automatically when the router starts | On by default. Off: after the router starts, the outbound stays stopped until **Start** |
+| Connection attempts | Default 3. Failed attempts in a row before the outbound is `failed`: a tunnel then stays down until **Start** / **Restart**; HOST and proxies keep being checked and recover by themselves |
+| Reconnection timeout, seconds | Default 10. Pause between attempts |
 | Collect statistics | Count traffic and draw it on the chart |
 
 All fields are validated before saving. Changes are applied immediately.
@@ -124,9 +123,6 @@ Your own uplink. *Outgoing connection*:
 - **Default host routing** — whatever route the host uses;
 - **Specific network interface** — pick an interface (`eth0`, `wlan0`, …); add a
   *Gateway* when that interface has no default route of its own.
-
-*Connection attempts* (default 3) and *Reconnection timeout* (10 s) control when the
-outbound is declared `failed`. It keeps being checked and returns to `good` by itself.
 
 ### SOCKS5 Proxy
 
@@ -183,9 +179,7 @@ Tunnels (OpenVPN, AmneziaWG) have a **Monitoring** tab:
 | Enable monitoring | Turn the checks on |
 | Check every, seconds | Interval between checks |
 | Wait for response, seconds | Timeout of one check |
-| If check fails, repeat it, times | Retries before reconnecting |
-| If repeat fails, reconnect after, seconds | Pause before a reconnect |
-| Reconnect attempts | After this many failed reconnects the tunnel is taken down and marked `failed` |
+| If check fails, repeat it, times | Retries before the tunnel is reconnected (attempts and pause — on the **General** tab) |
 | Check target (host:port) | AmneziaWG: TCP target reached through the tunnel |
 
 OpenVPN is checked by pinging the VPN gateway through the tunnel.
@@ -259,7 +253,9 @@ keeps its state after a container restart.
 |---|---|
 | ID | Unique among inbounds; empty → `SOCKS5 <N>` / `OpenVPN <N>` |
 | Enabled | Off: the port is closed |
-| Start automatically | On by default: the inbound starts with the router (unless it was stopped or failed) |
+| Start automatically when the router starts | On by default: the inbound starts with the router (unless it was stopped or failed) |
+| Connection attempts | Default 3. Failed starts in a row before the inbound is `failed`; it then stays stopped until **Start** / **Restart** |
+| Reconnection timeout, seconds | Default 10. Pause between attempts |
 | Collect statistics | Count upload and download traffic of the inbound |
 | Port number | Unique, `7800…7898` (the range published by the Docker files); empty → the first free port |
 | Outbound | **Router** — the routes decide, like for the proxy port; **Host** — the host Internet connection, routes are skipped; or one of the outbounds — everything goes there |
@@ -322,8 +318,8 @@ The page has four sections.
 The state of the router (mihomo) and the **Start**, **Stop** and **Restart** buttons
 (Operator and Administrator). **Stop** asks for confirmation: the proxy port, the
 inbounds and the tunnels (OpenVPN, AmneziaWG outbounds) stop, host traffic is no longer
-captured (it goes directly). HOST and proxy outbounds keep being checked. **Start** starts
-the services that have *Start automatically* on and were running before. **Restart** starts a new mihomo process; it also starts a stopped
+captured (it goes directly); all outbounds stop. **Start** starts the outbounds and
+inbounds that have *Start automatically* on and were running before. **Restart** starts a new mihomo process; it also starts a stopped
 router.
 
 *Start the router when the container starts* (Administrator, applied at once):

@@ -73,9 +73,9 @@ A request below the required level gets `401` (not signed in) or `403` (role too
 | `PUT /api/outbounds/{id}` | 2 | Replace an outbound (rename by changing `id`) |
 | `DELETE /api/outbounds/{id}` | 2 | Delete |
 | `POST /api/outbounds/{id}/move` | 2 | `{delta: -1 \| 1}` — move up or down |
-| `POST /api/outbounds/{id}/start` | 2 | Start a tunnel (OpenVPN, AmneziaWG) |
-| `POST /api/outbounds/{id}/stop` | 2 | Stop a tunnel; it stays stopped after restarts |
-| `POST /api/outbounds/{id}/restart` | 2 | Reconnect any outbound; starts a stopped or failed tunnel |
+| `POST /api/outbounds/{id}/start` | 2 | Start an outbound |
+| `POST /api/outbounds/{id}/stop` | 2 | Stop an outbound; it stays stopped after restarts |
+| `POST /api/outbounds/{id}/restart` | 2 | Reconnect; starts a stopped or failed outbound |
 | `GET /api/outbounds/{id}/log` | 2 | Connection log (last 300 lines, kept across restarts) |
 | `POST /api/import/amneziawg` | 2 | `{text: "vpn://…"}` → `{config: "<.conf text>"}` |
 | `GET /api/interfaces` | 1 | Host network interfaces (for HOST outbounds) |
@@ -89,6 +89,8 @@ Outbound object (fields depend on `type`):
   "type": "socks5",
   "enabled": true,
   "autostart": true,
+  "attempts": 3,
+  "reconnect_timeout": 10,
   "statistics": true,
   "socks5": {"server": "proxy.ams.example.net", "port": 1080,
              "username": "alice", "password": "secret",
@@ -98,19 +100,23 @@ Outbound object (fields depend on `type`):
 
 | `type` | Options object |
 |---|---|
-| `host` | `host: {mode: "default" \| "interface", interface, gateway, attempts, reconnect_timeout}` |
+| `host` | `host: {mode: "default" \| "interface", interface, gateway}` |
 | `socks5` | `socks5: {server, port, username, password, tls, skip_cert_verify, udp}` |
 | `http` | `http: {server, port, single, https_server, https_port, ftp_server, ftp_port, username, password, tls, skip_cert_verify}` |
 | `openvpn` | `openvpn: {config, username, password, otp_key, otp_mode: "challenge" \| "append", key_password, use_dns}` |
 | `amneziawg` | `amneziawg: {config, use_dns}` |
 
-Tunnels also take `monitoring: {enabled, interval, timeout, retries, reconnect_delay,
-reconnect_attempts, target}`.
+Tunnels also take `monitoring: {enabled, interval, timeout, retries, target}`.
 
-`autostart` (default `true` when omitted) — start the tunnel when the router starts. It is
-used only by tunnels; HOST and proxy outbounds are always checked.
+Common fields of outbounds and inbounds: `autostart` (default `true` when omitted) — start
+when the router starts; `attempts` (1…100, default 3) — failed attempts in a row before
+the state becomes `failed`; `reconnect_timeout` (1…3600 s, default 10) — pause between
+attempts. A failed tunnel or inbound waits for **Start** / **Restart**; a failed HOST or
+proxy outbound keeps being checked every *Check interval* and recovers by itself.
+Configurations before version 7 move `host.attempts` / `host.reconnect_timeout` and
+`monitoring.reconnect_attempts + 1` / `monitoring.reconnect_delay` here.
 
-Services are tunnels and all inbounds. Their state (`running`, `stopped` or `failed`) is
+Services are all outbounds and inbounds. Their state (`running`, `stopped` or `failed`) is
 saved to `services.json` in the settings folder, and their logs to `logs/`. When the router
 starts (with the container or by **Start**), a service is started only if `autostart` is
 on and it was running before; a stopped or failed service keeps its state and message.
@@ -134,7 +140,8 @@ stopped by a user, by the router stop, or not started because `autostart` is off
 | `GET /api/inbounds/{id}/config?user=&embed=&host=` | 2 | OpenVPN client configuration → `{config, file}`; `file` is `<ID>-<username>.conf`. Empty `user` = anonymous, `embed=true` writes the credentials into the file, `host` is used when the inbound has no public address |
 | `POST /api/inbounds/generate` | 2 | `{kind, ca_certificate, ca_key}` → new key material. `kind`: `all`, `pki` (CA + server + client), `server`, `client` (both signed by the given CA), `tls_crypt`, `otp_key`, `tls` (self-signed certificate for SOCKS5) |
 
-Inbound object: `{id, type, enabled, autostart, statistics, port, outbound, anonymous,
+Inbound object: `{id, type, enabled, autostart, attempts, reconnect_timeout, statistics,
+port, outbound, anonymous,
 users: [{enabled, name, password}]}` plus one block by `type`. `outbound` is `@router`
 (routes decide), `@host` (host Internet connection) or an outbound ID.
 

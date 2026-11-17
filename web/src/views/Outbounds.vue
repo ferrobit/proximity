@@ -24,7 +24,7 @@
         </template>
         <template v-else-if="column.key === 'id'">
           <b>{{ record.id }}</b>
-          <div class="muted" v-if="isService(record) && !record.autostart">manual start</div>
+          <div class="muted" v-if="!record.autostart">manual start</div>
         </template>
         <template v-else-if="column.key === 'type'">
           <a-tag :color="typeColors[record.type]"><component :is="typeIcons[record.type]" /> {{ typeLabels[record.type] }}</a-tag>
@@ -48,16 +48,13 @@
         <template v-else-if="column.key === 'actions'">
           <a-space v-if="canEdit()">
             <a-tooltip title="Edit"><a-button size="small" @click="open(record, record.type)"><template #icon><EditOutlined /></template></a-button></a-tooltip>
-            <template v-if="isService(record)">
-              <a-tooltip title="Start"><a-button size="small" :disabled="!record.enabled || activeStates.includes(record.status.state)"
-                @click="control(record, 'start')"><template #icon><PlayCircleOutlined /></template></a-button></a-tooltip>
-              <a-popconfirm ok-text="Stop" ok-type="danger" :title="`Stop outbound '${record.id}'?`" :disabled="!record.enabled || record.status.state === 'stopped'" @confirm="control(record, 'stop')">
-                <a-tooltip title="Stop"><a-button size="small" :disabled="!record.enabled || record.status.state === 'stopped'">
-                  <template #icon><PauseCircleOutlined /></template></a-button></a-tooltip>
-              </a-popconfirm>
-              <a-tooltip title="Restart"><a-button size="small" :disabled="!record.enabled" @click="control(record, 'restart')"><template #icon><SyncOutlined /></template></a-button></a-tooltip>
-            </template>
-            <a-tooltip v-else title="Reconnect"><a-button size="small" :disabled="!record.enabled" @click="control(record, 'restart')"><template #icon><SyncOutlined /></template></a-button></a-tooltip>
+            <a-tooltip title="Start"><a-button size="small" :disabled="!record.enabled || activeStates.includes(record.status.state)"
+              @click="control(record, 'start')"><template #icon><PlayCircleOutlined /></template></a-button></a-tooltip>
+            <a-popconfirm ok-text="Stop" ok-type="danger" :title="`Stop outbound '${record.id}'?`" :disabled="!record.enabled || record.status.state === 'stopped'" @confirm="control(record, 'stop')">
+              <a-tooltip title="Stop"><a-button size="small" :disabled="!record.enabled || record.status.state === 'stopped'">
+                <template #icon><PauseCircleOutlined /></template></a-button></a-tooltip>
+            </a-popconfirm>
+            <a-tooltip title="Restart"><a-button size="small" :disabled="!record.enabled" @click="control(record, 'restart')"><template #icon><SyncOutlined /></template></a-button></a-tooltip>
             <a-tooltip title="Connection log"><a-button size="small" @click="showLog(record)"><template #icon><FileTextOutlined /></template></a-button></a-tooltip>
             <a-popconfirm :title="`Delete outbound '${record.id}'?`" @confirm="remove(record)">
               <a-button size="small" danger><template #icon><DeleteOutlined /></template></a-button>
@@ -82,7 +79,7 @@ import {
   PlusOutlined, ReloadOutlined, SafetyCertificateOutlined, SendOutlined, SyncOutlined
 } from '@ant-design/icons-vue'
 import { api, canEdit, id } from '../api'
-import { activeStates, isService, typeColors, typeLabels } from '../format'
+import { activeStates, typeColors, typeLabels } from '../format'
 import StateTag from '../components/StateTag.vue'
 import LogView from '../components/LogView.vue'
 import OutboundDialog from './OutboundDialog.vue'

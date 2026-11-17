@@ -76,10 +76,7 @@ type accountChain struct {
 	match  string
 }
 
-const inboundRestartDelay = 3 * time.Second
-const inboundRestartLimit = 30 * time.Second
 const inboundCheckInterval = 3 * time.Second
-const inboundAttempts = 3
 const socksStartTimeout = 8 * time.Second
 const socksProbeDelay = 250 * time.Millisecond
 const loopbackAddress = "127.0.0.1"
@@ -204,7 +201,7 @@ func (manager *Manager) applyInbounds() {
 		key, signature := inboundKey(inbound.Port), inboundSignature(inbound, bypass)
 		problem := snapshot.InboundProblem(inbound)
 		current, found := manager.inbounds[inbound.Port]
-		active := inbound.Enabled && problem == "" && manager.wanted(key, true, signature, found)
+		active := inbound.Enabled && problem == "" && manager.wanted(key, signature, found)
 		if inbound.Enabled && problem != "" {
 			manager.blocked[inbound.ID] = problem
 		}
@@ -316,13 +313,18 @@ func (runner *inboundRunner) run(ctx context.Context) {
 		}
 		runner.logf("inbound failed: %v", err)
 		state := StateReconnecting
-		if failures++; failures >= inboundAttempts {
+		if failures++; failures >= max(1, runner.inbound.Attempts) {
 			state = StateFailed
 		}
 		runner.update(func(status *InboundStatus) {
 			status.State, status.Message, status.Clients = state, err.Error(), []InboundClient{}
 		})
-		sleep(ctx, min(inboundRestartDelay*time.Duration(failures), inboundRestartLimit))
+		if state == StateFailed {
+			runner.logf("all %v connection attempts failed", failures)
+			<-ctx.Done()
+		} else {
+			sleep(ctx, time.Duration(runner.inbound.ReconnectTimeout)*time.Second)
+		}
 	}
 }
 

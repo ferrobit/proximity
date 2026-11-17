@@ -56,17 +56,19 @@ type OpenVPNServer struct {
 }
 
 type Inbound struct {
-	ID         string         `json:"id"`
-	Type       string         `json:"type"`
-	Enabled    bool           `json:"enabled"`
-	Autostart  bool           `json:"autostart"`
-	Statistics bool           `json:"statistics"`
-	Port       int            `json:"port"`
-	Outbound   string         `json:"outbound"`
-	Anonymous  bool           `json:"anonymous"`
-	Users      []InboundUser  `json:"users"`
-	Socks5     *Socks5Server  `json:"socks5,omitempty"`
-	OpenVPN    *OpenVPNServer `json:"openvpn,omitempty"`
+	ID               string         `json:"id"`
+	Type             string         `json:"type"`
+	Enabled          bool           `json:"enabled"`
+	Autostart        bool           `json:"autostart"`
+	Attempts         int            `json:"attempts"`
+	ReconnectTimeout int            `json:"reconnect_timeout"`
+	Statistics       bool           `json:"statistics"`
+	Port             int            `json:"port"`
+	Outbound         string         `json:"outbound"`
+	Anonymous        bool           `json:"anonymous"`
+	Users            []InboundUser  `json:"users"`
+	Socks5           *Socks5Server  `json:"socks5,omitempty"`
+	OpenVPN          *OpenVPNServer `json:"openvpn,omitempty"`
 }
 
 const (
@@ -304,6 +306,12 @@ func (inbound Inbound) network() (netip.Prefix, bool) {
 
 func (inbound *Inbound) normalize() {
 	inbound.ID = strings.TrimSpace(inbound.ID)
+	if inbound.Attempts == 0 {
+		inbound.Attempts = defaultAttempts
+	}
+	if inbound.ReconnectTimeout == 0 {
+		inbound.ReconnectTimeout = defaultReconnectTimeout
+	}
 	if inbound.Outbound = strings.TrimSpace(inbound.Outbound); inbound.Outbound == "" {
 		inbound.Outbound = ViaRouter
 	}
@@ -348,6 +356,8 @@ func (inbound *Inbound) complete(taken []netip.Prefix, now time.Time) error {
 
 func (inbound *Inbound) validate() error {
 	if err := validateIdentifier(inbound.ID); err != nil {
+		return err
+	} else if err = validateAttempts(inbound.Attempts, inbound.ReconnectTimeout); err != nil {
 		return err
 	} else if err = validateRange("port", inbound.Port, InboundPortFirst,
 		InboundPortLast); err != nil {

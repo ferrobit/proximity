@@ -403,9 +403,8 @@ func TestManager_AmneziaFailure(t *testing.T) {
 	manager.SetActive(true, config.Config{})
 	defer manager.Close()
 	outbound := config.Outbound{ID: "AWG", Type: config.TypeAmneziaWG, Enabled: true, Slot: 4,
-		AmneziaWG: &config.AmneziaWGOptions{Config: sampleTunnel},
-		Monitoring: &config.Monitoring{Interval: 5, Timeout: 1, Retries: 1, ReconnectDelay: 1,
-			ReconnectAttempts: 1, Target: "127.0.0.1:1"}}
+		Attempts: 2, ReconnectTimeout: 1, AmneziaWG: &config.AmneziaWGOptions{Config: sampleTunnel},
+		Monitoring: &config.Monitoring{Interval: 5, Timeout: 1, Retries: 1, Target: "127.0.0.1:1"}}
 	manager.Apply([]config.Outbound{outbound}, config.Settings{CheckInterval: 5})
 	require.False(t, manager.Capture(true, false))
 	status := waitState(t, manager, "AWG", StateReconnecting)
@@ -452,7 +451,7 @@ func TestManager_Inbounds(t *testing.T) {
 	defer manager.Close()
 	snapshot := config.Default()
 	_, err = snapshot.AddInbound(config.Inbound{Type: config.TypeSocks5, ID: "Socks", Port: port,
-		Enabled: true, Statistics: true, Anonymous: true}, time.Now())
+		Enabled: true, Statistics: true, Anonymous: true, Attempts: 1}, time.Now())
 	require.NoError(t, err)
 	_, err = snapshot.AddInbound(config.Inbound{Type: config.TypeOpenVPN, ID: "VPN", Port: port - 1,
 		Enabled: true, Statistics: true, Users: []config.InboundUser{
@@ -576,11 +575,13 @@ func TestManager_Inbounds(t *testing.T) {
 	}
 	{
 		require.NoError(t, listener.Close())
-		status := waitInbound(t, manager, "Socks", StateReconnecting)
+		status := waitInbound(t, manager, "Socks", StateFailed)
 		require.Equal(t, "router does not listen on port ("+strconv.Itoa(port)+")", status.Message)
+		require.Contains(t, strings.Join(manager.InboundLog("Socks"), "\n"),
+			"all 1 connection attempts failed")
 		writeScript(t, directory, "fail", "x")
 		changed := snapshot.Clone()
-		changed.Inbounds[1].OpenVPN.MaxClients = 5
+		changed.Inbounds[1].OpenVPN.MaxClients, changed.Inbounds[1].ReconnectTimeout = 5, 1
 		changed.Inbounds[0].Statistics = false
 		manager.ApplyInbounds(changed)
 		require.Eventually(t, func() bool {
@@ -609,10 +610,11 @@ func TestManager_OpenVPN(t *testing.T) {
 	manager.SetActive(true, config.Config{})
 	defer manager.Close()
 	outbound := config.Outbound{ID: "VPN", Type: config.TypeOpenVPN, Enabled: true, Slot: 7,
-		OpenVPN: &config.OpenVPNOptions{Config: sampleOpenVPN, Username: "alice",
-			Password: "wonderland", OTPKey: "GEZDGNBVGY3TQOJQ", OTPMode: config.OTPAppend},
+		Attempts: 1, ReconnectTimeout: 1, OpenVPN: &config.OpenVPNOptions{Config: sampleOpenVPN,
+			Username: "alice", Password: "wonderland", OTPKey: "GEZDGNBVGY3TQOJQ",
+			OTPMode: config.OTPAppend},
 		Monitoring: &config.Monitoring{Enabled: true, Interval: 5, Timeout: 1, Retries: 1,
-			ReconnectDelay: 1, ReconnectAttempts: 0, Target: "127.0.0.1:1"}}
+			Target: "127.0.0.1:1"}}
 	manager.Apply([]config.Outbound{outbound}, config.Settings{CheckInterval: 5})
 	status := waitState(t, manager, "VPN", StateUp)
 	require.Equal(t, "proximity_o7", status.Device)
@@ -728,7 +730,7 @@ func TestManager_Capture(t *testing.T) {
 		outbound := config.Outbound{ID: "VPN", Type: config.TypeOpenVPN, Enabled: true, Slot: 7,
 			OpenVPN: &config.OpenVPNOptions{Config: sampleOpenVPN, Username: "alice",
 				Password: "wonderland", OTPKey: "GEZDGNBVGY3TQOJQ", OTPMode: config.OTPChallenge},
-			Monitoring: &config.Monitoring{Interval: 5, Timeout: 1, Retries: 1, ReconnectDelay: 1,
+			ReconnectTimeout: 1, Monitoring: &config.Monitoring{Interval: 5, Timeout: 1, Retries: 1,
 				Target: "127.0.0.1:1"}}
 		manager.Apply([]config.Outbound{outbound}, config.Settings{CheckInterval: 5, Capture: true})
 		waitState(t, manager, "VPN", StateUp)
@@ -776,8 +778,8 @@ func TestManager_HostAttempts(t *testing.T) {
 	manager.SetActive(true, config.Config{})
 	defer manager.Close()
 	outbound := config.Outbound{ID: "M", Type: config.TypeHost, Enabled: true, Slot: 5,
-		Host: &config.HostOptions{Mode: config.HostInterface, Interface: "missing0", Attempts: 2,
-			ReconnectTimeout: 1}}
+		Attempts: 2, ReconnectTimeout: 1,
+		Host: &config.HostOptions{Mode: config.HostInterface, Interface: "missing0"}}
 	settings := config.Settings{ProbeTarget: "127.0.0.1:1", CheckInterval: 5,
 		ConnectivityChecks: true}
 	manager.Apply([]config.Outbound{outbound}, settings)
@@ -787,8 +789,7 @@ func TestManager_HostAttempts(t *testing.T) {
 	status = waitState(t, manager, "M", StateFailed)
 	require.Equal(t, "interface 'missing0' does not exist", status.Message)
 	{
-		outbound.Host = &config.HostOptions{Mode: config.HostDefault, Attempts: 1,
-			ReconnectTimeout: 1}
+		outbound.Host, outbound.Attempts = &config.HostOptions{Mode: config.HostDefault}, 1
 		manager.Apply([]config.Outbound{outbound}, settings)
 		status := waitState(t, manager, "M", StateFailed)
 		require.Contains(t, status.Message, "failed to connect to '127.0.0.1:1'")
@@ -823,11 +824,11 @@ func TestManager_Proxies(t *testing.T) {
 			Socks5: &config.Socks5Options{Server: host, Port: number}},
 		{ID: "H", Type: config.TypeHTTP, Enabled: true, Slot: 2,
 			HTTP: &config.HTTPOptions{Server: "127.0.0.1", Port: 1}},
-		{ID: "D", Type: config.TypeHost, Enabled: true, Slot: 3,
-			Host: &config.HostOptions{Mode: config.HostDefault, Attempts: 3, ReconnectTimeout: 1}},
-		{ID: "L", Type: config.TypeHost, Enabled: true, Slot: 6,
+		{ID: "D", Type: config.TypeHost, Enabled: true, Slot: 3, Attempts: 3, ReconnectTimeout: 1,
+			Host: &config.HostOptions{Mode: config.HostDefault}},
+		{ID: "L", Type: config.TypeHost, Enabled: true, Slot: 6, Attempts: 3, ReconnectTimeout: 1,
 			Host: &config.HostOptions{Mode: config.HostInterface, Interface: "lo",
-				Gateway: "127.0.0.1", Attempts: 3, ReconnectTimeout: 1}},
+				Gateway: "127.0.0.1"}},
 		{ID: "X", Type: config.TypeHost, Slot: 4, Host: &config.HostOptions{}}}
 	manager.Apply(outbounds, settings)
 	status := waitState(t, manager, "S", StateUp)
@@ -835,7 +836,7 @@ func TestManager_Proxies(t *testing.T) {
 	require.NotZero(t, status.Checked)
 	require.GreaterOrEqual(t, status.Latency, 0)
 	waitState(t, manager, "D", StateUp)
-	status = waitState(t, manager, "H", StateDown)
+	status = waitState(t, manager, "H", StateFailed)
 	require.Contains(t, status.Message, "failed to connect to '127.0.0.1:1'")
 	require.Eventually(t, func() bool {
 		calls, err := os.ReadFile(filepath.Join(directory, "ip.log"))
@@ -851,7 +852,10 @@ func TestManager_Proxies(t *testing.T) {
 		waitState(t, manager, "S", StateUp)
 		require.EqualError(t, manager.Control("missing", ActionRestart),
 			"outbound 'missing' does not exist")
-		require.EqualError(t, manager.Control("S", ActionStop), "outbound 'S' has no service to stop")
+		require.NoError(t, manager.Control("S", ActionStop))
+		require.Equal(t, StateStopped, manager.Status()["S"].State)
+		require.NoError(t, manager.Control("S", ActionStart))
+		waitState(t, manager, "S", StateUp)
 	}
 	{
 		outbounds[0].Enabled, outbounds[2].Statistics = false, true
@@ -867,7 +871,8 @@ func TestManager_Proxies(t *testing.T) {
 	}
 	{
 		manager.Close()
-		require.Empty(t, manager.Status())
+		require.Empty(t, manager.runners)
+		require.Equal(t, StateFailed, manager.Status()["H"].State)
 	}
 }
 
@@ -880,9 +885,9 @@ func TestManager_Services(t *testing.T) {
 		Enabled: true, Autostart: true, Anonymous: true}, time.Now())
 	require.NoError(t, err)
 	snapshot.Outbounds = []config.Outbound{{ID: "AWG", Type: config.TypeAmneziaWG, Enabled: true,
-		Autostart: true, Slot: 4, AmneziaWG: &config.AmneziaWGOptions{Config: sampleTunnel},
-		Monitoring: &config.Monitoring{Interval: 5, Timeout: 1, Retries: 1, ReconnectDelay: 1,
-			Target: "127.0.0.1:1"}}}
+		Autostart: true, Slot: 4, ReconnectTimeout: 1,
+		AmneziaWG:  &config.AmneziaWGOptions{Config: sampleTunnel},
+		Monitoring: &config.Monitoring{Interval: 5, Timeout: 1, Retries: 1, Target: "127.0.0.1:1"}}}
 	open := func() *Manager {
 		manager, err := NewManager(Options{Directory: filepath.Join(directory, "run"),
 			StateDir: state, Tools: tools})
@@ -950,7 +955,7 @@ func TestManager_Services(t *testing.T) {
 		apply(manager, true)
 		require.Equal(t, messageAutostart, manager.Inbounds()["Socks"].Message)
 		require.Equal(t, StateFailed, manager.Status()["AWG"].State)
-		snapshot.Outbounds[0].Monitoring.ReconnectDelay = 2
+		snapshot.Outbounds[0].ReconnectTimeout = 2
 		apply(manager, true)
 		require.Eventually(t, func() bool {
 			return strings.Count(strings.Join(manager.Log("AWG"), "\n"), "starting\n") >= 2

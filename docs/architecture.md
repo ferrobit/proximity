@@ -91,8 +91,7 @@ it:
 4. Outbound state changes (e.g. a tunnel goes up or down) trigger step 2 again, so
    fallbacks always contain the outbounds that currently work.
 5. When the router is stopped (Settings → Router service), synchronization stops mihomo
-   (no automatic restart), the services (tunnels and inbounds) and host traffic capture;
-   HOST and proxy outbounds keep being checked. At startup the router runs only when
+   (no automatic restart), all outbounds and inbounds and host traffic capture. At startup the router runs only when
    `autostart` is on and `router.json` says it was running.
 6. Services keep a journal (`services.json`): `running`, `stopped` or `failed` with the
    message. When the router starts, a service starts only if its `autostart` is on and the
@@ -201,20 +200,20 @@ by the system resolver for DIRECT/HOST.
 | `connecting` | Starting (tunnel process launched, waiting for it) |
 | `up` (*good* in the UI) | Working; checks pass |
 | `reconnecting` | Checks failed; restarting after the configured delay |
-| `down` | Proxy server is not reachable; checks continue and it comes back to `up` by itself |
-| `failed` | All attempts exhausted; see the message and the connection log |
-| `stopped` | Tunnel or inbound is stopped: by a user, by the router stop, or not started because *Start automatically* is off |
+| `failed` | *Connection attempts* exhausted; see the message and the connection log. Tunnels and inbounds wait for **Start** / **Restart**; HOST and proxies keep being checked and return to `up` |
+| `stopped` | Stopped by a user, by the router stop, or not started because *Start automatically* is off |
 
 | Outbound | How it is checked |
 |---|---|
 | HOST | TCP connection to *Probe target* (Settings, default `1.1.1.1:443`) through the same path mihomo uses; after *Connection attempts* failures → `failed`, but checks continue and it returns to `up` |
-| SOCKS5 / HTTP | TCP connection to the proxy server |
+| SOCKS5 / HTTP | TCP connection to the proxy server; same *Connection attempts* rule as HOST |
 | OpenVPN | `ping` of the VPN gateway through the tunnel interface |
 | AmneziaWG | TCP connection to the monitoring *Check target* through the tunnel |
 
 Proxy and HOST checks run every *Check interval* when **Enable connectivity checks** is on.
-Tunnel monitoring (interval, timeout, retries, reconnect delay and attempts) is set per
-outbound on its **Monitoring** tab.
+Tunnel monitoring (interval, timeout, retries) is set per outbound on its **Monitoring**
+tab; *Connection attempts* and *Reconnection timeout* of every outbound and inbound are on
+its **General** tab.
 
 ## OpenVPN driver
 

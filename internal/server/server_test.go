@@ -317,7 +317,7 @@ func TestServer_Backup(t *testing.T) {
 	code, exported, _ := call(t, server, admin, http.MethodGet, "/api/backup", nil)
 	require.Equal(t, http.StatusOK, code)
 	require.Equal(t, config.BackupFormat, exported["format"])
-	require.Equal(t, 6.0, exported["version"])
+	require.Equal(t, 7.0, exported["version"])
 	require.Len(t, exported["inbounds"], 1)
 	require.Len(t, exported["outbounds"], 1)
 	require.Len(t, exported["routes"], 1)
@@ -544,8 +544,8 @@ func TestServer_Outbounds(t *testing.T) {
 	server := makeServer(t)
 	admin := login(t, server, "admin", "secret123")
 	for _, outbound := range []config.Outbound{
-		{Type: config.TypeHost, Enabled: true, Statistics: true},
-		{Type: config.TypeSocks5, Enabled: true, Socks5: &config.Socks5Options{
+		{Type: config.TypeHost, Enabled: true, Autostart: true, Statistics: true},
+		{Type: config.TypeSocks5, Enabled: true, Autostart: true, Socks5: &config.Socks5Options{
 			Server: "127.0.0.1", Port: 1, Username: "user", Password: "pass"}},
 		{Type: config.TypeHTTP, HTTP: &config.HTTPOptions{Server: "proxy.test",
 			Port: 3128, Password: "pass", Single: true}},
@@ -563,7 +563,8 @@ func TestServer_Outbounds(t *testing.T) {
 	require.Equal(t, http.StatusBadRequest, code)
 	server.synchronize()
 	require.Eventually(t, func() bool {
-		return server.manager.Status()["SOCKS5 1"].State == link.StateDown
+		state := server.manager.Status()["SOCKS5 1"].State
+		return state == link.StateReconnecting || state == link.StateFailed
 	}, 10*time.Second, 20*time.Millisecond)
 	{
 		code, body, _ := call(t, server, admin, http.MethodGet, "/api/outbounds", nil)
@@ -576,7 +577,7 @@ func TestServer_Outbounds(t *testing.T) {
 		require.Equal(t, "unused", first["usage"])
 		require.Equal(t, false, first["redacted"])
 		require.Equal(t, "pass", second["socks5"].(map[string]any)["password"])
-		require.Equal(t, "down", second["status"].(map[string]any)["state"])
+		require.Equal(t, "reconnecting", second["status"].(map[string]any)["state"])
 		require.Equal(t, "disabled", views[2].(map[string]any)["usage"])
 		require.Equal(t, "disabled", views[3].(map[string]any)["status"].(map[string]any)["state"])
 	}
@@ -613,7 +614,7 @@ func TestServer_Outbounds(t *testing.T) {
 		second := views[1].(map[string]any)
 		require.Equal(t, "SOCKS5 1", second["id"])
 		require.NotContains(t, second, "socks5")
-		require.Equal(t, "down", second["status"].(map[string]any)["state"])
+		require.Equal(t, "reconnecting", second["status"].(map[string]any)["state"])
 		require.Equal(t, "", second["status"].(map[string]any)["message"])
 		require.Empty(t, body["warnings"])
 		require.Equal(t, map[string]any{"outbounds": 5.0, "outbounds_enabled": 2.0,
@@ -651,12 +652,12 @@ func TestServer_Outbounds(t *testing.T) {
 		require.Equal(t, "outbound 'HTTP 1' is disabled", body["error"])
 		code, body, _ = call(t, server, admin, http.MethodPost, "/api/outbounds/HOST%201/stop",
 			nil)
-		require.Equal(t, http.StatusBadRequest, code)
-		require.Equal(t, "outbound 'HOST 1' has no service to stop", body["error"])
+		require.Equal(t, http.StatusOK, code, body)
+		require.Equal(t, link.StateStopped, server.manager.Status()["HOST 1"].State)
 		code, body, _ = call(t, server, admin, http.MethodPost,
 			"/api/outbounds/HOST%201/start", nil)
-		require.Equal(t, http.StatusBadRequest, code)
-		require.Equal(t, "outbound 'HOST 1' has no service to start", body["error"])
+		require.Equal(t, http.StatusOK, code, body)
+		require.NotEqual(t, link.StateStopped, server.manager.Status()["HOST 1"].State)
 		code, body, _ = call(t, server, admin, http.MethodPost, "/api/outbounds",
 			map[string]any{"type": config.TypeHost})
 		require.Equal(t, http.StatusOK, code)

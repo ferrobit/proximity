@@ -37,11 +37,11 @@ type User struct {
 }
 
 type HostOptions struct {
-	Mode             string `json:"mode"`
-	Interface        string `json:"interface"`
-	Gateway          string `json:"gateway"`
-	Attempts         int    `json:"attempts"`
-	ReconnectTimeout int    `json:"reconnect_timeout"`
+	Mode           string `json:"mode"`
+	Interface      string `json:"interface"`
+	Gateway        string `json:"gateway"`
+	LegacyAttempts int    `json:"attempts,omitempty"`
+	LegacyTimeout  int    `json:"reconnect_timeout,omitempty"`
 }
 
 type Socks5Options struct {
@@ -84,28 +84,30 @@ type AmneziaWGOptions struct {
 }
 
 type Monitoring struct {
-	Enabled           bool   `json:"enabled"`
-	Interval          int    `json:"interval"`
-	Timeout           int    `json:"timeout"`
-	Retries           int    `json:"retries"`
-	ReconnectDelay    int    `json:"reconnect_delay"`
-	ReconnectAttempts int    `json:"reconnect_attempts"`
-	Target            string `json:"target"`
+	Enabled        bool   `json:"enabled"`
+	Interval       int    `json:"interval"`
+	Timeout        int    `json:"timeout"`
+	Retries        int    `json:"retries"`
+	LegacyDelay    int    `json:"reconnect_delay,omitempty"`
+	LegacyAttempts int    `json:"reconnect_attempts,omitempty"`
+	Target         string `json:"target"`
 }
 
 type Outbound struct {
-	ID         string            `json:"id"`
-	Type       string            `json:"type"`
-	Enabled    bool              `json:"enabled"`
-	Autostart  bool              `json:"autostart"`
-	Statistics bool              `json:"statistics"`
-	Slot       int               `json:"slot"`
-	Host       *HostOptions      `json:"host,omitempty"`
-	Socks5     *Socks5Options    `json:"socks5,omitempty"`
-	HTTP       *HTTPOptions      `json:"http,omitempty"`
-	OpenVPN    *OpenVPNOptions   `json:"openvpn,omitempty"`
-	AmneziaWG  *AmneziaWGOptions `json:"amneziawg,omitempty"`
-	Monitoring *Monitoring       `json:"monitoring,omitempty"`
+	ID               string            `json:"id"`
+	Type             string            `json:"type"`
+	Enabled          bool              `json:"enabled"`
+	Autostart        bool              `json:"autostart"`
+	Attempts         int               `json:"attempts"`
+	ReconnectTimeout int               `json:"reconnect_timeout"`
+	Statistics       bool              `json:"statistics"`
+	Slot             int               `json:"slot"`
+	Host             *HostOptions      `json:"host,omitempty"`
+	Socks5           *Socks5Options    `json:"socks5,omitempty"`
+	HTTP             *HTTPOptions      `json:"http,omitempty"`
+	OpenVPN          *OpenVPNOptions   `json:"openvpn,omitempty"`
+	AmneziaWG        *AmneziaWGOptions `json:"amneziawg,omitempty"`
+	Monitoring       *Monitoring       `json:"monitoring,omitempty"`
 }
 
 type Fallback struct {
@@ -175,13 +177,16 @@ const (
 	OTPAppend    = "append"
 )
 
-const currentVersion = 6
+const currentVersion = 7
 const inboundVersion = 4
 const autostartVersion = 5
 const serviceVersion = 6
+const attemptsVersion = 7
 const maxSlot = 9999
 const defaultAttempts = 3
 const defaultReconnectTimeout = 10
+const maxAttempts = 100
+const maxTimeout = 3600
 const providedPrefix = "Routes of "
 const defaultHealthURL = "https://www.gstatic.com/generate_204"
 const defaultProbeTarget = "1.1.1.1:443"
@@ -243,6 +248,15 @@ func validateServer(server string, port int) error {
 func validateRange(name string, value int, low int, high int) error {
 	if value < low || value > high {
 		return fmt.Errorf("invalid %v (%v), expected %v..%v", name, value, low, high)
+	}
+	return nil
+}
+
+func validateAttempts(attempts int, timeout int) error {
+	if err := validateRange("connection attempts", attempts, 1, maxAttempts); err != nil {
+		return err
+	} else if err = validateRange("reconnection timeout", timeout, 1, maxTimeout); err != nil {
+		return err
 	}
 	return nil
 }
@@ -311,11 +325,14 @@ func (outbound *Outbound) normalize() {
 	} else if outbound.Host == nil {
 		outbound.Host = &HostOptions{Mode: HostDefault}
 	}
-	if outbound.Host != nil && outbound.Host.Attempts == 0 {
-		outbound.Host.Attempts = defaultAttempts
+	if outbound.Attempts == 0 {
+		outbound.Attempts = defaultAttempts
 	}
-	if outbound.Host != nil && outbound.Host.ReconnectTimeout == 0 {
-		outbound.Host.ReconnectTimeout = defaultReconnectTimeout
+	if outbound.ReconnectTimeout == 0 {
+		outbound.ReconnectTimeout = defaultReconnectTimeout
+	}
+	if outbound.Host != nil {
+		outbound.Host.LegacyAttempts, outbound.Host.LegacyTimeout = 0, 0
 	}
 	if outbound.Type != TypeSocks5 {
 		outbound.Socks5 = nil
@@ -340,8 +357,10 @@ func (outbound *Outbound) normalize() {
 	if !outbound.IsTunnel() {
 		outbound.Monitoring = nil
 	} else if outbound.Monitoring == nil {
-		outbound.Monitoring = &Monitoring{Interval: 30, Timeout: 5, Retries: 3, ReconnectDelay: 10,
-			ReconnectAttempts: 3}
+		outbound.Monitoring = &Monitoring{Interval: 30, Timeout: 5, Retries: 3}
+	}
+	if outbound.Monitoring != nil {
+		outbound.Monitoring.LegacyDelay, outbound.Monitoring.LegacyAttempts = 0, 0
 	}
 	if outbound.Monitoring != nil && strings.TrimSpace(outbound.Monitoring.Target) == "" {
 		outbound.Monitoring.Target = defaultProbeTarget
@@ -369,6 +388,8 @@ func (outbound *Outbound) validate() error {
 		return err
 	} else if err = validateRange("slot", outbound.Slot, 1, maxSlot); err != nil {
 		return err
+	} else if err = validateAttempts(outbound.Attempts, outbound.ReconnectTimeout); err != nil {
+		return err
 	}
 	switch outbound.Type {
 	case TypeHost:
@@ -393,12 +414,7 @@ func (outbound *Outbound) validate() error {
 }
 
 func (host *HostOptions) validate() error {
-	if err := validateRange("connection attempts", host.Attempts, 1, 100); err != nil {
-		return err
-	} else if err = validateRange("reconnection timeout", host.ReconnectTimeout, 1,
-		3600); err != nil {
-		return err
-	} else if host.Mode == HostDefault {
+	if host.Mode == HostDefault {
 		return nil
 	} else if host.Mode != HostInterface {
 		return fmt.Errorf("unexpected host mode '%v'", host.Mode)
@@ -454,11 +470,6 @@ func (monitoring *Monitoring) validate() error {
 	} else if err = validateRange("monitoring timeout", monitoring.Timeout, 1, 60); err != nil {
 		return err
 	} else if err = validateRange("monitoring retries", monitoring.Retries, 1, 20); err != nil {
-		return err
-	} else if err = validateRange("reconnect delay", monitoring.ReconnectDelay, 1, 3600); err != nil {
-		return err
-	} else if err = validateRange("reconnect attempts", monitoring.ReconnectAttempts, 0,
-		100); err != nil {
 		return err
 	} else if err = validateHostPort(monitoring.Target); err != nil {
 		return fmt.Errorf("failed to check monitoring target: %w", err)

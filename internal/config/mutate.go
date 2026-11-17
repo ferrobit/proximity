@@ -452,8 +452,15 @@ func (config *Config) migrate() {
 		config.Settings.Autostart = true
 	}
 	for index := range config.Outbounds {
-		config.Outbounds[index].Autostart = config.Outbounds[index].Autostart ||
-			config.Version < serviceVersion
+		outbound := &config.Outbounds[index]
+		outbound.Autostart = outbound.Autostart || config.Version < serviceVersion
+		if host := outbound.Host; host != nil && config.Version < attemptsVersion {
+			outbound.Attempts, outbound.ReconnectTimeout = host.LegacyAttempts, host.LegacyTimeout
+		} else if monitoring := outbound.Monitoring; monitoring != nil &&
+			config.Version < attemptsVersion {
+			outbound.Attempts = monitoring.LegacyAttempts + 1
+			outbound.ReconnectTimeout = monitoring.LegacyDelay
+		}
 	}
 	for index := range config.Inbounds {
 		config.Inbounds[index].Autostart = config.Inbounds[index].Autostart ||

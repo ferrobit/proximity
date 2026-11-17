@@ -10,6 +10,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"strconv"
 	"testing"
 	"time"
 
@@ -283,8 +284,10 @@ func TestAddOutbound_Defaults(t *testing.T) {
 	require.Equal(t, []int{1, 2, 3, 4, 5}, slots)
 	require.Equal(t, HostDefault, config.Outbounds[0].Host.Mode)
 	require.Nil(t, config.Outbounds[0].Monitoring)
-	require.Equal(t, Monitoring{Interval: 30, Timeout: 5, Retries: 3, ReconnectDelay: 10,
-		ReconnectAttempts: 3, Target: defaultProbeTarget}, *config.Outbounds[3].Monitoring)
+	require.Equal(t, Monitoring{Interval: 30, Timeout: 5, Retries: 3, Target: defaultProbeTarget},
+		*config.Outbounds[3].Monitoring)
+	require.Equal(t, [2]int{3, 10}, [2]int{config.Outbounds[3].Attempts,
+		config.Outbounds[3].ReconnectTimeout})
 	require.Equal(t, OTPChallenge, config.Outbounds[3].OpenVPN.OTPMode)
 	require.True(t, config.Outbounds[2].IsSplit())
 	require.False(t, config.Outbounds[1].IsSplit())
@@ -339,14 +342,11 @@ func TestAddOutbound_Invalid(t *testing.T) {
 			Monitoring: &Monitoring{Interval: 5}}, "invalid monitoring timeout (0)"},
 		{Outbound{Type: TypeOpenVPN, OpenVPN: &OpenVPNOptions{Config: sampleOpenVPN},
 			Monitoring: &Monitoring{Interval: 5, Timeout: 1}}, "invalid monitoring retries (0)"},
-		{Outbound{Type: TypeOpenVPN, OpenVPN: &OpenVPNOptions{Config: sampleOpenVPN},
-			Monitoring: &Monitoring{Interval: 5, Timeout: 1, Retries: 1}}, "invalid reconnect delay"},
-		{Outbound{Type: TypeOpenVPN, OpenVPN: &OpenVPNOptions{Config: sampleOpenVPN},
-			Monitoring: &Monitoring{Interval: 5, Timeout: 1, Retries: 1, ReconnectDelay: 1,
-				ReconnectAttempts: 101}}, "invalid reconnect attempts (101)"},
+		{Outbound{Type: TypeHost, Attempts: 101}, "invalid connection attempts (101)"},
+		{Outbound{Type: TypeHost, ReconnectTimeout: 3601}, "invalid reconnection timeout (3601)"},
 		{Outbound{Type: TypeAmneziaWG, AmneziaWG: &AmneziaWGOptions{Config: sampleTunnel},
-			Monitoring: &Monitoring{Interval: 5, Timeout: 1, Retries: 1, ReconnectDelay: 1,
-				Target: "nohost"}}, "failed to check monitoring target"},
+			Monitoring: &Monitoring{Interval: 5, Timeout: 1, Retries: 1, Target: "nohost"}},
+			"failed to check monitoring target"},
 		{Outbound{Type: TypeAmneziaWG}, "failed to check AmneziaWG configuration"},
 	} {
 		_, err := config.AddOutbound(item.outbound)
@@ -789,13 +789,42 @@ func TestOpen_Migrates(t *testing.T) {
 	require.True(t, snapshot.Settings.Capture)
 	require.True(t, snapshot.Fallbacks[0].HealthCheck)
 	require.Equal(t, []string{"HOST 1"}, snapshot.Fallbacks[0].Outbounds)
-	require.Equal(t, &HostOptions{Mode: HostDefault, Attempts: 3, ReconnectTimeout: 10},
-		snapshot.Outbounds[0].Host)
+	require.Equal(t, &HostOptions{Mode: HostDefault}, snapshot.Outbounds[0].Host)
+	require.Equal(t, 3, snapshot.Outbounds[0].Attempts)
 	require.Equal(t, "Route 1", snapshot.Routes[0].ID)
 	require.Equal(t, "same", snapshot.Routes[1].ID)
 	require.Equal(t, "Route 2", snapshot.Routes[2].ID)
 	require.True(t, snapshot.Settings.Autostart)
 	require.True(t, snapshot.Outbounds[0].Autostart)
+	{
+		previous := `{"version":6,"secret":"s","settings":{"mixed_port":7890,"bind_address":"*",` +
+			`"default_target":"DIRECT","log_level":"warning","probe_target":"1.1.1.1:443",` +
+			`"check_interval":30,"autostart":true},"users":[],"outbounds":[{"id":"HOST 1",` +
+			`"type":"host","slot":1,"enabled":true,"host":{"mode":"default","attempts":5,` +
+			`"reconnect_timeout":7}},{"id":"AWG","type":"amneziawg","slot":2,"enabled":true,` +
+			`"amneziawg":{"config":` + strconv.Quote(sampleTunnel) + `},"monitoring":{"interval":30,` +
+			`"timeout":5,"retries":3,"reconnect_delay":4,"reconnect_attempts":0,` +
+			`"target":"1.1.1.1:443"}}],"inbounds":[{"id":"S","type":"socks5","port":7800,` +
+			`"anonymous":true}]}`
+		require.NoError(t, os.WriteFile(filepath.Join(directory, fileName), []byte(previous),
+			0o600))
+		store, err := Open(directory)
+		require.NoError(t, err)
+		snapshot := store.Snapshot()
+		require.Equal(t, [2]int{5, 7}, [2]int{snapshot.Outbounds[0].Attempts,
+			snapshot.Outbounds[0].ReconnectTimeout})
+		require.Equal(t, [2]int{1, 4}, [2]int{snapshot.Outbounds[1].Attempts,
+			snapshot.Outbounds[1].ReconnectTimeout})
+		require.Equal(t, [2]int{3, 10}, [2]int{snapshot.Inbounds[0].Attempts,
+			snapshot.Inbounds[0].ReconnectTimeout})
+		require.NoError(t, store.Update(func(*Config) error {
+			return nil
+		}))
+		data, err := os.ReadFile(filepath.Join(directory, fileName))
+		require.NoError(t, err)
+		require.NotContains(t, string(data), "reconnect_delay")
+		require.NotContains(t, string(data), "reconnect_attempts")
+	}
 	{
 		current := `{"version":6,"secret":"s","settings":{"mixed_port":7890,"bind_address":"*",` +
 			`"default_target":"DIRECT","log_level":"warning","probe_target":"1.1.1.1:443",` +
@@ -946,6 +975,7 @@ func TestUpdateOutbound_Identity(t *testing.T) {
 	outbound, found := config.FindOutbound("SOCKS5 1")
 	require.True(t, found)
 	require.Equal(t, Outbound{ID: "SOCKS5 1", Type: TypeSocks5, Slot: 2, Autostart: true,
+		Attempts: 3, ReconnectTimeout: 10,
 		Socks5: &Socks5Options{Server: "10.0.0.9", Port: 1081}}, outbound)
 	require.ErrorContains(t, config.UpdateOutbound("SOCKS5 1", Outbound{}), "invalid server address")
 	require.ErrorContains(t, config.UpdateOutbound("missing", Outbound{}), "does not exist")

@@ -14,9 +14,19 @@
             </a-col>
             <a-col :span="6"><a-form-item label="Enabled"><a-switch v-model:checked="form.enabled" /></a-form-item></a-col>
             <a-col :span="6"><a-form-item label="Collect statistics"><a-switch v-model:checked="form.statistics" /></a-form-item></a-col>
-            <a-col v-if="tunnel" :span="24">
-              <a-form-item extra="When it is off, the tunnel stays stopped after the router starts until Start is pressed. A tunnel that was stopped or failed is not started again.">
+            <a-col :span="24">
+              <a-form-item :extra="autostartHint">
                 <a-checkbox v-model:checked="form.autostart">Start automatically when the router starts</a-checkbox>
+              </a-form-item>
+            </a-col>
+            <a-col :span="12">
+              <a-form-item label="Connection attempts" name="attempts" :rules="range(1, 100)" :extra="attemptsHint">
+                <a-input-number v-model:value="form.attempts" style="width: 100%" />
+              </a-form-item>
+            </a-col>
+            <a-col :span="12">
+              <a-form-item label="Reconnection timeout, seconds" name="reconnect_timeout" :rules="range(1, 3600)" extra="Pause between connection attempts">
+                <a-input-number v-model:value="form.reconnect_timeout" style="width: 100%" />
               </a-form-item>
             </a-col>
           </a-row>
@@ -40,20 +50,6 @@
                 <a-form-item label="Gateway (optional)" :name="['host', 'gateway']" :rules="[{ pattern: ipPattern, message: 'Enter IP address' }]"
                   extra="Needed when the interface has no default route">
                   <a-input v-model:value="form.host.gateway" placeholder="192.168.1.1" />
-                </a-form-item>
-              </a-col>
-            </a-row>
-            <a-row :gutter="16">
-              <a-col :span="12">
-                <a-form-item label="Connection attempts" :name="['host', 'attempts']" :rules="range(1, 100)"
-                  extra="Failed attempts in a row before the outbound falls to the failed state">
-                  <a-input-number v-model:value="form.host.attempts" style="width: 100%" />
-                </a-form-item>
-              </a-col>
-              <a-col :span="12">
-                <a-form-item label="Reconnection timeout, seconds" :name="['host', 'reconnect_timeout']" :rules="range(1, 3600)"
-                  extra="Pause between connection attempts">
-                  <a-input-number v-model:value="form.host.reconnect_timeout" style="width: 100%" />
                 </a-form-item>
               </a-col>
             </a-row>
@@ -142,9 +138,6 @@
             <a-col :span="12"><a-form-item label="Check every, seconds" :name="['monitoring', 'interval']" :rules="range(5, 3600)"><a-input-number v-model:value="form.monitoring.interval" style="width: 100%" /></a-form-item></a-col>
             <a-col :span="12"><a-form-item label="Wait for response, seconds" :name="['monitoring', 'timeout']" :rules="range(1, 60)"><a-input-number v-model:value="form.monitoring.timeout" style="width: 100%" /></a-form-item></a-col>
             <a-col :span="12"><a-form-item label="If check fails, repeat it, times" :name="['monitoring', 'retries']" :rules="range(1, 20)"><a-input-number v-model:value="form.monitoring.retries" style="width: 100%" /></a-form-item></a-col>
-            <a-col :span="12"><a-form-item label="If repeat fails, reconnect after, seconds" :name="['monitoring', 'reconnect_delay']" :rules="range(1, 3600)"><a-input-number v-model:value="form.monitoring.reconnect_delay" style="width: 100%" /></a-form-item></a-col>
-            <a-col :span="12"><a-form-item label="Reconnect attempts" :name="['monitoring', 'reconnect_attempts']" :rules="range(0, 100)"
-              extra="When all attempts fail the connection is taken down and marked as failed"><a-input-number v-model:value="form.monitoring.reconnect_attempts" style="width: 100%" /></a-form-item></a-col>
           </a-row>
         </a-tab-pane>
       </a-tabs>
@@ -187,6 +180,10 @@ const interfaces = ref([])
 const form = reactive({})
 
 const tunnel = computed(() => props.kind === 'openvpn' || props.kind === 'amneziawg')
+const autostartHint = 'Off: after the router starts the outbound stays stopped until Start. An outbound that was stopped or failed is not started again.'
+const attemptsHint = computed(() => tunnel.value
+  ? 'When all attempts in a row fail, the tunnel fails and stays down until Start or Restart'
+  : 'When all attempts in a row fail, the outbound is marked failed; checks continue and it recovers by itself')
 const title = computed(() => props.outbound ? `Edit outbound '${props.outbound.id}'` : `Add ${typeLabels[props.kind]} outbound`)
 const interfaceOptions = computed(() => interfaces.value.map((item) => ({
   value: item.name,
@@ -195,13 +192,13 @@ const interfaceOptions = computed(() => interfaces.value.map((item) => ({
 
 function defaults(kind) {
   return {
-    id: '', type: kind, enabled: true, autostart: true, statistics: true,
-    host: { mode: 'default', interface: undefined, gateway: '', attempts: 3, reconnect_timeout: 10 },
+    id: '', type: kind, enabled: true, autostart: true, attempts: 3, reconnect_timeout: 10, statistics: true,
+    host: { mode: 'default', interface: undefined, gateway: '' },
     socks5: { server: '', port: 1080, username: '', password: '', tls: false, skip_cert_verify: false, udp: true },
     http: { server: '', port: 3128, single: true, https_server: '', https_port: 3128, ftp_server: '', ftp_port: 3128, username: '', password: '', tls: false, skip_cert_verify: false },
     openvpn: { config: '', username: '', password: '', otp_key: '', otp_mode: 'challenge', key_password: '', use_dns: true },
     amneziawg: { config: '', use_dns: true },
-    monitoring: { enabled: true, interval: 30, timeout: 5, retries: 3, reconnect_delay: 10, reconnect_attempts: 3, target: '1.1.1.1:443' }
+    monitoring: { enabled: true, interval: 30, timeout: 5, retries: 3, target: '1.1.1.1:443' }
   }
 }
 
@@ -282,11 +279,14 @@ async function save() {
     const first = failure.errorFields && failure.errorFields[0]
     if (first) {
       const group = String(first.name[0])
-      tab.value = group === 'monitoring' ? 'monitoring' : group === 'id' ? 'general' : 'type'
+      tab.value = group === 'monitoring' ? 'monitoring' : ['id', 'attempts', 'reconnect_timeout'].includes(group) ? 'general' : 'type'
     }
     return
   }
-  const body = { id: form.id, type: props.kind, enabled: form.enabled, autostart: form.autostart, statistics: form.statistics }
+  const body = {
+    id: form.id, type: props.kind, enabled: form.enabled, autostart: form.autostart, attempts: form.attempts,
+    reconnect_timeout: form.reconnect_timeout, statistics: form.statistics
+  }
   body[props.kind] = { ...form[props.kind] }
   if (props.kind === 'host' && body.host.mode !== 'interface') {
     body.host = { ...body.host, mode: 'default', interface: '', gateway: '' }

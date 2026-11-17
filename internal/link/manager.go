@@ -135,7 +135,7 @@ func (manager *Manager) SetActive(active bool, snapshot config.Config) {
 	defer manager.mutex.Unlock()
 	if active && !manager.active {
 		for _, outbound := range snapshot.Outbounds {
-			if outbound.Enabled && outbound.IsTunnel() {
+			if outbound.Enabled {
 				manager.autostart(outboundKey(outbound.Slot), outbound.Autostart)
 			}
 		}
@@ -169,9 +169,7 @@ func (manager *Manager) Control(id string, action string) error {
 	outbound := manager.outbounds[index]
 	if !outbound.Enabled {
 		return fmt.Errorf("outbound '%v' is disabled", id)
-	} else if !outbound.IsTunnel() && action != ActionRestart {
-		return fmt.Errorf("outbound '%v' has no service to %v", id, action)
-	} else if outbound.IsTunnel() && action != ActionStop && !manager.active {
+	} else if action != ActionStop && !manager.active {
 		return fmt.Errorf("failed to %v outbound '%v': %v", action, id, messageInactive)
 	}
 	key := outboundKey(outbound.Slot)
@@ -184,7 +182,7 @@ func (manager *Manager) Control(id string, action string) error {
 		manager.journal.set(key, ServiceRecord{State: StateStopped, Message: messageStopped,
 			Since: time.Now().Unix()})
 		manager.book(key).add(stamp("%v", messageStopped))
-	} else if outbound.IsTunnel() {
+	} else {
 		manager.journal.set(key, ServiceRecord{State: intentRunning, Since: time.Now().Unix()})
 	}
 	manager.applyOutbounds()
@@ -199,8 +197,7 @@ func (manager *Manager) Status() map[string]Status {
 		result[current.name()] = current.snapshot()
 	}
 	for _, outbound := range manager.outbounds {
-		if _, found := manager.runners[outbound.Slot]; found || !outbound.Enabled ||
-			!outbound.IsTunnel() {
+		if _, found := manager.runners[outbound.Slot]; found || !outbound.Enabled {
 			continue
 		}
 		state, message, since := manager.dormant(outboundKey(outbound.Slot))
@@ -264,14 +261,14 @@ func (manager *Manager) applyOutbounds() {
 	for _, outbound := range manager.outbounds {
 		key, signature := outboundKey(outbound.Slot), makeSignature(outbound, manager.settings, bypass)
 		current, found := manager.runners[outbound.Slot]
-		active := outbound.Enabled && manager.wanted(key, outbound.IsTunnel(), signature, found)
+		active := outbound.Enabled && manager.wanted(key, signature, found)
 		if wanted[outbound.Slot], keys[key] = active, outbound.Enabled; found && active &&
 			current.signature == signature {
 			current.rename(outbound.ID)
 			continue
 		} else if found {
 			current.close()
-			manager.retire(current.book, outbound.Enabled && outbound.IsTunnel())
+			manager.retire(current.book, outbound.Enabled)
 			delete(manager.runners, outbound.Slot)
 		}
 		if active {
@@ -292,10 +289,8 @@ func (manager *Manager) applyOutbounds() {
 	}, keys)
 }
 
-func (manager *Manager) wanted(key string, service bool, signature string, running bool) bool {
-	if !service {
-		return true
-	} else if !manager.active {
+func (manager *Manager) wanted(key string, signature string, running bool) bool {
+	if !manager.active {
 		return false
 	}
 	record, found := manager.journal.get(key)
@@ -399,17 +394,12 @@ func makeSignature(outbound config.Outbound, settings config.Settings, bypass in
 }
 
 func (runner *runner) policy() policy {
-	interval := time.Duration(runner.settings.CheckInterval) * time.Second
-	if monitoring := runner.outbound.Monitoring; runner.outbound.IsTunnel() {
-		return policy{limit: monitoring.ReconnectAttempts + 1, exhausted: StateFailed,
-			delay: time.Duration(monitoring.ReconnectDelay) * time.Second, terminal: true}
-	} else if host := runner.outbound.Host; host != nil {
-		return policy{limit: host.Attempts, exhausted: StateFailed,
-			delay:  time.Duration(host.ReconnectTimeout) * time.Second,
-			verify: runner.settings.ConnectivityChecks}
+	result := policy{limit: max(1, runner.outbound.Attempts), exhausted: StateFailed,
+		delay: time.Duration(runner.outbound.ReconnectTimeout) * time.Second}
+	if result.terminal = runner.outbound.IsTunnel(); !result.terminal {
+		result.verify = runner.settings.ConnectivityChecks
 	}
-	return policy{limit: 1, delay: interval, exhausted: StateDown,
-		verify: runner.settings.ConnectivityChecks}
+	return result
 }
 
 func (runner *runner) run(ctx context.Context) {
@@ -446,6 +436,9 @@ func (runner *runner) run(ctx context.Context) {
 		fatal := &fatalError{}
 		runner.logf("link failed: %v", err)
 		if failures++; errors.As(err, &fatal) || failures >= policy.limit {
+			if failures <= policy.limit {
+				runner.logf("connection failed after %v of %v attempts", failures, policy.limit)
+			}
 			state, message = policy.exhausted, err.Error()
 			if runner.fail(state, message); policy.terminal {
 				<-ctx.Done()
@@ -544,7 +537,7 @@ func (runner *runner) update(change func(status *Status)) {
 	}
 	current := runner.status
 	runner.mutex.Unlock()
-	if current.State != previous.State && runner.outbound.IsTunnel() {
+	if current.State != previous.State {
 		runner.manager.observe(runner.key, current.State, current.Message, runner.signature)
 	}
 	if !sameStatus(previous, current) && runner.manager.options.Changed != nil {

@@ -14,9 +14,19 @@
             </a-col>
             <a-col :span="6"><a-form-item label="Enabled"><a-switch v-model:checked="form.enabled" /></a-form-item></a-col>
             <a-col :span="6"><a-form-item label="Collect statistics"><a-switch v-model:checked="form.statistics" /></a-form-item></a-col>
+            <a-col :span="24">
+              <a-form-item :extra="autostartHint">
+                <a-checkbox v-model:checked="form.autostart">Start automatically when the router starts</a-checkbox>
+              </a-form-item>
+            </a-col>
             <a-col :span="12">
-              <a-form-item label="Start automatically" extra="Not started again after a stop or a failure">
-                <a-checkbox v-model:checked="form.autostart">When the router starts</a-checkbox>
+              <a-form-item label="Connection attempts" name="attempts" :rules="range(1, 100)" :extra="attemptsHint">
+                <a-input-number v-model:value="form.attempts" style="width: 100%" />
+              </a-form-item>
+            </a-col>
+            <a-col :span="12">
+              <a-form-item label="Reconnection timeout, seconds" name="reconnect_timeout" :rules="range(1, 3600)" extra="Pause between connection attempts">
+                <a-input-number v-model:value="form.reconnect_timeout" style="width: 100%" />
               </a-form-item>
             </a-col>
             <a-col :span="12">
@@ -247,6 +257,8 @@ const userColumns = [
   { title: 'Password', key: 'password' },
   { title: '', key: 'actions', width: 90 }
 ]
+const autostartHint = 'Off: after the router starts the inbound stays stopped until Start. An inbound that was stopped or failed is not started again.'
+const attemptsHint = 'When all attempts in a row fail, the inbound fails and stays stopped until Start or Restart'
 const range = (min, max) => [{ required: true, type: 'number', min, max, message: `${min}…${max}` }]
 
 const formRef = ref()
@@ -267,7 +279,7 @@ const outboundOptions = computed(() => [
 const otpLink = computed(() => `otpauth://totp/Proximity:${encodeURIComponent(form.id || saved.value || 'OpenVPN')}?secret=${String(form.openvpn.otp_key).replace(/[\s=-]/g, '')}&issuer=Proximity`)
 
 function defaults(kind) {
-  const result = { id: '', enabled: true, autostart: true, statistics: true, port: null, outbound: '@router', anonymous: false, users: [] }
+  const result = { id: '', enabled: true, autostart: true, attempts: 3, reconnect_timeout: 10, statistics: true, port: null, outbound: '@router', anonymous: false, users: [] }
   if (kind === 'socks5') {
     result.socks5 = { listen: '*', udp: true, tls: false, certificate: '', key: '' }
   } else {
@@ -373,7 +385,8 @@ async function copy(text, done) {
 
 function makeBody() {
   const body = {
-    id: form.id, type: props.kind, enabled: form.enabled, autostart: form.autostart, statistics: form.statistics, port: form.port || 0,
+    id: form.id, type: props.kind, enabled: form.enabled, autostart: form.autostart, attempts: form.attempts,
+    reconnect_timeout: form.reconnect_timeout, statistics: form.statistics, port: form.port || 0,
     outbound: form.outbound, anonymous: form.anonymous, users: form.users.map((user) => ({ ...user, name: user.name.trim() }))
   }
   if (props.kind === 'socks5') {
