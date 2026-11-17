@@ -81,7 +81,7 @@ Go to **Outbounds → Add outbound** and choose a type.
 | An `.ovpn` file | **OpenVPN** | upload/paste the file, user, password, optional TOTP key |
 | An AmneziaWG `.conf`, `vpn://` key or QR code | **AmneziaWG** | upload/paste config, convert `vpn://`, or *Scan QR code from image* |
 
-Every outbound also has a **General** tab (ID, enabled, collect statistics, verbose log, *Start
+Every outbound also has a **General** tab (ID, enabled, statistics, verbose log, *Start
 automatically when the router starts*, connection attempts and reconnection timeout),
 and tunnels have a **Monitoring** tab. Changes are applied immediately: there is no
 separate "apply" step.

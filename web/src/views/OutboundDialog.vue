@@ -6,15 +6,15 @@
         <a-tab-pane key="general" force-render>
           <template #tab><ProfileOutlined /> General</template>
           <a-row :gutter="16">
-            <a-col :span="9">
+            <a-col :span="12">
               <a-form-item label="ID" name="id" :rules="[{ pattern: idPattern, message: 'Letters, digits, space, _ . - (up to 48)' }]"
                 :extra="outbound ? 'Unique among outbounds and fallbacks; references are updated on rename' : 'Unique, allocated automatically when empty'">
                 <a-input v-model:value="form.id" :placeholder="outbound ? outbound.id : `${shortLabels[kind]} N`" />
               </a-form-item>
             </a-col>
-            <a-col :span="5"><a-form-item label="Enabled"><a-switch v-model:checked="form.enabled" /></a-form-item></a-col>
-            <a-col :span="5"><a-form-item label="Collect statistics"><a-switch v-model:checked="form.statistics" /></a-form-item></a-col>
-            <a-col :span="5">
+            <a-col :span="4"><a-form-item label="Enabled"><a-switch v-model:checked="form.enabled" /></a-form-item></a-col>
+            <a-col :span="4"><a-form-item label="Statistics" tooltip="Count traffic and draw it on the charts"><a-switch v-model:checked="form.statistics" /></a-form-item></a-col>
+            <a-col :span="4">
               <a-form-item label="Verbose" :tooltip="verboseHint"><a-switch v-model:checked="form.verbose" /></a-form-item>
             </a-col>
             <a-col :span="24">

@@ -165,7 +165,7 @@ Every outbound dialog has a **General** tab:
 | Start automatically when the router starts | On by default. Off: after the router starts, the outbound stays stopped until **Start** |
 | Connection attempts | Default 3. Failed attempts in a row before the outbound is `failed`: a tunnel then stays down until **Start** / **Restart**; HOST and proxies keep being checked and recover by themselves |
 | Reconnection timeout, seconds | Default 10. Pause between attempts |
-| Collect statistics | Count traffic and draw it on the chart |
+| Statistics | Count traffic and draw it on the chart |
 | Verbose | Off by default. Writes detailed debug information to the [connection log](#connection-log) (see below) |
 
 All fields are validated before saving. Changes are applied immediately.
@@ -365,7 +365,7 @@ keeps its state after a container restart.
 | Start automatically when the router starts | On by default: the inbound starts with the router (unless it was stopped or failed) |
 | Connection attempts | Default 3. Failed starts in a row before the inbound is `failed`; it then stays stopped until **Start** / **Restart** |
 | Reconnection timeout, seconds | Default 10. Pause between attempts |
-| Collect statistics | Count upload and download traffic of the inbound |
+| Statistics | Count upload and download traffic of the inbound |
 | Verbose | Off by default. The inbound log gets `debug:` lines: settings, attempts, state changes, clients that connect and disconnect (OpenVPN), and every connection of its clients with its duration and traffic. The OpenVPN server runs with at least `verb 6`, and the log keeps more lines (3000 by default) |
 | Port number | Unique, `7800…7898` (the range published by the Docker files); empty → the first free port |
 | Outbound | **Router** — the routes decide, like for the proxy port; **Host** — the host network connection, routes are skipped; or one of the outbounds — everything goes there |
