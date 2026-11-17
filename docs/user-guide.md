@@ -326,10 +326,13 @@ when the route is off. The states refresh every 3 seconds.
 - **Router configuration** — the complete generated mihomo configuration, read-only, with
   numbered lines and highlighting: keys, strings, numbers and `true` / `false`, IP addresses
   and masks, domains, ports, outbound and fallback names; the `rules` list is highlighted
-  like the router rules preview. **Hide passwords** (on by default, remembered by the
+  like the router rules preview. **JSON / YAML** switches the format (remembered by the
+  browser): JSON is exactly what mihomo receives, YAML is the same data in the usual mihomo
+  form. **Hide passwords** (on by default, remembered by the
   browser) replaces passwords and private keys with `"<hidden>"`; the toolbar shows how many
   values are hidden. **Copy** puts the configuration on the clipboard, **Save** downloads it as
-  `mihomo-config-<date>-<time>.yaml` (time in UTC); both take the configuration as shown, so
+  `mihomo-config-<date>-<time>.json` or `.yaml` (time in UTC); both take the configuration
+  as shown, in the selected format, so
   with hidden passwords it can be shared but not used as is:
 
   ![Router configuration](images/router-config.png)

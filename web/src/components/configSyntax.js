@@ -1,3 +1,4 @@
+import { dump } from 'js-yaml'
 import { highlightLine, highlightRule } from './ruleSyntax'
 
 const linePattern = /^(\s*)(?:"((?:[^"\\]|\\.)*)"(\s*:\s*))?(.*?)(,?)$/
@@ -11,6 +12,9 @@ const secretKeys = ['password', 'private-key', 'secret', 'token', 'pre-shared-ke
 const secretPattern = new RegExp(`^(\\s*"(?:${secretKeys.join('|')})"\\s*:\\s*)"(?:[^"\\\\]|\\\\.)*"`, 'gm')
 
 export const hiddenValue = '<hidden>'
+
+const yamlPattern = /^(\s*)((?:- )*)(?:('(?:[^']|'')*'|"(?:[^"\\]|\\.)*"|[^\s'"#-][^#]*?|-[^\s#][^#]*?)(:)(?=\s|$))?(\s*)(.*)$/
+const blockPattern = /^[|>][+-]?\d*$/
 
 const token = (text, kind) => ({ text, kind })
 
@@ -63,7 +67,65 @@ export function hideSecrets(text) {
   return { text: result, count }
 }
 
-export function highlightConfig(text) {
+export function convertYaml(text) {
+  return dump(JSON.parse(text), { lineWidth: -1, noRefs: true })
+}
+
+function unquote(text) {
+  if (/^'.*'$/.test(text)) return { quote: "'", inner: text.slice(1, -1) }
+  if (/^".*"$/.test(text)) return { quote: '"', inner: text.slice(1, -1) }
+  return { quote: '', inner: text }
+}
+
+function wrap(quote, parts) {
+  return quote ? [token(quote, 'punctuation'), ...parts.filter((part) => part.text), token(quote, 'punctuation')] : parts
+}
+
+function yamlValue(text, key, parent) {
+  const { quote, inner } = unquote(text)
+  if (!text) return []
+  if (blockPattern.test(text)) return [token(text, 'punctuation')]
+  if (secretKeys.includes(key)) return wrap(quote, [token(inner, 'secret')])
+  if (parent === 'rules' && !key) return wrap(quote, highlightRule(inner))
+  if (targetKeys.includes(key) || (!key && targetArrays.includes(parent))) return wrap(quote, [token(inner, 'target')])
+  if (!quote && numberPattern.test(text)) return [token(text, 'number')]
+  if (!quote && /^(true|false|null|~)$/.test(text)) return [token(text, 'keyword')]
+  if (!quote && /^(\[\]|\{\})$/.test(text)) return [token(text, 'punctuation')]
+  return wrap(quote, scalar(inner))
+}
+
+export function highlightYaml(text) {
+  const stack = []
+  let block = null
+  return text.replace(/\n$/, '').split('\n').map((line) => {
+    const indent = line.match(/^\s*/)[0].length
+    if (block && (indent > block.indent || !line.trim())) {
+      return [token(line, block.secret ? 'secret' : 'string')]
+    }
+    block = null
+    const found = line.match(yamlPattern)
+    if (!found || /^\s*#/.test(line)) return [token(line, found ? 'comment' : 'plain')]
+    const [, lead, dashes, key, colon, space, body] = found
+    const column = lead.length + dashes.length
+    while (stack.length && stack[stack.length - 1].indent >= (key ? column : lead.length)) stack.pop()
+    const parent = stack.length ? stack[stack.length - 1].key : ''
+    const result = []
+    if (lead) result.push(token(lead, 'plain'))
+    if (dashes) result.push(token(dashes, 'punctuation'))
+    if (key) {
+      const { quote, inner } = unquote(key)
+      result.push(...(domainKeys.includes(parent) ? wrap(quote, scalar(inner)) : wrap(quote, [token(inner, 'key')])))
+      result.push(token(colon, 'punctuation'))
+    }
+    if (space) result.push(token(space, 'plain'))
+    result.push(...yamlValue(body, key ? unquote(key).inner : undefined, parent))
+    if (key && !body) stack.push({ indent: column, key: unquote(key).inner })
+    if (key && blockPattern.test(body)) block = { indent: column, secret: secretKeys.includes(unquote(key).inner) }
+    return result
+  })
+}
+
+export function highlightJson(text) {
   const stack = []
   return text.replace(/\n$/, '').split('\n').map((line) => {
     const found = line.match(linePattern)

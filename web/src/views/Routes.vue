@@ -112,7 +112,7 @@ const editing = ref(null)
 const allWarnings = ref(false)
 const configVisible = ref(false)
 const configText = ref('')
-const configFile = ref('mihomo-config.yaml')
+const configFile = ref('mihomo-config')
 
 const shownWarnings = computed(() => allWarnings.value ? warnings.value : warnings.value.slice(0, 5))
 const warned = computed(() => new Set(warnings.value.flatMap((item) => item.keys)))
@@ -166,7 +166,7 @@ const setDefault = (target) => act(() => api.put('/api/routes/default', { target
 async function showConfig() {
   try {
     configText.value = (await api.get('/api/router/config')).config
-    configFile.value = `mihomo-config-${new Date().toISOString().replace(/\.\d+Z$/, '').replace(/[-:]/g, '').replace('T', '-')}.yaml`
+    configFile.value = `mihomo-config-${new Date().toISOString().replace(/\.\d+Z$/, '').replace(/[-:]/g, '').replace('T', '-')}`
     configVisible.value = true
   } catch (error) {
     message.error(error.message)

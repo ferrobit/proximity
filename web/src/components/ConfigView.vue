@@ -3,13 +3,17 @@
     <div class="config-toolbar">
       <span class="config-counts">{{ lines.length }} {{ lines.length === 1 ? 'line' : 'lines' }}<template v-if="hide && hidden.count"> · {{ hidden.count }} hidden</template></span>
       <span class="config-spacer" />
+      <a-radio-group v-model:value="format" size="small" class="config-format">
+        <a-radio-button value="json">JSON</a-radio-button>
+        <a-radio-button value="yaml">YAML</a-radio-button>
+      </a-radio-group>
       <a-tooltip :title="`Passwords and private keys are replaced with ${hiddenValue} in the view, in Copy and in Save`">
         <label class="config-switch"><a-switch v-model:checked="hide" size="small" /><span>Hide passwords</span></label>
       </a-tooltip>
       <a-tooltip title="Copy the configuration to the clipboard">
         <a-button size="small" type="text" :disabled="!shown" @click="copy"><template #icon><CopyOutlined /></template>Copy</a-button>
       </a-tooltip>
-      <a-tooltip :title="`Save as ${fileName}`">
+      <a-tooltip :title="`Save as ${savedName}`">
         <a-button size="small" type="text" :disabled="!shown" @click="save"><template #icon><DownloadOutlined /></template>Save</a-button>
       </a-tooltip>
     </div>
@@ -26,34 +30,51 @@
 import { computed, ref, watch } from 'vue'
 import { message, theme } from 'ant-design-vue'
 import { CopyOutlined, DownloadOutlined } from '@ant-design/icons-vue'
-import { hiddenValue, hideSecrets, highlightConfig } from './configSyntax'
+import { convertYaml, hiddenValue, hideSecrets, highlightJson, highlightYaml } from './configSyntax'
 import { useDarkTheme } from './ruleTheme'
 import { copyText } from '../clipboard'
 import './rule-colors.css'
 
-const props = defineProps({ text: { type: String, default: '' }, fileName: { type: String, default: 'config.yaml' } })
+const props = defineProps({ text: { type: String, default: '' }, fileName: { type: String, default: 'config' } })
 
 const { token } = theme.useToken()
 const dark = useDarkTheme(token)
-const storageKey = 'proximity-config-hide-passwords'
-const hide = ref(readHide())
+const hideKey = 'proximity-config-hide-passwords'
+const formatKey = 'proximity-config-format'
+const hide = ref(readStored(hideKey) !== 'off')
+const format = ref(readStored(formatKey) === 'yaml' ? 'yaml' : 'json')
 const hidden = computed(() => hideSecrets(props.text))
-const shown = computed(() => hide.value ? hidden.value.text : props.text)
-const lines = computed(() => shown.value ? highlightConfig(shown.value) : [])
-
-watch(hide, (value) => {
+const json = computed(() => hide.value ? hidden.value.text : props.text)
+const converted = computed(() => {
   try {
-    localStorage.setItem(storageKey, value ? 'on' : 'off')
+    return { text: json.value ? convertYaml(json.value) : '', error: '' }
   } catch (error) {
-    return
+    return { text: '', error: error.message }
   }
 })
+const shown = computed(() => format.value === 'yaml' && !converted.value.error ? converted.value.text : json.value)
+const lines = computed(() => shown.value ? (format.value === 'yaml' && !converted.value.error ? highlightYaml : highlightJson)(shown.value) : [])
+const savedName = computed(() => `${props.fileName}.${format.value === 'yaml' && !converted.value.error ? 'yaml' : 'json'}`)
 
-function readHide() {
+watch(hide, (value) => writeStored(hideKey, value ? 'on' : 'off'))
+watch(format, (value) => writeStored(formatKey, value))
+watch(() => converted.value.error, (error) => {
+  if (error && format.value === 'yaml') message.error(`Cannot convert the configuration to YAML: ${error}`)
+})
+
+function readStored(key) {
   try {
-    return localStorage.getItem(storageKey) !== 'off'
+    return localStorage.getItem(key)
   } catch (error) {
-    return true
+    return null
+  }
+}
+
+function writeStored(key, value) {
+  try {
+    localStorage.setItem(key, value)
+  } catch (error) {
+    return
   }
 }
 
@@ -68,8 +89,9 @@ async function copy() {
 
 function save() {
   const link = document.createElement('a')
-  link.href = URL.createObjectURL(new Blob([shown.value], { type: 'application/yaml' }))
-  link.download = props.fileName
+  const type = savedName.value.endsWith('.yaml') ? 'application/yaml' : 'application/json'
+  link.href = URL.createObjectURL(new Blob([shown.value], { type }))
+  link.download = savedName.value
   link.click()
   URL.revokeObjectURL(link.href)
 }
@@ -81,6 +103,7 @@ function save() {
 .config-toolbar { display: flex; align-items: center; gap: 2px; padding: 3px 6px 3px 12px; border-bottom: 1px solid v-bind('token.colorBorderSecondary');
   background: v-bind('token.colorFillQuaternary'); }
 .config-spacer { flex: 1; }
+.config-format { margin-right: 12px; }
 .config-switch { display: inline-flex; align-items: center; gap: 6px; margin-right: 8px; font-size: 13px; cursor: pointer;
   color: v-bind('token.colorTextSecondary'); }
 .config-counts { font-size: 12px; color: v-bind('token.colorTextTertiary'); }

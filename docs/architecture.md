@@ -125,7 +125,8 @@ A fallback with no enabled members is skipped with a warning; routes that target
 skipped too.
 
 The generated configuration can be viewed in **Routes → Router configuration** (highlighted,
-with **Copy** and **Save**). It is JSON, which mihomo reads as YAML.
+with **Copy** and **Save**). It is JSON, which mihomo reads as YAML; the dialog can also show
+it as YAML, converted in the browser with js-yaml.
 
 ![Generated router configuration](images/router-config.png)
 
