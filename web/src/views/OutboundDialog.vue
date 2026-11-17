@@ -89,23 +89,7 @@
               </a-upload>
               <a-textarea v-model:value="form.openvpn.config" class="mono" :rows="10" placeholder="client&#10;dev tun&#10;remote vpn.example.com 1194 udp&#10;…" spellcheck="false" />
             </a-form-item>
-            <a-row :gutter="16">
-              <a-col :span="12"><a-form-item label="User name (optional)"><a-input v-model:value="form.openvpn.username" autocomplete="off" /></a-form-item></a-col>
-              <a-col :span="12"><a-form-item label="User password (optional)"><a-input-password v-model:value="form.openvpn.password" autocomplete="new-password" /></a-form-item></a-col>
-              <a-col :span="12">
-                <a-form-item label="OTP key (optional)" :name="['openvpn', 'otp_key']" :rules="[{ pattern: /^[A-Za-z2-7 =-]*$/, message: 'Base32 key expected' }]"
-                  extra="Base32 secret used to answer the challenge (TOTP)">
-                  <a-input-password v-model:value="form.openvpn.otp_key" autocomplete="off" />
-                </a-form-item>
-              </a-col>
-              <a-col :span="12">
-                <a-form-item label="OTP code usage">
-                  <a-select v-model:value="form.openvpn.otp_mode" :options="otpModes" />
-                </a-form-item>
-              </a-col>
-              <a-col :span="12"><a-form-item label="Private key password (optional)"><a-input-password v-model:value="form.openvpn.key_password" autocomplete="new-password" /></a-form-item></a-col>
-              <a-col :span="12"><a-form-item label="Use DNS servers pushed by VPN" extra="For domains routed to this outbound"><a-switch v-model:checked="form.openvpn.use_dns" /></a-form-item></a-col>
-            </a-row>
+            <a-form-item label="Use DNS servers pushed by VPN" extra="For domains routed to this outbound"><a-switch v-model:checked="form.openvpn.use_dns" /></a-form-item>
           </template>
           <template v-else>
             <a-form-item label="AmneziaWG configuration" :name="['amneziawg', 'config']" :rules="[{ required: true, message: 'Paste configuration or import it' }]">
@@ -122,6 +106,25 @@
             </a-form-item>
             <a-form-item label="Use DNS servers from configuration" extra="For domains routed to this outbound"><a-switch v-model:checked="form.amneziawg.use_dns" /></a-form-item>
           </template>
+        </a-tab-pane>
+        <a-tab-pane v-if="kind === 'openvpn'" key="authentication" force-render>
+          <template #tab><IdcardOutlined /> Authentication</template>
+          <a-row :gutter="16">
+            <a-col :span="12"><a-form-item label="User name (optional)"><a-input v-model:value="form.openvpn.username" autocomplete="off" /></a-form-item></a-col>
+            <a-col :span="12"><a-form-item label="User password (optional)"><a-input-password v-model:value="form.openvpn.password" autocomplete="new-password" /></a-form-item></a-col>
+            <a-col :span="12">
+              <a-form-item label="OTP key (optional)" :name="['openvpn', 'otp_key']" :rules="[{ pattern: /^[A-Za-z2-7 =-]*$/, message: 'Base32 key expected' }]"
+                extra="Base32 secret used to answer the challenge (TOTP)">
+                <a-input-password v-model:value="form.openvpn.otp_key" autocomplete="off" />
+              </a-form-item>
+            </a-col>
+            <a-col :span="12">
+              <a-form-item label="OTP code usage">
+                <a-select v-model:value="form.openvpn.otp_mode" :options="otpModes" />
+              </a-form-item>
+            </a-col>
+            <a-col :span="12"><a-form-item label="Private key password (optional)"><a-input-password v-model:value="form.openvpn.key_password" autocomplete="new-password" /></a-form-item></a-col>
+          </a-row>
         </a-tab-pane>
         <a-tab-pane v-if="tunnel" key="monitoring" force-render>
           <template #tab><HeartOutlined /> Monitoring</template>
@@ -148,7 +151,7 @@
 <script setup>
 import { computed, reactive, ref, watch } from 'vue'
 import { message, Modal } from 'ant-design-vue'
-import { ControlOutlined, HeartOutlined, ImportOutlined, ProfileOutlined, QrcodeOutlined, UploadOutlined } from '@ant-design/icons-vue'
+import { ControlOutlined, HeartOutlined, IdcardOutlined, ImportOutlined, ProfileOutlined, QrcodeOutlined, UploadOutlined } from '@ant-design/icons-vue'
 import jsQR from 'jsqr'
 import { api, id } from '../api'
 import { typeLabels } from '../format'
@@ -180,6 +183,7 @@ const interfaces = ref([])
 const form = reactive({})
 
 const tunnel = computed(() => props.kind === 'openvpn' || props.kind === 'amneziawg')
+const authFields = ['username', 'password', 'otp_key', 'otp_mode', 'key_password']
 const autostartHint = 'Off: after the router starts the outbound stays stopped until Start. An outbound that was stopped or failed is not started again.'
 const attemptsHint = computed(() => tunnel.value
   ? 'When all attempts in a row fail, the tunnel fails and stays down until Start or Restart'
@@ -279,7 +283,8 @@ async function save() {
     const first = failure.errorFields && failure.errorFields[0]
     if (first) {
       const group = String(first.name[0])
-      tab.value = group === 'monitoring' ? 'monitoring' : ['id', 'attempts', 'reconnect_timeout'].includes(group) ? 'general' : 'type'
+      tab.value = group === 'monitoring' ? 'monitoring' : ['id', 'attempts', 'reconnect_timeout'].includes(group) ? 'general'
+        : group === 'openvpn' && authFields.includes(String(first.name[1])) ? 'authentication' : 'type'
     }
     return
   }

@@ -143,14 +143,21 @@ Proxy credentials and *TLS to proxy (HTTPS proxy)* are optional.
 
 ![OpenVPN outbound](images/outbound-openvpn.png)
 
+Tabs: **General**, **OpenVPN**, **Authentication**, **Monitoring**.
+
+**OpenVPN** tab:
+
 - **VPN configuration file** — *Upload .ovpn file* or paste/edit the text; inline
   `<ca>`, `<cert>`, `<key>`, `<tls-auth>` blocks are supported.
+- **Use DNS servers pushed by VPN** — resolve the domains of routes that target this
+  outbound through the VPN's DNS.
+
+**Authentication** tab:
+
 - **User name / User password** — answered automatically when the server asks.
 - **OTP key** — base32 TOTP secret; *OTP code usage* is either *Answer the CHALLENGE
   prompt* or *Append code to the password*.
 - **Private key password** — if the client key is encrypted.
-- **Use DNS servers pushed by VPN** — resolve the domains of routes that target this
-  outbound through the VPN's DNS.
 
 Directives that would break Proximity's control (`dev`, `up`, `script-security`, `daemon`,
 `management` …) are removed automatically. Routes pushed by the server appear in Routes
@@ -275,7 +282,10 @@ or deleted, or when anonymous connections are off and there is no enabled user.
 
 ![OpenVPN inbound](images/inbound-openvpn.png)
 
-| Group | Fields |
+The OpenVPN inbound dialog has the tabs **General**, **Server**, **Clients**, **Security**,
+**Keys and certificates** and **Users**. When a field is invalid, saving opens its tab.
+
+| Tab | Fields |
 |---|---|
 | Server | *Public address* and *Public port* (what clients connect to; written to exported configurations), *Protocol* UDP/TCP, *Listen address*, *VPN network* (`10.77.<N>.0/24` when empty), *Maximum clients*, *Tunnel MTU*, *Log verbosity* |
 | Clients | *Route all client traffic through the VPN*, *Clients can reach each other*, *Additional routes*, *DNS servers* (empty: the Proximity resolver, so domain routes work for VPN clients) |

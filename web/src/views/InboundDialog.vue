@@ -1,5 +1,5 @@
 <template>
-  <a-modal :open="open" :title="title" width="780px" :confirm-loading="busy" ok-text="Save" destroy-on-close
+  <a-modal :open="open" :title="title" :width="kind === 'openvpn' ? '880px' : '780px'" :confirm-loading="busy" ok-text="Save" destroy-on-close
     @ok="save(false)" @cancel="$emit('update:open', false)">
     <a-form ref="formRef" layout="vertical" :model="form">
       <a-tabs v-model:active-key="tab">
@@ -43,7 +43,10 @@
           </a-row>
         </a-tab-pane>
         <a-tab-pane key="type" force-render>
-          <template #tab><ControlOutlined /> {{ inboundLabels[kind] }}</template>
+          <template #tab>
+            <template v-if="kind === 'openvpn'"><CloudServerOutlined /> Server</template>
+            <template v-else><ControlOutlined /> {{ inboundLabels[kind] }}</template>
+          </template>
           <template v-if="kind === 'socks5'">
             <a-row :gutter="16">
               <a-col :span="12">
@@ -65,112 +68,115 @@
               </a-form-item>
             </template>
           </template>
-          <template v-else>
-            <a-divider orientation="left" style="margin-top: 0"><CloudServerOutlined /> Server</a-divider>
-            <a-row :gutter="16">
-              <a-col :span="12">
-                <a-form-item label="Public address" :name="['openvpn', 'server']" :rules="[{ pattern: hostPattern, message: 'Enter IP address or hostname' }]"
-                  extra="Address of this host as clients see it; written to exported configurations">
-                  <a-input v-model:value="form.openvpn.server" placeholder="vpn.example.com" />
-                </a-form-item>
-              </a-col>
-              <a-col :span="6">
-                <a-form-item label="Public port" :name="['openvpn', 'public_port']" :rules="[{ type: 'number', min: 1, max: 65535, message: '1…65535' }]" extra="Empty: inbound port">
-                  <a-input-number v-model:value="form.openvpn.public_port" style="width: 100%" :placeholder="String(form.port || 'port')" />
-                </a-form-item>
-              </a-col>
-              <a-col :span="6">
-                <a-form-item label="Protocol">
-                  <a-select v-model:value="form.openvpn.protocol" :options="[{ value: 'udp', label: 'UDP' }, { value: 'tcp', label: 'TCP' }]" />
-                </a-form-item>
-              </a-col>
-              <a-col :span="12">
-                <a-form-item label="Listen address" :name="['openvpn', 'listen']" :rules="listenRules" extra="* accepts connections on all addresses">
-                  <a-input v-model:value="form.openvpn.listen" placeholder="*" />
-                </a-form-item>
-              </a-col>
-              <a-col :span="12">
-                <a-form-item label="VPN network" :name="['openvpn', 'network']" :rules="[{ pattern: /^$|^(\d{1,3}\.){3}\d{1,3}\/(1[6-9]|2\d)$/, message: 'IPv4 network /16…/29, for example 10.77.1.0/24' }]"
-                  extra="Addresses of the server and clients inside the tunnel; allocated automatically when empty">
-                  <a-input v-model:value="form.openvpn.network" placeholder="10.77.N.0/24" />
-                </a-form-item>
-              </a-col>
-              <a-col :span="8"><a-form-item label="Maximum clients" :name="['openvpn', 'max_clients']" :rules="range(1, 1000)"><a-input-number v-model:value="form.openvpn.max_clients" style="width: 100%" /></a-form-item></a-col>
-              <a-col :span="8"><a-form-item label="Tunnel MTU" :name="['openvpn', 'mtu']" :rules="range(1280, 1500)"><a-input-number v-model:value="form.openvpn.mtu" style="width: 100%" /></a-form-item></a-col>
-              <a-col :span="8"><a-form-item label="Log verbosity" :name="['openvpn', 'verbosity']" :rules="range(1, 6)"><a-input-number v-model:value="form.openvpn.verbosity" style="width: 100%" /></a-form-item></a-col>
-            </a-row>
-            <a-divider orientation="left"><TeamOutlined /> Clients</a-divider>
-            <a-row :gutter="16">
-              <a-col :span="12"><a-form-item label="Route all client traffic through the VPN" extra="Pushes the default route to clients"><a-switch v-model:checked="form.openvpn.redirect_gateway" /></a-form-item></a-col>
-              <a-col :span="12"><a-form-item label="Clients can reach each other"><a-switch v-model:checked="form.openvpn.client_to_client" /></a-form-item></a-col>
-              <a-col :span="12">
-                <a-form-item label="Additional routes (one network per line)" :name="['openvpn', 'routes_text']" :rules="[{ validator: checkRoutes }]" extra="Pushed to clients, for example 192.168.10.0/24">
-                  <a-textarea v-model:value="form.openvpn.routes_text" class="mono" :rows="3" spellcheck="false" />
-                </a-form-item>
-              </a-col>
-              <a-col :span="12">
-                <a-form-item label="DNS servers" :name="['openvpn', 'dns_text']" :rules="[{ pattern: /^$|^\s*(\d{1,3}\.){3}\d{1,3}(\s*[,\s]\s*(\d{1,3}\.){3}\d{1,3}){0,3}\s*$/, message: 'Up to 4 IPv4 addresses' }]"
-                  extra="Empty: Proximity resolver, so that domain routes work for clients">
-                  <a-input v-model:value="form.openvpn.dns_text" placeholder="Proximity resolver" />
-                </a-form-item>
-              </a-col>
-            </a-row>
-            <a-divider orientation="left"><SafetyOutlined /> Security</a-divider>
-            <a-row :gutter="16">
-              <a-col :span="24">
-                <a-form-item label="Data ciphers" :name="['openvpn', 'ciphers']" :rules="[{ required: true, pattern: /^[A-Za-z0-9-]+(:[A-Za-z0-9-]+)*$/, message: 'Cipher names separated by colon' }]">
-                  <a-input v-model:value="form.openvpn.ciphers" class="mono" />
-                </a-form-item>
-              </a-col>
-              <a-col :span="8"><a-form-item label="HMAC digest"><a-select v-model:value="form.openvpn.digest" :options="['SHA256', 'SHA384', 'SHA512'].map((value) => ({ value }))" /></a-form-item></a-col>
-              <a-col :span="8"><a-form-item label="Minimum TLS version"><a-select v-model:value="form.openvpn.tls_version" :options="['1.2', '1.3'].map((value) => ({ value }))" /></a-form-item></a-col>
-              <a-col :span="8"><a-form-item label="Renegotiation, seconds" :name="['openvpn', 'renegotiation']" :rules="range(120, 86400)"><a-input-number v-model:value="form.openvpn.renegotiation" style="width: 100%" /></a-form-item></a-col>
-              <a-col :span="8"><a-form-item label="Keepalive interval, seconds" :name="['openvpn', 'keepalive_interval']" :rules="range(1, 600)"><a-input-number v-model:value="form.openvpn.keepalive_interval" style="width: 100%" /></a-form-item></a-col>
-              <a-col :span="8"><a-form-item label="Keepalive timeout, seconds" :name="['openvpn', 'keepalive_timeout']" :rules="[{ validator: checkTimeout }]"><a-input-number v-model:value="form.openvpn.keepalive_timeout" style="width: 100%" /></a-form-item></a-col>
-              <a-col :span="8"><a-form-item label="Require one-time code (TOTP)" extra="Asked together with the password"><a-switch v-model:checked="form.openvpn.otp" /></a-form-item></a-col>
-              <a-col :span="24">
-                <a-form-item :name="['openvpn', 'otp_key']" :rules="[{ pattern: /^[A-Za-z2-7 =-]*$/, message: 'Base32 key expected' }]"
-                  extra="Shared by all users of this inbound: add it to an authenticator application">
-                  <template #label>TOTP key
-                    <a-button type="link" size="small" :loading="generating === 'otp_key'" @click="regenerate('otp_key')"><ReloadOutlined /> Regenerate</a-button>
-                    <a-button type="link" size="small" :disabled="!form.openvpn.otp_key" @click="copy(otpLink, 'Authenticator link copied')"><CopyOutlined /> Copy otpauth:// link</a-button>
-                  </template>
-                  <a-input v-model:value="form.openvpn.otp_key" class="mono" :disabled="!form.openvpn.otp" autocomplete="off" />
-                </a-form-item>
-              </a-col>
-            </a-row>
-            <a-divider orientation="left"><KeyOutlined /> Keys and certificates</a-divider>
-            <a-alert type="info" show-icon style="margin-bottom: 16px">
-              <template #message>
-                Generated automatically. After regeneration clients need new configuration files.
-                <a-button type="link" size="small" :loading="generating === 'pki'" @click="regenerate('pki')"><ReloadOutlined /> Regenerate CA and all certificates</a-button>
-              </template>
-            </a-alert>
-            <a-row :gutter="16">
-              <a-col :span="12"><a-form-item label="CA certificate" :name="['openvpn', 'ca_certificate']" :rules="pemRules"><a-textarea v-model:value="form.openvpn.ca_certificate" class="mono" :rows="4" spellcheck="false" /></a-form-item></a-col>
-              <a-col :span="12"><a-form-item label="CA private key" :name="['openvpn', 'ca_key']" extra="Needed only to issue certificates"><a-textarea v-model:value="form.openvpn.ca_key" class="mono" :rows="4" spellcheck="false" /></a-form-item></a-col>
-              <a-col :span="12">
-                <a-form-item :name="['openvpn', 'certificate']" :rules="pemRules">
-                  <template #label>Server certificate <a-button type="link" size="small" :loading="generating === 'server'" @click="regenerate('server')"><ReloadOutlined /> Regenerate</a-button></template>
-                  <a-textarea v-model:value="form.openvpn.certificate" class="mono" :rows="4" spellcheck="false" />
-                </a-form-item>
-              </a-col>
-              <a-col :span="12"><a-form-item label="Server private key" :name="['openvpn', 'key']" :rules="pemRules"><a-textarea v-model:value="form.openvpn.key" class="mono" :rows="4" spellcheck="false" /></a-form-item></a-col>
-              <a-col :span="12">
-                <a-form-item :name="['openvpn', 'client_certificate']" :rules="pemRules">
-                  <template #label>Client certificate <a-button type="link" size="small" :loading="generating === 'client'" @click="regenerate('client')"><ReloadOutlined /> Regenerate</a-button></template>
-                  <a-textarea v-model:value="form.openvpn.client_certificate" class="mono" :rows="4" spellcheck="false" />
-                </a-form-item>
-              </a-col>
-              <a-col :span="12"><a-form-item label="Client private key" :name="['openvpn', 'client_key']" :rules="pemRules"><a-textarea v-model:value="form.openvpn.client_key" class="mono" :rows="4" spellcheck="false" /></a-form-item></a-col>
-              <a-col :span="24">
-                <a-form-item :name="['openvpn', 'tls_crypt']" :rules="pemRules">
-                  <template #label>TLS-crypt key <a-button type="link" size="small" :loading="generating === 'tls_crypt'" @click="regenerate('tls_crypt')"><ReloadOutlined /> Regenerate</a-button></template>
-                  <a-textarea v-model:value="form.openvpn.tls_crypt" class="mono" :rows="4" spellcheck="false" />
-                </a-form-item>
-              </a-col>
-            </a-row>
-          </template>
+          <a-row v-else :gutter="16">
+            <a-col :span="12">
+              <a-form-item label="Public address" :name="['openvpn', 'server']" :rules="[{ pattern: hostPattern, message: 'Enter IP address or hostname' }]"
+                extra="Address of this host as clients see it; written to exported configurations">
+                <a-input v-model:value="form.openvpn.server" placeholder="vpn.example.com" />
+              </a-form-item>
+            </a-col>
+            <a-col :span="6">
+              <a-form-item label="Public port" :name="['openvpn', 'public_port']" :rules="[{ type: 'number', min: 1, max: 65535, message: '1…65535' }]" extra="Empty: inbound port">
+                <a-input-number v-model:value="form.openvpn.public_port" style="width: 100%" :placeholder="String(form.port || 'port')" />
+              </a-form-item>
+            </a-col>
+            <a-col :span="6">
+              <a-form-item label="Protocol">
+                <a-select v-model:value="form.openvpn.protocol" :options="[{ value: 'udp', label: 'UDP' }, { value: 'tcp', label: 'TCP' }]" />
+              </a-form-item>
+            </a-col>
+            <a-col :span="12">
+              <a-form-item label="Listen address" :name="['openvpn', 'listen']" :rules="listenRules" extra="* accepts connections on all addresses">
+                <a-input v-model:value="form.openvpn.listen" placeholder="*" />
+              </a-form-item>
+            </a-col>
+            <a-col :span="12">
+              <a-form-item label="VPN network" :name="['openvpn', 'network']" :rules="[{ pattern: /^$|^(\d{1,3}\.){3}\d{1,3}\/(1[6-9]|2\d)$/, message: 'IPv4 network /16…/29, for example 10.77.1.0/24' }]"
+                extra="Addresses of the server and clients inside the tunnel; allocated automatically when empty">
+                <a-input v-model:value="form.openvpn.network" placeholder="10.77.N.0/24" />
+              </a-form-item>
+            </a-col>
+            <a-col :span="8"><a-form-item label="Maximum clients" :name="['openvpn', 'max_clients']" :rules="range(1, 1000)"><a-input-number v-model:value="form.openvpn.max_clients" style="width: 100%" /></a-form-item></a-col>
+            <a-col :span="8"><a-form-item label="Tunnel MTU" :name="['openvpn', 'mtu']" :rules="range(1280, 1500)"><a-input-number v-model:value="form.openvpn.mtu" style="width: 100%" /></a-form-item></a-col>
+            <a-col :span="8"><a-form-item label="Log verbosity" :name="['openvpn', 'verbosity']" :rules="range(1, 6)"><a-input-number v-model:value="form.openvpn.verbosity" style="width: 100%" /></a-form-item></a-col>
+          </a-row>
+        </a-tab-pane>
+        <a-tab-pane v-if="kind === 'openvpn'" key="clients" force-render>
+          <template #tab><LaptopOutlined /> Clients</template>
+          <a-row :gutter="16">
+            <a-col :span="12"><a-form-item label="Route all client traffic through the VPN" extra="Pushes the default route to clients"><a-switch v-model:checked="form.openvpn.redirect_gateway" /></a-form-item></a-col>
+            <a-col :span="12"><a-form-item label="Clients can reach each other"><a-switch v-model:checked="form.openvpn.client_to_client" /></a-form-item></a-col>
+            <a-col :span="12">
+              <a-form-item label="Additional routes (one network per line)" :name="['openvpn', 'routes_text']" :rules="[{ validator: checkRoutes }]" extra="Pushed to clients, for example 192.168.10.0/24">
+                <a-textarea v-model:value="form.openvpn.routes_text" class="mono" :rows="3" spellcheck="false" />
+              </a-form-item>
+            </a-col>
+            <a-col :span="12">
+              <a-form-item label="DNS servers" :name="['openvpn', 'dns_text']" :rules="[{ pattern: /^$|^\s*(\d{1,3}\.){3}\d{1,3}(\s*[,\s]\s*(\d{1,3}\.){3}\d{1,3}){0,3}\s*$/, message: 'Up to 4 IPv4 addresses' }]"
+                extra="Empty: Proximity resolver, so that domain routes work for clients">
+                <a-input v-model:value="form.openvpn.dns_text" placeholder="Proximity resolver" />
+              </a-form-item>
+            </a-col>
+          </a-row>
+        </a-tab-pane>
+        <a-tab-pane v-if="kind === 'openvpn'" key="security" force-render>
+          <template #tab><SafetyOutlined /> Security</template>
+          <a-row :gutter="16">
+            <a-col :span="24">
+              <a-form-item label="Data ciphers" :name="['openvpn', 'ciphers']" :rules="[{ required: true, pattern: /^[A-Za-z0-9-]+(:[A-Za-z0-9-]+)*$/, message: 'Cipher names separated by colon' }]">
+                <a-input v-model:value="form.openvpn.ciphers" class="mono" />
+              </a-form-item>
+            </a-col>
+            <a-col :span="8"><a-form-item label="HMAC digest"><a-select v-model:value="form.openvpn.digest" :options="['SHA256', 'SHA384', 'SHA512'].map((value) => ({ value }))" /></a-form-item></a-col>
+            <a-col :span="8"><a-form-item label="Minimum TLS version"><a-select v-model:value="form.openvpn.tls_version" :options="['1.2', '1.3'].map((value) => ({ value }))" /></a-form-item></a-col>
+            <a-col :span="8"><a-form-item label="Renegotiation, seconds" :name="['openvpn', 'renegotiation']" :rules="range(120, 86400)"><a-input-number v-model:value="form.openvpn.renegotiation" style="width: 100%" /></a-form-item></a-col>
+            <a-col :span="8"><a-form-item label="Keepalive interval, seconds" :name="['openvpn', 'keepalive_interval']" :rules="range(1, 600)"><a-input-number v-model:value="form.openvpn.keepalive_interval" style="width: 100%" /></a-form-item></a-col>
+            <a-col :span="8"><a-form-item label="Keepalive timeout, seconds" :name="['openvpn', 'keepalive_timeout']" :rules="[{ validator: checkTimeout }]"><a-input-number v-model:value="form.openvpn.keepalive_timeout" style="width: 100%" /></a-form-item></a-col>
+            <a-col :span="8"><a-form-item label="Require one-time code (TOTP)" extra="Asked together with the password"><a-switch v-model:checked="form.openvpn.otp" /></a-form-item></a-col>
+            <a-col :span="24">
+              <a-form-item :name="['openvpn', 'otp_key']" :rules="[{ pattern: /^[A-Za-z2-7 =-]*$/, message: 'Base32 key expected' }]"
+                extra="Shared by all users of this inbound: add it to an authenticator application">
+                <template #label>TOTP key
+                  <a-button type="link" size="small" :loading="generating === 'otp_key'" @click="regenerate('otp_key')"><ReloadOutlined /> Regenerate</a-button>
+                  <a-button type="link" size="small" :disabled="!form.openvpn.otp_key" @click="copy(otpLink, 'Authenticator link copied')"><CopyOutlined /> Copy otpauth:// link</a-button>
+                </template>
+                <a-input v-model:value="form.openvpn.otp_key" class="mono" :disabled="!form.openvpn.otp" autocomplete="off" />
+              </a-form-item>
+            </a-col>
+          </a-row>
+        </a-tab-pane>
+        <a-tab-pane v-if="kind === 'openvpn'" key="keys" force-render>
+          <template #tab><FileProtectOutlined /> Keys and certificates</template>
+          <a-alert type="info" show-icon style="margin-bottom: 16px">
+            <template #message>
+              Generated automatically. After regeneration clients need new configuration files.
+              <a-button type="link" size="small" :loading="generating === 'pki'" @click="regenerate('pki')"><ReloadOutlined /> Regenerate CA and all certificates</a-button>
+            </template>
+          </a-alert>
+          <a-row :gutter="16">
+            <a-col :span="12"><a-form-item label="CA certificate" :name="['openvpn', 'ca_certificate']" :rules="pemRules"><a-textarea v-model:value="form.openvpn.ca_certificate" class="mono" :rows="4" spellcheck="false" /></a-form-item></a-col>
+            <a-col :span="12"><a-form-item label="CA private key" :name="['openvpn', 'ca_key']" extra="Needed only to issue certificates"><a-textarea v-model:value="form.openvpn.ca_key" class="mono" :rows="4" spellcheck="false" /></a-form-item></a-col>
+            <a-col :span="12">
+              <a-form-item :name="['openvpn', 'certificate']" :rules="pemRules">
+                <template #label>Server certificate <a-button type="link" size="small" :loading="generating === 'server'" @click="regenerate('server')"><ReloadOutlined /> Regenerate</a-button></template>
+                <a-textarea v-model:value="form.openvpn.certificate" class="mono" :rows="4" spellcheck="false" />
+              </a-form-item>
+            </a-col>
+            <a-col :span="12"><a-form-item label="Server private key" :name="['openvpn', 'key']" :rules="pemRules"><a-textarea v-model:value="form.openvpn.key" class="mono" :rows="4" spellcheck="false" /></a-form-item></a-col>
+            <a-col :span="12">
+              <a-form-item :name="['openvpn', 'client_certificate']" :rules="pemRules">
+                <template #label>Client certificate <a-button type="link" size="small" :loading="generating === 'client'" @click="regenerate('client')"><ReloadOutlined /> Regenerate</a-button></template>
+                <a-textarea v-model:value="form.openvpn.client_certificate" class="mono" :rows="4" spellcheck="false" />
+              </a-form-item>
+            </a-col>
+            <a-col :span="12"><a-form-item label="Client private key" :name="['openvpn', 'client_key']" :rules="pemRules"><a-textarea v-model:value="form.openvpn.client_key" class="mono" :rows="4" spellcheck="false" /></a-form-item></a-col>
+            <a-col :span="24">
+              <a-form-item :name="['openvpn', 'tls_crypt']" :rules="pemRules">
+                <template #label>TLS-crypt key <a-button type="link" size="small" :loading="generating === 'tls_crypt'" @click="regenerate('tls_crypt')"><ReloadOutlined /> Regenerate</a-button></template>
+                <a-textarea v-model:value="form.openvpn.tls_crypt" class="mono" :rows="4" spellcheck="false" />
+              </a-form-item>
+            </a-col>
+          </a-row>
         </a-tab-pane>
         <a-tab-pane key="users" force-render>
           <template #tab><TeamOutlined /> Users</template>
@@ -228,7 +234,7 @@
 import { computed, reactive, ref, watch } from 'vue'
 import { message } from 'ant-design-vue'
 import {
-  CloudServerOutlined, ControlOutlined, CopyOutlined, DeleteOutlined, DownloadOutlined, ExportOutlined, KeyOutlined, ProfileOutlined,
+  CloudServerOutlined, ControlOutlined, CopyOutlined, DeleteOutlined, DownloadOutlined, ExportOutlined, FileProtectOutlined, LaptopOutlined, ProfileOutlined,
   ReloadOutlined, SafetyOutlined, TeamOutlined, ThunderboltOutlined, UserAddOutlined
 } from '@ant-design/icons-vue'
 import { api, id } from '../api'
@@ -259,6 +265,11 @@ const userColumns = [
 ]
 const autostartHint = 'Off: after the router starts the inbound stays stopped until Start. An inbound that was stopped or failed is not started again.'
 const attemptsHint = 'When all attempts in a row fail, the inbound fails and stays stopped until Start or Restart'
+const fieldTabs = {
+  routes_text: 'clients', dns_text: 'clients', ciphers: 'security', renegotiation: 'security', keepalive_interval: 'security',
+  keepalive_timeout: 'security', otp_key: 'security', ca_certificate: 'keys', ca_key: 'keys', certificate: 'keys', key: 'keys',
+  client_certificate: 'keys', client_key: 'keys', tls_crypt: 'keys'
+}
 const range = (min, max) => [{ required: true, type: 'number', min, max, message: `${min}…${max}` }]
 
 const formRef = ref()
@@ -401,13 +412,20 @@ function makeBody() {
   return body
 }
 
+function tabOf(name) {
+  if (name[0] === 'openvpn') {
+    return fieldTabs[name[1]] || 'type'
+  }
+  return name[0] === 'socks5' ? 'type' : 'general'
+}
+
 async function save(keep) {
   try {
     await formRef.value.validate()
   } catch (failure) {
     const first = failure.errorFields && failure.errorFields[0]
     if (first) {
-      tab.value = ['socks5', 'openvpn'].includes(String(first.name[0])) ? 'type' : 'general'
+      tab.value = tabOf(first.name)
     }
     return false
   }
