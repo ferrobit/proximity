@@ -27,7 +27,7 @@ proximity/
 ├── scripts/
 │   ├── proximity.sh        compose wrapper for Linux and macOS
 │   ├── proximity.ps1       compose wrapper for Windows
-│   └── githooks/pre-commit gofmt, go vet and go build before commit
+│   └── githooks/pre-commit make vet build before commit
 ├── docs/                   documentation and screenshots
 ├── Dockerfile              multi-stage image build
 ├── docker-compose.yml          Linux, host network, transparent capture
@@ -41,16 +41,35 @@ proximity/
 |---|---|
 | Go | 1.24+ (the image builds with 1.25) |
 | Node.js | 22 |
+| rsync | any, for `make` |
 | Docker | with Compose v2, for the image |
 | For running tunnels locally | `ip` (iproute2), `ping`, `openvpn`, `amneziawg-go`, `awg`, `oathtool`, root or `CAP_NET_ADMIN` |
 
 ## Build
 
+Everything `make` builds, downloads or caches goes to `../proximity-build` — a folder
+next to the repository (override with `make BUILD=/path`). The repository itself is only
+read: `make` copies it with `rsync` (without `.git`, `docs`, `bin`, `web/node_modules`,
+`web/dist`) and works on the copy.
+
+```
+proximity-build/
+├── source/          copy of the repository; web/node_modules and web/dist live here
+├── bin/proximity    the binary
+├── cache/           Go build and module caches, npm cache (GOCACHE, GOMODCACHE, npm_config_cache)
+├── tmp/             TMPDIR / GOTMPDIR of builds and tests
+└── coverage.out     make cover
+```
+
 ```bash
-make web      # npm ci + vite build → web/dist
-make build    # CGO_ENABLED=0 go build → bin/proximity
+make web      # sync + npm ci (only when package-lock.json changed) + vite build
+make build    # sync + CGO_ENABLED=0 go build → ../proximity-build/bin/proximity
 make all      # both
 make vet      # gofmt -l + go vet
+make test     # go test ./...
+make cover    # go test with coverage
+make dev      # Vite dev server on the copy; edits are synced every second
+make clean    # remove ../proximity-build
 make image    # docker image only
 make up       # build image and start the container
 make logs     # follow container logs
@@ -58,16 +77,16 @@ make down     # stop
 ```
 
 `web/dist` is **not** committed: only the empty placeholder `web/dist/.gitkeep` is, so
-`go build`, `go vet` and `go test` work without Node.js. Such a binary answers the web UI
-with *503 web UI is not built*; run `make web` (or `make all`) first for a local binary
-with the UI. The Vite build keeps the placeholder.
+`go build`, `go vet` and `go test` work without Node.js (also when run by hand or by the
+IDE). Such a binary answers the web UI with *503 web UI is not built*; `make all` builds
+one with the UI.
 
 The Docker image does not use the local `web/dist` at all (`.dockerignore` excludes it):
 the `web` stage of the `Dockerfile` runs `npm ci` and `vite build` inside the builder and
 the `build` stage embeds the result. `docker compose build` / `make up` never change
 files in the working tree.
 
-Optional pre-commit hook (gofmt, go vet, go build; no UI build):
+Optional pre-commit hook (`make vet build`; no UI build):
 
 ```bash
 git config core.hooksPath scripts/githooks
@@ -79,7 +98,7 @@ The binary needs `mihomo` and, for tunnels, root privileges and the helper tools
 
 ```bash
 make all
-sudo bin/proximity \
+sudo ../proximity-build/bin/proximity \
   --listen 127.0.0.1:8899 \
   --config /tmp/proximity/config \
   --run /tmp/proximity/run \
@@ -99,12 +118,12 @@ programs use the proxy port.
 ## UI development
 
 ```bash
-cd web
-npm ci
-npm run dev        # Vite dev server; /api is proxied to http://127.0.0.1:8899
+make dev           # Vite dev server on http://localhost:5173; /api is proxied to http://127.0.0.1:8899
 ```
 
-Run the Go binary on port 8899 at the same time. Main files:
+`make dev` runs Vite in `../proximity-build/source/web` and copies changed files from the
+repository every second, so edits in `web/src` reload the page. Run the Go binary on port
+8899 at the same time. Main files:
 
 | File | Purpose |
 |---|---|
@@ -120,8 +139,8 @@ Run the Go binary on port 8899 at the same time. Main files:
 
 ```bash
 make test     # go test ./...
-make cover    # with coverage per package
-go test -race ./...
+make cover    # with coverage per package; profile in ../proximity-build/coverage.out
+go test -race ./...   # by hand: uses the default Go caches
 ```
 
 Current state (version 1.2.0): **99 tests, all passing, 93.2% total statement coverage.**

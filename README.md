@@ -299,12 +299,13 @@ Settings stay unchanged.
 
 ```bash
 make web      # build the UI (Node.js 22)
-make build    # build bin/proximity
+make build    # build ../proximity-build/bin/proximity
 make cover    # run tests with coverage
 make up       # build the image and start the container
 ```
 
-Component versions are Docker build arguments in `Dockerfile`: `MIHOMO_IMAGE`,
+All build output and caches go to `../proximity-build` next to the repository; the
+repository itself is not changed. Component versions are Docker build arguments in `Dockerfile`: `MIHOMO_IMAGE`,
 `AWG_GO_VERSION`, `AWG_TOOLS_VERSION`. More in [Development](docs/development.md).
 
 ## Project status

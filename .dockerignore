@@ -1,5 +1,2 @@
 .git
-bin
-web/node_modules
 web/dist
-*.zip

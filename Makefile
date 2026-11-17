@@ -1,26 +1,57 @@
 VERSION ?= 1.2.0
-BINARY ?= bin/proximity
 COMPOSE ?= scripts/proximity.sh
+BUILD ?= ../proximity-build
 
-.PHONY: all web build test cover vet image up down restart logs clean
+ROOT := $(abspath $(BUILD))
+SOURCE := $(ROOT)/source
+BINARY ?= $(ROOT)/bin/proximity
+COVERAGE := $(ROOT)/coverage.out
+
+export GOCACHE := $(ROOT)/cache/go-build
+export GOMODCACHE := $(ROOT)/cache/go-mod
+export GOTMPDIR := $(ROOT)/tmp
+export TMPDIR := $(ROOT)/tmp
+export npm_config_cache := $(ROOT)/cache/npm
+export npm_config_update_notifier := false
+
+SYNC = rsync -a --delete --exclude /.git --exclude /bin --exclude /docs \
+	--exclude /web/node_modules --exclude /web/dist ./ $(SOURCE)/
+
+.PHONY: all sync deps web build vet test cover dev image up down restart logs clean
 
 all: web build
 
-web:
-	cd web && npm ci --no-audit --no-fund && npm run build
+sync:
+	@command -v rsync >/dev/null || { echo "make: rsync is required" >&2; exit 1; }
+	@mkdir -p $(SOURCE)/web/dist $(ROOT)/bin $(ROOT)/tmp
+	@$(SYNC)
+	@touch $(SOURCE)/web/dist/.gitkeep
 
-build:
-	CGO_ENABLED=0 go build -trimpath -ldflags "-s -w -X main.version=$(VERSION)" -o $(BINARY) ./cmd/proximity
+deps: sync
+	@cd $(SOURCE)/web && if [ ! node_modules/.package-lock.json -nt package-lock.json ]; then \
+		npm ci --no-audit --no-fund; fi
 
-vet:
+web: deps
+	cd $(SOURCE)/web && npm run build
+
+build: sync
+	cd $(SOURCE) && CGO_ENABLED=0 go build -trimpath \
+		-ldflags "-s -w -X main.version=$(VERSION)" -o $(BINARY) ./cmd/proximity
+
+vet: sync
 	gofmt -l cmd internal web/embed.go
-	go vet ./...
+	cd $(SOURCE) && go vet ./...
 
-test:
-	go test ./...
+test: sync
+	cd $(SOURCE) && go test ./...
 
-cover:
-	go test -cover ./...
+cover: sync
+	cd $(SOURCE) && go test -coverprofile=$(COVERAGE) ./... && go tool cover -func=$(COVERAGE) | tail -1
+
+dev: deps
+	@trap 'kill $$watcher 2>/dev/null' EXIT INT TERM; \
+		(while sleep 1; do $(SYNC) >/dev/null; done) & watcher=$$!; \
+		cd $(SOURCE)/web && npx vite
 
 image:
 	PROXIMITY_VERSION=$(VERSION) $(COMPOSE) build
@@ -38,4 +69,4 @@ logs:
 	$(COMPOSE) logs -f --tail 200
 
 clean:
-	rm -rf bin web/node_modules
+	rm -rf $(ROOT)

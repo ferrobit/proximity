@@ -1,5 +1,1 @@
-bin/
-web/node_modules/
-web/dist/*
-!web/dist/.gitkeep
 *.zip
