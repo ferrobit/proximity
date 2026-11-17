@@ -76,7 +76,7 @@ port **8899**.
 | 🧭 **Routes** | 15 mihomo directives, automatic normalization (URLs → domains, IDN → punycode, `IP:port` → `AND` rule, masks), `#` comments, overlap and duplicate warnings, up/down ordering |
 | 📥 **Inbounds** | SOCKS5 proxy servers and OpenVPN servers on ports 7800–7898 with their own users, optional anonymous access, TLS / TOTP, generated keys and certificates, one-click client configuration export; traffic goes to the host connection, to the routes or to a chosen outbound |
 | 📡 **VPN routes** | Routes pushed by OpenVPN appear as a read-only *provided* route you can enable with one switch |
-| 🩺 **Monitoring** | Link state, latency, configurable checks, retries and reconnects; states `good` / `connecting` / `reconnecting` / `failed`; per-outbound connection log with auto-scroll |
+| 🩺 **Monitoring** | Link state, latency, configurable checks, retries and reconnects; states `good` / `connecting` / `reconnecting` / `failed` / `stopped`; start, stop and restart of tunnels and inbounds with state and logs kept across restarts; per-outbound connection log with auto-scroll |
 | 📈 **Statistics** | Upload/download totals and rates per outbound, interactive throughput chart (5 min / 15 min / 1 h) with an active connections chart beside it, list of unreachable destinations with reason and matched rule |
 | 🛡️ **Transparent mode** | Linux: captures all new outgoing host connections through a TUN device, hijacks DNS (fake-IP), sniffs TLS SNI / HTTP Host / QUIC, leaves LAN, Docker and inbound traffic alone |
 | 👥 **Access control** | Administrator, Operator, User and optional anonymous dashboard; secrets are hidden from read-only users |
@@ -286,6 +286,8 @@ Settings stay unchanged.
 | `proximity.json` | users, outbounds, inbounds, fallbacks, routes, settings |
 | `state.json` | traffic counters and the list of unreachable destinations |
 | `router.json` | router state (running or stopped) for *Start the router when the container starts* |
+| `services.json` | state of tunnels and inbounds (running, stopped, failed) kept across restarts |
+| `logs/` | logs of outbounds and inbounds, kept across restarts |
 | `mihomo/config.yaml` | generated mihomo configuration (JSON, which is valid YAML) |
 
 > [!WARNING]

@@ -73,8 +73,10 @@ A request below the required level gets `401` (not signed in) or `403` (role too
 | `PUT /api/outbounds/{id}` | 2 | Replace an outbound (rename by changing `id`) |
 | `DELETE /api/outbounds/{id}` | 2 | Delete |
 | `POST /api/outbounds/{id}/move` | 2 | `{delta: -1 \| 1}` — move up or down |
-| `POST /api/outbounds/{id}/restart` | 2 | Reconnect |
-| `GET /api/outbounds/{id}/log` | 2 | Connection log (last 300 lines) |
+| `POST /api/outbounds/{id}/start` | 2 | Start a tunnel (OpenVPN, AmneziaWG) |
+| `POST /api/outbounds/{id}/stop` | 2 | Stop a tunnel; it stays stopped after restarts |
+| `POST /api/outbounds/{id}/restart` | 2 | Reconnect any outbound; starts a stopped or failed tunnel |
+| `GET /api/outbounds/{id}/log` | 2 | Connection log (last 300 lines, kept across restarts) |
 | `POST /api/import/amneziawg` | 2 | `{text: "vpn://…"}` → `{config: "<.conf text>"}` |
 | `GET /api/interfaces` | 1 | Host network interfaces (for HOST outbounds) |
 | `GET /api/targets` | 1 | Outbounds and fallbacks usable as route targets |
@@ -84,10 +86,9 @@ Outbound object (fields depend on `type`):
 ```json
 {
   "id": "SOCKS5 1",
-  "name": "Amsterdam",
-  "group": "Proxies",
   "type": "socks5",
   "enabled": true,
+  "autostart": true,
   "statistics": true,
   "socks5": {"server": "proxy.ams.example.net", "port": 1080,
              "username": "alice", "password": "secret",
@@ -106,21 +107,34 @@ Outbound object (fields depend on `type`):
 Tunnels also take `monitoring: {enabled, interval, timeout, retries, reconnect_delay,
 reconnect_attempts, target}`.
 
+`autostart` (default `true` when omitted) — start the tunnel when the router starts. It is
+used only by tunnels; HOST and proxy outbounds are always checked.
+
+Services are tunnels and all inbounds. Their state (`running`, `stopped` or `failed`) is
+saved to `services.json` in the settings folder, and their logs to `logs/`. When the router
+starts (with the container or by **Start**), a service is started only if `autostart` is
+on and it was running before; a stopped or failed service keeps its state and message.
+A failed service is started again when its settings change. Status `stopped` means
+stopped by a user, by the router stop, or not started because `autostart` is off (see
+`message`).
+
 ### Inbounds
 
 | Method and path | Level | Description |
 |---|---|---|
-| `GET /api/inbounds` | 1 | `{inbounds, groups, ports: [7800, 7898]}`; every inbound carries `status` (`state`, `message`, `device`, `address`, `clients`) and `traffic`. Level 1 gets passwords and private keys removed (`redacted: true`) |
+| `GET /api/inbounds` | 1 | `{inbounds, ports: [7800, 7898]}`; every inbound carries `status` (`state`, `message`, `device`, `address`, `clients`) and `traffic`. Level 1 gets passwords and private keys removed (`redacted: true`) |
 | `POST /api/inbounds` | 2 | Add (see below); empty `id` → `SOCKS5 <N>` / `OpenVPN <N>`, `port: 0` → the first free port. Returns the stored inbound with generated keys |
 | `PUT /api/inbounds/{id}` | 2 | Replace; `type` cannot change, `id` may |
 | `DELETE /api/inbounds/{id}` | 2 | Delete |
 | `POST /api/inbounds/{id}/move` | 2 | `{delta}` |
-| `POST /api/inbounds/{id}/restart` | 2 | Restart the listener or the VPN server |
-| `GET /api/inbounds/{id}/log` | 2 | `{lines}` — last 300 log lines |
+| `POST /api/inbounds/{id}/start` | 2 | Start the listener or the VPN server |
+| `POST /api/inbounds/{id}/stop` | 2 | Stop it; it stays stopped after restarts |
+| `POST /api/inbounds/{id}/restart` | 2 | Restart; starts a stopped or failed inbound |
+| `GET /api/inbounds/{id}/log` | 2 | `{lines}` — last 300 log lines, kept across restarts |
 | `GET /api/inbounds/{id}/config?user=&embed=&host=` | 2 | OpenVPN client configuration → `{config, file}`; `file` is `<ID>-<username>.conf`. Empty `user` = anonymous, `embed=true` writes the credentials into the file, `host` is used when the inbound has no public address |
 | `POST /api/inbounds/generate` | 2 | `{kind, ca_certificate, ca_key}` → new key material. `kind`: `all`, `pki` (CA + server + client), `server`, `client` (both signed by the given CA), `tls_crypt`, `otp_key`, `tls` (self-signed certificate for SOCKS5) |
 
-Inbound object: `{id, name, group, type, enabled, statistics, port, outbound, anonymous,
+Inbound object: `{id, type, enabled, autostart, statistics, port, outbound, anonymous,
 users: [{enabled, name, password}]}` plus one block by `type`. `outbound` is `@router`
 (routes decide), `@host` (host Internet connection) or an outbound ID.
 

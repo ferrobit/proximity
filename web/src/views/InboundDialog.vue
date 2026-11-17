@@ -12,18 +12,13 @@
                 <a-input v-model:value="form.id" :placeholder="saved || `${inboundLabels[kind]} N`" />
               </a-form-item>
             </a-col>
-            <a-col :span="12">
-              <a-form-item label="Name" name="name" :rules="[{ max: 96, message: 'Up to 96 characters' }]">
-                <a-input v-model:value="form.name" placeholder="Free text description" />
-              </a-form-item>
-            </a-col>
-            <a-col :span="12">
-              <a-form-item label="Group" name="group" :rules="[{ max: 48, message: 'Up to 48 characters' }]">
-                <a-auto-complete v-model:value="form.group" :options="groups.map((value) => ({ value }))" placeholder="New or existing group" />
-              </a-form-item>
-            </a-col>
             <a-col :span="6"><a-form-item label="Enabled"><a-switch v-model:checked="form.enabled" /></a-form-item></a-col>
             <a-col :span="6"><a-form-item label="Collect statistics"><a-switch v-model:checked="form.statistics" /></a-form-item></a-col>
+            <a-col :span="12">
+              <a-form-item label="Start automatically" extra="Not started again after a stop or a failure">
+                <a-checkbox v-model:checked="form.autostart">When the router starts</a-checkbox>
+              </a-form-item>
+            </a-col>
             <a-col :span="12">
               <a-form-item label="Port number" name="port" :rules="[{ type: 'number', min: ports[0], max: ports[1], message: `${ports[0]}…${ports[1]}` }]"
                 :extra="`Unique, ${ports[0]}…${ports[1]} (published by Docker); the first free port is allocated when empty`">
@@ -233,7 +228,6 @@ const props = defineProps({
   open: Boolean,
   inbound: { type: Object, default: null },
   kind: { type: String, default: 'socks5' },
-  groups: { type: Array, default: () => [] },
   outbounds: { type: Array, default: () => [] },
   ports: { type: Array, default: () => [7800, 7898] }
 })
@@ -273,7 +267,7 @@ const outboundOptions = computed(() => [
 const otpLink = computed(() => `otpauth://totp/Proximity:${encodeURIComponent(form.id || saved.value || 'OpenVPN')}?secret=${String(form.openvpn.otp_key).replace(/[\s=-]/g, '')}&issuer=Proximity`)
 
 function defaults(kind) {
-  const result = { id: '', name: '', group: '', enabled: true, statistics: true, port: null, outbound: '@router', anonymous: false, users: [] }
+  const result = { id: '', enabled: true, autostart: true, statistics: true, port: null, outbound: '@router', anonymous: false, users: [] }
   if (kind === 'socks5') {
     result.socks5 = { listen: '*', udp: true, tls: false, certificate: '', key: '' }
   } else {
@@ -379,7 +373,7 @@ async function copy(text, done) {
 
 function makeBody() {
   const body = {
-    id: form.id, name: form.name, group: form.group, type: props.kind, enabled: form.enabled, statistics: form.statistics, port: form.port || 0,
+    id: form.id, type: props.kind, enabled: form.enabled, autostart: form.autostart, statistics: form.statistics, port: form.port || 0,
     outbound: form.outbound, anonymous: form.anonymous, users: form.users.map((user) => ({ ...user, name: user.name.trim() }))
   }
   if (props.kind === 'socks5') {

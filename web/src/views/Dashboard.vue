@@ -47,7 +47,6 @@
           <template #bodyCell="{ column, record }">
             <template v-if="column.key === 'id'">
               <b>{{ record.id }}</b>
-              <div class="muted" v-if="record.name">{{ record.name }}</div>
             </template>
             <template v-else-if="column.key === 'type'">
               <a-tag :color="typeColors[record.type]">{{ typeLabels[record.type] }}</a-tag>
@@ -127,7 +126,6 @@ const history = useHistory(() => props.overview)
 const outboundColumns = [
   { title: 'Outbound', key: 'id' },
   { title: 'Type', key: 'type' },
-  { title: 'Group', dataIndex: 'group' },
   { title: 'Status', key: 'usage' },
   { title: 'Operation', key: 'state' },
   { title: 'Link', key: 'link' },

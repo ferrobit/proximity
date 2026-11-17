@@ -51,7 +51,8 @@ they are used only when there are no users.
 | HOST outbound `failed` | *Probe target* (Settings, default `1.1.1.1:443`) is not reachable through this uplink. Change it to a host your network allows |
 
 A `failed` HOST outbound keeps being checked and returns to `good` by itself. A `failed`
-tunnel waits for **Reconnect** or a configuration change.
+tunnel waits for **Start**, **Restart** or a configuration change — also after a container
+restart; its log keeps the lines of the failed attempt.
 
 ## Traffic goes through the wrong outbound
 

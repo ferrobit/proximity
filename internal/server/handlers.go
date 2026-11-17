@@ -155,7 +155,10 @@ func (server *Server) register() {
 	server.handle("PUT /api/outbounds/{id}", 2, server.updateOutbound)
 	server.handle("DELETE /api/outbounds/{id}", 2, server.removeOutbound)
 	server.handle("POST /api/outbounds/{id}/move", 2, server.moveOutbound)
-	server.handle("POST /api/outbounds/{id}/restart", 2, server.restartOutbound)
+	server.handle("POST /api/outbounds/{id}/start", 2, server.controlOutbound(link.ActionStart))
+	server.handle("POST /api/outbounds/{id}/stop", 2, server.controlOutbound(link.ActionStop))
+	server.handle("POST /api/outbounds/{id}/restart", 2,
+		server.controlOutbound(link.ActionRestart))
 	server.handle("GET /api/outbounds/{id}/log", 2, server.getOutboundLog)
 	server.handle("POST /api/import/amneziawg", 2, server.importAmnezia)
 	server.handle("GET /api/fallbacks", 1, server.getFallbacks)
@@ -176,7 +179,9 @@ func (server *Server) register() {
 	server.handle("PUT /api/inbounds/{id}", 2, server.updateInbound)
 	server.handle("DELETE /api/inbounds/{id}", 2, server.removeInbound)
 	server.handle("POST /api/inbounds/{id}/move", 2, server.moveInbound)
-	server.handle("POST /api/inbounds/{id}/restart", 2, server.restartInbound)
+	server.handle("POST /api/inbounds/{id}/start", 2, server.controlInbound(link.ActionStart))
+	server.handle("POST /api/inbounds/{id}/stop", 2, server.controlInbound(link.ActionStop))
+	server.handle("POST /api/inbounds/{id}/restart", 2, server.controlInbound(link.ActionRestart))
 	server.handle("GET /api/inbounds/{id}/log", 2, server.getInboundLog)
 	server.handle("GET /api/inbounds/{id}/config", 2, server.exportInbound)
 	server.handle("GET /api/settings", 1, server.getSettings)
@@ -233,9 +238,8 @@ func (server *Server) views(snapshot config.Config, level int) []outboundView {
 			view.Status = emptyStatus()
 			view.Status.State, view.Status.Since = state, since
 			view.Status.Link, view.Status.Latency = links[outbound.ID].Link, -1
-			view.Outbound = config.Outbound{ID: outbound.ID, Name: outbound.Name,
-				Group: outbound.Group, Type: outbound.Type, Enabled: outbound.Enabled,
-				Statistics: outbound.Statistics}
+			view.Outbound = config.Outbound{ID: outbound.ID, Type: outbound.Type,
+				Enabled: outbound.Enabled, Statistics: outbound.Statistics}
 			if found := links[outbound.ID].Checked != 0; found {
 				view.Status.Latency = links[outbound.ID].Latency
 			}
@@ -396,21 +400,11 @@ func (server *Server) getInterfaces(_ *http.Request, _ session) (any, error) {
 
 func (server *Server) getOutbounds(_ *http.Request, current session) (any, error) {
 	snapshot := server.store.Snapshot()
-	groups := []string{}
-	for _, outbound := range snapshot.Outbounds {
-		found := outbound.Group == ""
-		for _, group := range groups {
-			found = found || group == outbound.Group
-		}
-		if !found {
-			groups = append(groups, outbound.Group)
-		}
-	}
-	return map[string]any{"outbounds": server.views(snapshot, current.level), "groups": groups}, nil
+	return map[string]any{"outbounds": server.views(snapshot, current.level)}, nil
 }
 
 func (server *Server) addOutbound(request *http.Request, _ session) (any, error) {
-	body, result := config.Outbound{}, config.Outbound{}
+	body, result := config.Outbound{Autostart: true}, config.Outbound{}
 	if err := decode(request, &body); err != nil {
 		return nil, err
 	} else if err = server.store.Update(func(config *config.Config) error {
@@ -424,7 +418,7 @@ func (server *Server) addOutbound(request *http.Request, _ session) (any, error)
 }
 
 func (server *Server) updateOutbound(request *http.Request, _ session) (any, error) {
-	body, id := config.Outbound{}, request.PathValue("id")
+	body, id := config.Outbound{Autostart: true}, request.PathValue("id")
 	if err := decode(request, &body); err != nil {
 		return nil, err
 	}
@@ -454,8 +448,16 @@ func (server *Server) moveOutbound(request *http.Request, _ session) (any, error
 	})
 }
 
-func (server *Server) restartOutbound(request *http.Request, _ session) (any, error) {
-	return map[string]bool{"ok": true}, server.manager.Restart(request.PathValue("id"))
+func (server *Server) controlOutbound(command string) action {
+	return func(request *http.Request, current session) (any, error) {
+		id := request.PathValue("id")
+		if err := server.manager.Control(id, command); err != nil {
+			return nil, err
+		}
+		server.options.Logf("outbound '%v': %v requested by '%v'", id, command, current.user.Name)
+		server.notify()
+		return map[string]bool{"ok": true}, nil
+	}
 }
 
 func (server *Server) getOutboundLog(request *http.Request, _ session) (any, error) {
@@ -596,30 +598,25 @@ func (server *Server) moveRoute(request *http.Request, _ session) (any, error) {
 func (server *Server) getInbounds(_ *http.Request, current session) (any, error) {
 	snapshot := server.store.Snapshot()
 	states, traffic := server.manager.Inbounds(), server.tracker.Inbounds()
-	views, groups := []inboundView{}, []string{}
+	views := []inboundView{}
 	for _, inbound := range snapshot.Inbounds {
 		view := inboundView{Inbound: inbound, Traffic: traffic[inbound.ID],
 			Redacted: current.level < 2, Status: link.InboundStatus{State: link.StateDisabled,
 				Clients: []link.InboundClient{}}}
 		if status, found := states[inbound.ID]; found {
 			view.Status = status
-		} else if inbound.Enabled && !server.active() {
-			view.Status.Message = "router is stopped"
 		}
 		if current.level < 2 {
 			view.Inbound = redactInbound(inbound)
 		}
-		if inbound.Group != "" && !slices.Contains(groups, inbound.Group) {
-			groups = append(groups, inbound.Group)
-		}
 		views = append(views, view)
 	}
-	return map[string]any{"inbounds": views, "groups": groups,
+	return map[string]any{"inbounds": views,
 		"ports": []int{config.InboundPortFirst, config.InboundPortLast}}, nil
 }
 
 func (server *Server) addInbound(request *http.Request, _ session) (any, error) {
-	body, result := config.Inbound{}, config.Inbound{}
+	body, result := config.Inbound{Autostart: true}, config.Inbound{}
 	if err := decode(request, &body); err != nil {
 		return nil, err
 	} else if err = server.store.Update(func(config *config.Config) error {
@@ -641,7 +638,7 @@ func (server *Server) generateMaterial(request *http.Request, _ session) (any, e
 }
 
 func (server *Server) updateInbound(request *http.Request, _ session) (any, error) {
-	body, result, id := config.Inbound{}, config.Inbound{}, request.PathValue("id")
+	body, result, id := config.Inbound{Autostart: true}, config.Inbound{}, request.PathValue("id")
 	if err := decode(request, &body); err != nil {
 		return nil, err
 	} else if err = server.store.Update(func(config *config.Config) error {
@@ -672,8 +669,16 @@ func (server *Server) moveInbound(request *http.Request, _ session) (any, error)
 	})
 }
 
-func (server *Server) restartInbound(request *http.Request, _ session) (any, error) {
-	return map[string]bool{"ok": true}, server.manager.RestartInbound(request.PathValue("id"))
+func (server *Server) controlInbound(command string) action {
+	return func(request *http.Request, current session) (any, error) {
+		id := request.PathValue("id")
+		if err := server.manager.ControlInbound(id, command); err != nil {
+			return nil, err
+		}
+		server.options.Logf("inbound '%v': %v requested by '%v'", id, command, current.user.Name)
+		server.notify()
+		return map[string]bool{"ok": true}, nil
+	}
 }
 
 func (server *Server) getInboundLog(request *http.Request, _ session) (any, error) {

@@ -50,14 +50,14 @@ type inboundRunner struct {
 	inbound   config.Inbound
 	signature string
 	bypass    int
+	key       string
+	book      *logBook
 	acceptor  acceptor
 	cancel    context.CancelFunc
 	done      chan struct{}
 	mutex     sync.Mutex
 	id        string
-	latest    config.Inbound
 	status    InboundStatus
-	lines     []string
 }
 
 type socksAcceptor struct {
@@ -91,7 +91,7 @@ var socketTables = []string{"/proc/net/tcp", "/proc/net/tcp6"}
 var accountPattern = regexp.MustCompile(`--[ds]port (\d+) -c \d+ (\d+)`)
 
 func inboundSignature(inbound config.Inbound, bypass int) string {
-	inbound.ID, inbound.Name, inbound.Group, inbound.Statistics = "", "", "", false
+	inbound.ID, inbound.Statistics, inbound.Autostart = "", false, false
 	inbound.Outbound, inbound.Anonymous, inbound.Users = "", false, nil
 	data, err := json.Marshal([]any{inbound, bypass})
 	if err != nil {
@@ -123,29 +123,102 @@ func emptyInboundStatus(state string, message string) InboundStatus {
 func (manager *Manager) ApplyInbounds(snapshot config.Config) {
 	manager.mutex.Lock()
 	defer manager.mutex.Unlock()
-	wanted, bypass, ports := map[int]bool{}, 0, []int{}
+	manager.snapshot = snapshot.Clone()
+	manager.applyInbounds()
+}
+
+func (manager *Manager) ControlInbound(id string, action string) error {
+	manager.mutex.Lock()
+	defer manager.mutex.Unlock()
+	index := slices.IndexFunc(manager.snapshot.Inbounds, func(inbound config.Inbound) bool {
+		return inbound.ID == id
+	})
+	if index < 0 {
+		return fmt.Errorf("inbound '%v' does not exist", id)
+	}
+	inbound := manager.snapshot.Inbounds[index]
+	if !inbound.Enabled {
+		return fmt.Errorf("inbound '%v' is disabled", id)
+	} else if problem := manager.snapshot.InboundProblem(inbound); problem != "" &&
+		action != ActionStop {
+		return fmt.Errorf("failed to %v inbound '%v': %v", action, id, problem)
+	} else if action != ActionStop && !manager.active {
+		return fmt.Errorf("failed to %v inbound '%v': %v", action, id, messageInactive)
+	}
+	key := inboundKey(inbound.Port)
+	if current, found := manager.inbounds[inbound.Port]; found && (action != ActionStart ||
+		current.snapshot().State == StateFailed) {
+		current.close()
+		delete(manager.inbounds, inbound.Port)
+	}
+	if action == ActionStop {
+		manager.journal.set(key, ServiceRecord{State: StateStopped, Message: messageStopped,
+			Since: time.Now().Unix()})
+		manager.book(key).add(stamp("%v", messageStopped))
+	} else {
+		manager.journal.set(key, ServiceRecord{State: intentRunning, Since: time.Now().Unix()})
+	}
+	manager.applyInbounds()
+	return nil
+}
+
+func (manager *Manager) Inbounds() map[string]InboundStatus {
+	manager.mutex.Lock()
+	defer manager.mutex.Unlock()
+	result := map[string]InboundStatus{}
+	for id, problem := range manager.blocked {
+		result[id] = emptyInboundStatus(StateFailed, problem)
+	}
+	for _, current := range manager.inbounds {
+		result[current.name()] = current.snapshot()
+	}
+	for _, inbound := range manager.snapshot.Inbounds {
+		if _, found := result[inbound.ID]; found || !inbound.Enabled {
+			continue
+		}
+		state, message, since := manager.dormant(inboundKey(inbound.Port))
+		result[inbound.ID] = InboundStatus{State: state, Message: message, Since: since,
+			Clients: []InboundClient{}}
+	}
+	return result
+}
+
+func (manager *Manager) Serving() map[string]bool {
+	manager.mutex.Lock()
+	defer manager.mutex.Unlock()
+	result := map[string]bool{}
+	for _, current := range manager.inbounds {
+		result[current.name()] = true
+	}
+	return result
+}
+
+func (manager *Manager) applyInbounds() {
+	snapshot := manager.snapshot
+	wanted, keys, bypass, ports := map[int]bool{}, map[string]bool{}, 0, []int{}
 	if manager.options.HostNetwork && snapshot.Settings.Capture {
 		bypass = CaptureMark
 	}
 	manager.blocked = map[string]string{}
 	for _, inbound := range snapshot.Inbounds {
+		key, signature := inboundKey(inbound.Port), inboundSignature(inbound, bypass)
 		problem := snapshot.InboundProblem(inbound)
-		active := inbound.Enabled && problem == ""
+		current, found := manager.inbounds[inbound.Port]
+		active := inbound.Enabled && problem == "" && manager.wanted(key, true, signature, found)
 		if inbound.Enabled && problem != "" {
 			manager.blocked[inbound.ID] = problem
 		}
 		if active && inbound.Statistics && inbound.Socks5 != nil {
 			ports = append(ports, inbound.Port)
 		}
-		signature := inboundSignature(inbound, bypass)
-		wanted[inbound.Port] = active
-		if current, found := manager.inbounds[inbound.Port]; found && active &&
+		if wanted[inbound.Port], keys[key] = active, inbound.Enabled; found && active &&
 			current.signature == signature {
 			current.refresh(inbound.Clone())
 			current.acceptor.reload(inbound)
 			continue
 		} else if found {
 			current.close()
+			manager.retire(current.book, inbound.Enabled)
 			delete(manager.inbounds, inbound.Port)
 		}
 		if active {
@@ -159,19 +232,11 @@ func (manager *Manager) ApplyInbounds(snapshot config.Config) {
 		}
 	}
 	manager.account.ensure(manager.options.Tools, ports)
-}
-
-func (manager *Manager) Inbounds() map[string]InboundStatus {
-	manager.mutex.Lock()
-	defer manager.mutex.Unlock()
-	result := map[string]InboundStatus{}
-	for id, problem := range manager.blocked {
-		result[id] = emptyInboundStatus(StateFailed, problem)
-	}
-	for _, current := range manager.inbounds {
-		result[current.name()] = current.snapshot()
-	}
-	return result
+	manager.forget(inboundPrefix, func(port int) bool {
+		return slices.ContainsFunc(snapshot.Inbounds, func(inbound config.Inbound) bool {
+			return inbound.Port == port
+		})
+	}, keys)
 }
 
 func (manager *Manager) InboundCounters() map[string][2]int64 {
@@ -200,42 +265,23 @@ func (manager *Manager) InboundCounters() map[string][2]int64 {
 func (manager *Manager) InboundLog(id string) []string {
 	manager.mutex.Lock()
 	defer manager.mutex.Unlock()
-	if current := manager.findInbound(id); current != nil {
-		current.mutex.Lock()
-		defer current.mutex.Unlock()
-		return append([]string{}, current.lines...)
-	}
-	return []string{}
-}
-
-func (manager *Manager) RestartInbound(id string) error {
-	manager.mutex.Lock()
-	defer manager.mutex.Unlock()
-	current := manager.findInbound(id)
-	if current == nil {
-		return fmt.Errorf("inbound '%v' is not running", id)
-	}
-	current.close()
-	inbound := current.recent()
-	manager.inbounds[inbound.Port] = manager.listen(inbound, current.signature, current.bypass)
-	return nil
-}
-
-func (manager *Manager) findInbound(id string) *inboundRunner {
-	for _, current := range manager.inbounds {
-		if current.name() == id {
-			return current
+	for _, inbound := range manager.snapshot.Inbounds {
+		if inbound.ID == id {
+			return manager.book(inboundKey(inbound.Port)).snapshot()
 		}
 	}
-	return nil
+	return []string{}
 }
 
 func (manager *Manager) listen(inbound config.Inbound, signature string,
 	bypass int) *inboundRunner {
 	ctx, cancel := context.WithCancel(context.Background())
+	key := inboundKey(inbound.Port)
 	result := &inboundRunner{manager: manager, inbound: inbound, signature: signature,
-		bypass: bypass, cancel: cancel, done: make(chan struct{}), id: inbound.ID,
-		latest: inbound, status: emptyInboundStatus(StateConnecting, "")}
+		bypass: bypass, key: key, book: manager.book(key), cancel: cancel,
+		done: make(chan struct{}), id: inbound.ID,
+		status: emptyInboundStatus(StateConnecting, "")}
+	result.logf("starting")
 	if inbound.Type == config.TypeOpenVPN {
 		result.acceptor = makeOpenVPNAcceptor(result)
 	} else {
@@ -305,10 +351,14 @@ func (runner *inboundRunner) watch(ctx context.Context) error {
 
 func (runner *inboundRunner) update(change func(status *InboundStatus)) {
 	runner.mutex.Lock()
-	defer runner.mutex.Unlock()
 	previous := runner.status.State
 	if change(&runner.status); runner.status.State != previous {
 		runner.status.Since = time.Now().Unix()
+	}
+	current := runner.status
+	runner.mutex.Unlock()
+	if current.State != previous {
+		runner.manager.observe(runner.key, current.State, current.Message, runner.signature)
 	}
 }
 
@@ -321,13 +371,7 @@ func (runner *inboundRunner) name() string {
 func (runner *inboundRunner) refresh(inbound config.Inbound) {
 	runner.mutex.Lock()
 	defer runner.mutex.Unlock()
-	runner.id, runner.latest = inbound.ID, inbound
-}
-
-func (runner *inboundRunner) recent() config.Inbound {
-	runner.mutex.Lock()
-	defer runner.mutex.Unlock()
-	return runner.latest.Clone()
+	runner.id = inbound.ID
 }
 
 func (runner *inboundRunner) snapshot() InboundStatus {
@@ -339,12 +383,7 @@ func (runner *inboundRunner) snapshot() InboundStatus {
 }
 
 func (runner *inboundRunner) logf(format string, arguments ...any) {
-	line := time.Now().Format("2006-01-02 15:04:05 ") + fmt.Sprintf(format, arguments...)
-	runner.mutex.Lock()
-	defer runner.mutex.Unlock()
-	if runner.lines = append(runner.lines, line); len(runner.lines) > maxLogLines {
-		runner.lines = runner.lines[len(runner.lines)-maxLogLines:]
-	}
+	runner.book.add(stamp(format, arguments...))
 }
 
 func (runner *inboundRunner) close() {

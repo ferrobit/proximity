@@ -24,13 +24,10 @@
         </template>
         <template v-else-if="column.key === 'id'">
           <b class="nowrap">{{ record.id }}</b>
-          <div class="muted" v-if="record.name">{{ record.name }}</div>
+          <div class="muted" v-if="!record.autostart">manual start</div>
         </template>
         <template v-else-if="column.key === 'type'">
           <a-tag :color="inboundColors[record.type]"><component :is="typeIcons[record.type]" /> {{ inboundLabels[record.type] }}</a-tag>
-        </template>
-        <template v-else-if="column.key === 'group'">
-          <a-tag v-if="record.group">{{ record.group }}</a-tag>
         </template>
         <template v-else-if="column.key === 'enabled'">
           <a-switch size="small" :checked="record.enabled" :disabled="!canEdit()" @change="toggle(record, $event)" />
@@ -72,7 +69,13 @@
         <template v-else-if="column.key === 'actions'">
           <a-space v-if="canEdit()">
             <a-tooltip title="Edit"><a-button size="small" @click="open(record, record.type)"><template #icon><EditOutlined /></template></a-button></a-tooltip>
-            <a-tooltip title="Restart"><a-button size="small" :disabled="!record.enabled" @click="restart(record)"><template #icon><SyncOutlined /></template></a-button></a-tooltip>
+            <a-tooltip title="Start"><a-button size="small" :disabled="!record.enabled || activeStates.includes(record.status.state)"
+              @click="control(record, 'start')"><template #icon><PlayCircleOutlined /></template></a-button></a-tooltip>
+            <a-popconfirm ok-text="Stop" ok-type="danger" :title="`Stop inbound '${record.id}'?`" :disabled="!record.enabled || record.status.state === 'stopped'" @confirm="control(record, 'stop')">
+              <a-tooltip title="Stop"><a-button size="small" :disabled="!record.enabled || record.status.state === 'stopped'">
+                <template #icon><PauseCircleOutlined /></template></a-button></a-tooltip>
+            </a-popconfirm>
+            <a-tooltip title="Restart"><a-button size="small" :disabled="!record.enabled" @click="control(record, 'restart')"><template #icon><SyncOutlined /></template></a-button></a-tooltip>
             <a-tooltip title="Inbound log"><a-button size="small" @click="showLog(record)"><template #icon><FileTextOutlined /></template></a-button></a-tooltip>
             <a-popconfirm :title="`Delete inbound '${record.id}'?`" @confirm="remove(record)">
               <a-button size="small" danger><template #icon><DeleteOutlined /></template></a-button>
@@ -81,7 +84,7 @@
         </template>
       </template>
     </a-table>
-    <InboundDialog v-model:open="visible" :inbound="current" :kind="kind" :groups="groups" :outbounds="outbounds" :ports="ports" @saved="load" />
+    <InboundDialog v-model:open="visible" :inbound="current" :kind="kind" :outbounds="outbounds" :ports="ports" @saved="load" />
     <a-modal v-model:open="logVisible" :title="`Inbound log: ${logTitle}`" width="900px" :footer="null" destroy-on-close>
       <LogView :path="`/api/inbounds/${id(logTitle)}/log`" />
     </a-modal>
@@ -93,10 +96,11 @@ import { onMounted, onUnmounted, ref } from 'vue'
 import { message } from 'ant-design-vue'
 import {
   ArrowDownOutlined, ArrowUpOutlined, BarChartOutlined, DeleteOutlined, DownOutlined, EditOutlined, FileTextOutlined,
-  ImportOutlined, LockOutlined, PlusOutlined, ReloadOutlined, SendOutlined, SwapOutlined, SyncOutlined, TeamOutlined
+  ImportOutlined, LockOutlined, PauseCircleOutlined, PlayCircleOutlined, PlusOutlined, ReloadOutlined, SendOutlined, SwapOutlined,
+  SyncOutlined, TeamOutlined
 } from '@ant-design/icons-vue'
 import { api, canEdit, id } from '../api'
-import { bytes, inboundColors, inboundLabels, rate } from '../format'
+import { activeStates, bytes, inboundColors, inboundLabels, rate } from '../format'
 import StateTag from '../components/StateTag.vue'
 import LogView from '../components/LogView.vue'
 import InboundDialog from './InboundDialog.vue'
@@ -104,9 +108,8 @@ import InboundDialog from './InboundDialog.vue'
 const typeIcons = { socks5: SendOutlined, openvpn: LockOutlined }
 const columns = [
   { title: '', key: 'order', width: 90 },
-  { title: 'ID / Name', key: 'id' },
+  { title: 'ID', key: 'id' },
   { title: 'Type', key: 'type' },
-  { title: 'Group', key: 'group' },
   { title: 'Enabled', key: 'enabled', width: 80 },
   { title: '', key: 'statistics', width: 40 },
   { title: 'Port', key: 'port' },
@@ -114,10 +117,9 @@ const columns = [
   { title: 'Status', key: 'state' },
   { title: 'Access', key: 'access' },
   { title: 'Traffic', key: 'traffic' },
-  { title: '', key: 'actions', width: 170 }
+  { title: '', key: 'actions', width: 250 }
 ]
 const inbounds = ref([])
-const groups = ref([])
 const outbounds = ref([])
 const ports = ref([7800, 7898])
 const loading = ref(false)
@@ -133,7 +135,6 @@ async function load(quiet) {
   try {
     const data = await api.get('/api/inbounds', quiet === true)
     inbounds.value = data.inbounds
-    groups.value = data.groups
     ports.value = data.ports
     if (quiet !== true) {
       outbounds.value = (await api.get('/api/targets', true)).filter((item) => item.kind === 'outbound')
@@ -172,7 +173,8 @@ function strip(record) {
 const toggle = (record, enabled) => act(() => api.put(`/api/inbounds/${id(record.id)}`, { ...strip(record), enabled }))
 const move = (record, delta) => act(() => api.post(`/api/inbounds/${id(record.id)}/move`, { delta }))
 const remove = (record) => act(() => api.remove(`/api/inbounds/${id(record.id)}`))
-const restart = (record) => act(() => api.post(`/api/inbounds/${id(record.id)}/restart`), 'Restart requested')
+const controlResults = { start: 'Start requested', stop: 'Stopped', restart: 'Restart requested' }
+const control = (record, action) => act(() => api.post(`/api/inbounds/${id(record.id)}/${action}`), controlResults[action])
 
 function showLog(record) {
   logTitle.value = record.id

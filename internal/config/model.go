@@ -95,10 +95,9 @@ type Monitoring struct {
 
 type Outbound struct {
 	ID         string            `json:"id"`
-	Name       string            `json:"name"`
-	Group      string            `json:"group"`
 	Type       string            `json:"type"`
 	Enabled    bool              `json:"enabled"`
+	Autostart  bool              `json:"autostart"`
 	Statistics bool              `json:"statistics"`
 	Slot       int               `json:"slot"`
 	Host       *HostOptions      `json:"host,omitempty"`
@@ -176,9 +175,10 @@ const (
 	OTPAppend    = "append"
 )
 
-const currentVersion = 5
+const currentVersion = 6
 const inboundVersion = 4
 const autostartVersion = 5
+const serviceVersion = 6
 const maxSlot = 9999
 const defaultAttempts = 3
 const defaultReconnectTimeout = 10
@@ -306,8 +306,6 @@ func (user *User) validate() error {
 
 func (outbound *Outbound) normalize() {
 	outbound.ID = strings.TrimSpace(outbound.ID)
-	outbound.Name = strings.TrimSpace(outbound.Name)
-	outbound.Group = strings.TrimSpace(outbound.Group)
 	if outbound.Type != TypeHost {
 		outbound.Host = nil
 	} else if outbound.Host == nil {
@@ -369,8 +367,6 @@ func (outbound *Outbound) IsSplit() bool {
 func (outbound *Outbound) validate() error {
 	if err := validateIdentifier(outbound.ID); err != nil {
 		return err
-	} else if len(outbound.Name) > 96 || len(outbound.Group) > 48 {
-		return errors.New("name or group is too long")
 	} else if err = validateRange("slot", outbound.Slot, 1, maxSlot); err != nil {
 		return err
 	}

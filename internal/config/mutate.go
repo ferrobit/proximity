@@ -451,6 +451,14 @@ func (config *Config) migrate() {
 	if config.Version < autostartVersion {
 		config.Settings.Autostart = true
 	}
+	for index := range config.Outbounds {
+		config.Outbounds[index].Autostart = config.Outbounds[index].Autostart ||
+			config.Version < serviceVersion
+	}
+	for index := range config.Inbounds {
+		config.Inbounds[index].Autostart = config.Inbounds[index].Autostart ||
+			config.Version < serviceVersion
+	}
 	for index := range config.Routes {
 		route := &config.Routes[index]
 		if route.ID = strings.TrimSpace(route.ID); route.ID == "" ||

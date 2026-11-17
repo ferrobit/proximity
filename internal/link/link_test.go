@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/base64"
 	"encoding/json"
+	"fmt"
 	"net"
 	"os"
 	"os/exec"
@@ -371,10 +372,35 @@ func TestInterfaces_Loopback(t *testing.T) {
 	}
 }
 
+func TestLogBook_Rotation(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "service.log")
+	book := openLogBook(path)
+	require.Empty(t, book.snapshot())
+	for index := range 2*maxLogLines + 5 {
+		book.add(fmt.Sprintf("line %v", index))
+	}
+	require.Len(t, book.snapshot(), maxLogLines)
+	require.Equal(t, fmt.Sprintf("line %v", 2*maxLogLines+4), book.snapshot()[maxLogLines-1])
+	data, err := os.ReadFile(path)
+	require.NoError(t, err)
+	require.LessOrEqual(t, strings.Count(string(data), "\n"), 2*maxLogLines)
+	reopened := openLogBook(path)
+	require.Equal(t, book.snapshot(), reopened.snapshot())
+	{
+		memory := openLogBook("")
+		memory.add("only in memory")
+		require.Equal(t, []string{"only in memory"}, memory.snapshot())
+		blocked := openLogBook(filepath.Join(path, "sub.log"))
+		blocked.add("not written")
+		require.Equal(t, []string{"not written"}, blocked.snapshot())
+	}
+}
+
 func TestManager_AmneziaFailure(t *testing.T) {
 	tools, directory := makeTools(t)
 	manager, err := NewManager(Options{Directory: filepath.Join(directory, "run"), Tools: tools})
 	require.NoError(t, err)
+	manager.SetActive(true, config.Config{})
 	defer manager.Close()
 	outbound := config.Outbound{ID: "AWG", Type: config.TypeAmneziaWG, Enabled: true, Slot: 4,
 		AmneziaWG: &config.AmneziaWGOptions{Config: sampleTunnel},
@@ -422,6 +448,7 @@ func TestManager_Inbounds(t *testing.T) {
 	manager, err := NewManager(Options{Directory: filepath.Join(directory, "run"),
 		Executable: "/usr/local/bin/proximity", Tools: tools, HostNetwork: true})
 	require.NoError(t, err)
+	manager.SetActive(true, config.Config{})
 	defer manager.Close()
 	snapshot := config.Default()
 	_, err = snapshot.AddInbound(config.Inbound{Type: config.TypeSocks5, ID: "Socks", Port: port,
@@ -533,8 +560,9 @@ func TestManager_Inbounds(t *testing.T) {
 		renamed.Inbounds[1].Anonymous = false
 		manager.ApplyInbounds(renamed)
 		require.Equal(t, []string{"kill UNDEF"}, commands()[count:])
-		require.EqualError(t, manager.RestartInbound("VPN"), "inbound 'VPN' is not running")
-		require.NoError(t, manager.RestartInbound("Office"))
+		require.EqualError(t, manager.ControlInbound("VPN", ActionRestart),
+			"inbound 'VPN' does not exist")
+		require.NoError(t, manager.ControlInbound("Office", ActionRestart))
 		waitInbound(t, manager, "Office", StateUp)
 		data, err = os.ReadFile(filepath.Join(home, "auth.json"))
 		require.NoError(t, err)
@@ -578,6 +606,7 @@ func TestManager_OpenVPN(t *testing.T) {
 			changes.Add(1)
 		}})
 	require.NoError(t, err)
+	manager.SetActive(true, config.Config{})
 	defer manager.Close()
 	outbound := config.Outbound{ID: "VPN", Type: config.TypeOpenVPN, Enabled: true, Slot: 7,
 		OpenVPN: &config.OpenVPNOptions{Config: sampleOpenVPN, Username: "alice",
@@ -661,6 +690,7 @@ func TestManager_Capture(t *testing.T) {
 	manager, err := NewManager(Options{Directory: filepath.Join(directory, "run"),
 		Executable: "/usr/local/bin/proximity", Tools: tools, HostNetwork: true})
 	require.NoError(t, err)
+	manager.SetActive(true, config.Config{})
 	defer manager.Close()
 	require.False(t, manager.Capture(true, true))
 	calls, err := os.ReadFile(filepath.Join(directory, "ip.log"))
@@ -706,15 +736,15 @@ func TestManager_Capture(t *testing.T) {
 		require.NoError(t, err)
 		require.Contains(t, string(arguments), "--mark 51000")
 		since := manager.Status()["VPN"].Since
-		outbound.ID, outbound.Name = "Office", "renamed"
+		outbound.ID = "Office"
 		manager.Apply([]config.Outbound{outbound}, config.Settings{CheckInterval: 5, Capture: true})
 		require.NotContains(t, manager.Status(), "VPN")
 		require.Equal(t, StateUp, manager.Status()["Office"].State)
 		require.Equal(t, since, manager.Status()["Office"].Since)
 		require.NotEmpty(t, manager.Log("Office"))
 		require.Empty(t, manager.Log("VPN"))
-		require.EqualError(t, manager.Restart("VPN"), "outbound 'VPN' is not running")
-		require.NoError(t, manager.Restart("Office"))
+		require.EqualError(t, manager.Control("VPN", ActionRestart), "outbound 'VPN' does not exist")
+		require.NoError(t, manager.Control("Office", ActionRestart))
 		waitState(t, manager, "Office", StateUp)
 		manager.Apply([]config.Outbound{outbound}, config.Settings{CheckInterval: 5})
 		waitState(t, manager, "Office", StateUp)
@@ -743,6 +773,7 @@ func TestManager_HostAttempts(t *testing.T) {
 	tools, directory := makeTools(t)
 	manager, err := NewManager(Options{Directory: filepath.Join(directory, "run"), Tools: tools})
 	require.NoError(t, err)
+	manager.SetActive(true, config.Config{})
 	defer manager.Close()
 	outbound := config.Outbound{ID: "M", Type: config.TypeHost, Enabled: true, Slot: 5,
 		Host: &config.HostOptions{Mode: config.HostInterface, Interface: "missing0", Attempts: 2,
@@ -785,6 +816,7 @@ func TestManager_Proxies(t *testing.T) {
 	require.NoError(t, err)
 	manager, err := NewManager(Options{Directory: filepath.Join(directory, "run"), Tools: tools})
 	require.NoError(t, err)
+	manager.SetActive(true, config.Config{})
 	settings := config.Settings{ProbeTarget: target, CheckInterval: 5, ConnectivityChecks: true}
 	outbounds := []config.Outbound{
 		{ID: "S", Type: config.TypeSocks5, Enabled: true, Slot: 1,
@@ -815,12 +847,14 @@ func TestManager_Proxies(t *testing.T) {
 	require.Empty(t, manager.Log("missing"))
 	require.Empty(t, manager.Counters())
 	{
-		require.NoError(t, manager.Restart("S"))
+		require.NoError(t, manager.Control("S", ActionRestart))
 		waitState(t, manager, "S", StateUp)
-		require.EqualError(t, manager.Restart("missing"), "outbound 'missing' is not running")
+		require.EqualError(t, manager.Control("missing", ActionRestart),
+			"outbound 'missing' does not exist")
+		require.EqualError(t, manager.Control("S", ActionStop), "outbound 'S' has no service to stop")
 	}
 	{
-		outbounds[0].Enabled, outbounds[2].Name = false, "renamed"
+		outbounds[0].Enabled, outbounds[2].Statistics = false, true
 		manager.Apply(outbounds[:3], settings)
 		require.NotContains(t, manager.Status(), "S")
 		require.NotContains(t, manager.Status(), "L")
@@ -834,6 +868,116 @@ func TestManager_Proxies(t *testing.T) {
 	{
 		manager.Close()
 		require.Empty(t, manager.Status())
+	}
+}
+
+func TestManager_Services(t *testing.T) {
+	tools, directory := makeTools(t)
+	state := filepath.Join(directory, "state")
+	port, _ := makeInboundPort(t)
+	snapshot := config.Default()
+	_, err := snapshot.AddInbound(config.Inbound{Type: config.TypeSocks5, ID: "Socks", Port: port,
+		Enabled: true, Autostart: true, Anonymous: true}, time.Now())
+	require.NoError(t, err)
+	snapshot.Outbounds = []config.Outbound{{ID: "AWG", Type: config.TypeAmneziaWG, Enabled: true,
+		Autostart: true, Slot: 4, AmneziaWG: &config.AmneziaWGOptions{Config: sampleTunnel},
+		Monitoring: &config.Monitoring{Interval: 5, Timeout: 1, Retries: 1, ReconnectDelay: 1,
+			Target: "127.0.0.1:1"}}}
+	open := func() *Manager {
+		manager, err := NewManager(Options{Directory: filepath.Join(directory, "run"),
+			StateDir: state, Tools: tools})
+		require.NoError(t, err)
+		t.Cleanup(manager.Close)
+		return manager
+	}
+	apply := func(manager *Manager, active bool) {
+		manager.SetActive(active, snapshot)
+		manager.Apply(snapshot.Outbounds, snapshot.Settings)
+		manager.ApplyInbounds(snapshot)
+	}
+	journal := func() string {
+		data, err := os.ReadFile(filepath.Join(state, journalName))
+		require.NoError(t, err)
+		return string(data)
+	}
+	manager := open()
+	apply(manager, false)
+	require.Equal(t, StateStopped, manager.Status()["AWG"].State)
+	require.Equal(t, messageInactive, manager.Status()["AWG"].Message)
+	require.Equal(t, StateStopped, manager.Inbounds()["Socks"].State)
+	require.Empty(t, manager.Serving())
+	require.EqualError(t, manager.Control("AWG", ActionStart),
+		"failed to start outbound 'AWG': router is stopped")
+	require.EqualError(t, manager.ControlInbound("Socks", ActionRestart),
+		"failed to restart inbound 'Socks': router is stopped")
+	apply(manager, true)
+	waitInbound(t, manager, "Socks", StateUp)
+	require.Equal(t, map[string]bool{"Socks": true}, manager.Serving())
+	status := waitState(t, manager, "AWG", StateFailed)
+	require.Contains(t, journal(), `"state": "failed"`)
+	require.NoError(t, manager.ControlInbound("Socks", ActionStop))
+	require.Equal(t, InboundStatus{State: StateStopped, Message: messageStopped,
+		Since: manager.Inbounds()["Socks"].Since, Clients: []InboundClient{}},
+		manager.Inbounds()["Socks"])
+	require.Empty(t, manager.Serving())
+	manager.Close()
+	{
+		manager := open()
+		apply(manager, true)
+		require.Equal(t, StateFailed, manager.Status()["AWG"].State)
+		require.Equal(t, status.Message, manager.Status()["AWG"].Message)
+		require.Equal(t, StateStopped, manager.Inbounds()["Socks"].State)
+		log := strings.Join(manager.Log("AWG"), "\n")
+		require.Contains(t, log, "boom")
+		require.Contains(t, log, "stopped: Proximity is shutting down")
+		require.Contains(t, strings.Join(manager.InboundLog("Socks"), "\n"), messageStopped)
+		require.NoError(t, manager.ControlInbound("Socks", ActionStart))
+		waitInbound(t, manager, "Socks", StateUp)
+		require.NoError(t, manager.ControlInbound("Socks", ActionStart))
+		require.NoError(t, manager.ControlInbound("Socks", ActionRestart))
+		waitInbound(t, manager, "Socks", StateUp)
+		require.Equal(t, 3, strings.Count(strings.Join(manager.InboundLog("Socks"), "\n"),
+			"starting"))
+		require.NoError(t, manager.Control("AWG", ActionStop))
+		require.Equal(t, messageStopped, manager.Status()["AWG"].Message)
+		require.NoError(t, manager.Control("AWG", ActionStart))
+		waitState(t, manager, "AWG", StateFailed)
+		snapshot.Inbounds[0].Autostart, snapshot.Outbounds[0].Autostart = false, false
+		apply(manager, false)
+		require.Equal(t, messageInactive, manager.Inbounds()["Socks"].Message)
+		require.Contains(t, strings.Join(manager.InboundLog("Socks"), "\n"),
+			"stopped: router is stopped")
+		apply(manager, true)
+		require.Equal(t, messageAutostart, manager.Inbounds()["Socks"].Message)
+		require.Equal(t, StateFailed, manager.Status()["AWG"].State)
+		snapshot.Outbounds[0].Monitoring.ReconnectDelay = 2
+		apply(manager, true)
+		require.Eventually(t, func() bool {
+			return strings.Count(strings.Join(manager.Log("AWG"), "\n"), "starting\n") >= 2
+		}, 5*time.Second, 20*time.Millisecond)
+	}
+	{
+		manager := open()
+		snapshot.Inbounds[0].Outbound = "gone"
+		apply(manager, true)
+		require.EqualError(t, manager.ControlInbound("Socks", ActionStart),
+			"failed to start inbound 'Socks': outbound 'gone' does not exist")
+		require.EqualError(t, manager.ControlInbound("missing", ActionStart),
+			"inbound 'missing' does not exist")
+		snapshot.Inbounds[0].Enabled, snapshot.Outbounds[0].Enabled = false, false
+		apply(manager, true)
+		require.EqualError(t, manager.ControlInbound("Socks", ActionStop),
+			"inbound 'Socks' is disabled")
+		require.EqualError(t, manager.Control("AWG", ActionStop), "outbound 'AWG' is disabled")
+		require.NotContains(t, journal(), outboundKey(4))
+		require.NotContains(t, journal(), inboundKey(port))
+		require.FileExists(t, filepath.Join(state, logsDirectory, outboundKey(4)+logSuffix))
+		snapshot.Inbounds, snapshot.Outbounds = []config.Inbound{}, []config.Outbound{}
+		apply(manager, true)
+		require.NoFileExists(t, filepath.Join(state, logsDirectory, outboundKey(4)+logSuffix))
+		require.NoFileExists(t, filepath.Join(state, logsDirectory, inboundKey(port)+logSuffix))
+		require.Empty(t, manager.Log("AWG"))
+		require.Empty(t, manager.InboundLog("Socks"))
 	}
 }
 
@@ -863,6 +1007,38 @@ func TestNewManager_Problems(t *testing.T) {
 		tools.IP = filepath.Join(directory, "missing")
 		_, err := NewManager(Options{Directory: filepath.Join(directory, "run"), Tools: tools})
 		require.ErrorContains(t, err, "ip tool does not exist")
+	}
+}
+
+func TestOpenJournal_Problems(t *testing.T) {
+	directory := t.TempDir()
+	blocker := writeScript(t, directory, "file", "x")
+	{
+		_, err := openJournal(filepath.Join(blocker, "state"))
+		require.ErrorContains(t, err, "failed to create directory")
+	}
+	{
+		state := filepath.Join(directory, "state")
+		require.NoError(t, os.MkdirAll(filepath.Join(state, journalName), 0o700))
+		_, err := openJournal(state)
+		require.ErrorContains(t, err, "failed to read file")
+		_, err = NewManager(Options{Directory: filepath.Join(directory, "run"), StateDir: state,
+			Tools: Tools{IP: writeScript(t, directory, "ip", fakeIP)}})
+		require.ErrorContains(t, err, "failed to read file")
+	}
+	{
+		state := filepath.Join(directory, "broken")
+		require.NoError(t, os.MkdirAll(state, 0o700))
+		require.NoError(t, os.WriteFile(filepath.Join(state, journalName), []byte("{"), 0o600))
+		journal, err := openJournal(state)
+		require.NoError(t, err)
+		require.Empty(t, journal.records)
+		journal.set("outbound-1", ServiceRecord{State: StateStopped})
+		journal.set("outbound-1", ServiceRecord{State: StateStopped})
+		reopened, err := openJournal(state)
+		require.NoError(t, err)
+		require.Equal(t, map[string]ServiceRecord{"outbound-1": {State: StateStopped}},
+			reopened.records)
 	}
 }
 
@@ -1002,7 +1178,7 @@ func TestSignature_Changes(t *testing.T) {
 		Socks5: &config.Socks5Options{Server: "10.0.0.1", Port: 1080}}
 	signature := makeSignature(outbound, settings, 0)
 	renamed := outbound
-	renamed.ID, renamed.Name, renamed.Group, renamed.Statistics = "id", "name", "group", true
+	renamed.ID, renamed.Autostart, renamed.Statistics = "id", true, true
 	require.Equal(t, signature, makeSignature(renamed, settings, 0))
 	require.NotEqual(t, signature, makeSignature(outbound, settings, CaptureMark))
 	changed := outbound.Clone()
@@ -1030,7 +1206,7 @@ func TestSignature_Changes(t *testing.T) {
 			OpenVPN: &config.OpenVPNServer{MaxClients: 5}}
 		signature := inboundSignature(inbound, 0)
 		renamed := inbound.Clone()
-		renamed.ID, renamed.Name, renamed.Group, renamed.Statistics = "id", "name", "group", true
+		renamed.ID, renamed.Autostart, renamed.Statistics = "id", true, true
 		renamed.Outbound, renamed.Anonymous = config.ViaHost, true
 		renamed.Users = []config.InboundUser{{Name: "a"}}
 		require.Equal(t, signature, inboundSignature(renamed, 0))

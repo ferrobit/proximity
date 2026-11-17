@@ -91,9 +91,15 @@ it:
 4. Outbound state changes (e.g. a tunnel goes up or down) trigger step 2 again, so
    fallbacks always contain the outbounds that currently work.
 5. When the router is stopped (Settings → Router service), synchronization stops mihomo
-   (no automatic restart), stops the inbounds and removes host traffic capture; outbounds
-   keep running. At startup the router runs only when `autostart` is on and
-   `router.json` says it was running.
+   (no automatic restart), the services (tunnels and inbounds) and host traffic capture;
+   HOST and proxy outbounds keep being checked. At startup the router runs only when
+   `autostart` is on and `router.json` says it was running.
+6. Services keep a journal (`services.json`): `running`, `stopped` or `failed` with the
+   message. When the router starts, a service starts only if its `autostart` is on and the
+   journal says `running` (or has no entry); otherwise it is recorded as `stopped`. A
+   failed service is retried only when its settings change (the journal stores a hash of
+   them) or on **Start** / **Restart**. A stopped SOCKS5 inbound is left out of the mihomo
+   listeners.
 
 ## Outbounds and mihomo
 
@@ -197,6 +203,7 @@ by the system resolver for DIRECT/HOST.
 | `reconnecting` | Checks failed; restarting after the configured delay |
 | `down` | Proxy server is not reachable; checks continue and it comes back to `up` by itself |
 | `failed` | All attempts exhausted; see the message and the connection log |
+| `stopped` | Tunnel or inbound is stopped: by a user, by the router stop, or not started because *Start automatically* is off |
 
 | Outbound | How it is checked |
 |---|---|
@@ -322,6 +329,8 @@ All persistent data lives in the settings folder mounted as `/config`:
 | `proximity.json` | on every change (atomic replace) | users, outbounds, inbounds, fallbacks, routes, settings, token secret |
 | `state.json` | every 30 s and on shutdown | traffic totals of outbounds and inbounds, unreachable routes |
 | `router.json` | on start, stop and restart of the router, and at startup | requested router state (`running`) |
+| `services.json` | on every service state change | state of tunnels and inbounds: `running`, `stopped`, `failed` with message |
+| `logs/<outbound\|inbound>-<N>.log` | on every log line (trimmed to 300 lines) | logs of outbounds (by slot) and inbounds (by port) |
 | `mihomo/config.yaml` | on every synchronization | generated mihomo configuration |
 | `mihomo/geoip.metadb`, `geosite.dat` | first start | GeoIP / GeoSite databases |
 

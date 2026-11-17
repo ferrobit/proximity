@@ -36,7 +36,9 @@ export const typeLabels = { host: 'HOST Internet', socks5: 'SOCKS5 Proxy', http:
 export const typeColors = { host: 'blue', socks5: 'purple', http: 'geekblue', openvpn: 'orange', amneziawg: 'magenta' }
 export const inboundLabels = { socks5: 'SOCKS5', openvpn: 'OpenVPN' }
 export const inboundColors = { socks5: 'purple', openvpn: 'orange' }
-export const stateColors = { up: 'success', connecting: 'processing', reconnecting: 'warning', down: 'error', failed: 'error', disabled: 'default' }
-export const stateLabels = { up: 'good', connecting: 'connecting', reconnecting: 'reconnecting', down: 'down', failed: 'failed', disabled: 'disabled' }
+export const stateColors = { up: 'success', connecting: 'processing', reconnecting: 'warning', down: 'error', failed: 'error', disabled: 'default', stopped: 'default' }
+export const stateLabels = { up: 'good', connecting: 'connecting', reconnecting: 'reconnecting', down: 'down', failed: 'failed', disabled: 'disabled', stopped: 'stopped' }
 export const usageColors = { enabled: 'green', disabled: 'default', unused: 'gold' }
 export const reasonColors = { refused: 'red', timeout: 'orange', dns: 'purple', unreachable: 'volcano', 'no route': 'volcano', reset: 'magenta', error: 'default' }
+export const activeStates = ['up', 'connecting', 'reconnecting']
+export const isService = (record) => record.type === 'openvpn' || record.type === 'amneziawg'

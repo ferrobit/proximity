@@ -6,7 +6,10 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"path/filepath"
+	"slices"
 	"strconv"
+	"strings"
 	"sync"
 	"time"
 
@@ -30,6 +33,7 @@ type Status struct {
 
 type Options struct {
 	Directory   string
+	StateDir    string
 	Executable  string
 	Tools       Tools
 	HostNetwork bool
@@ -37,13 +41,20 @@ type Options struct {
 }
 
 type Manager struct {
-	mutex    sync.Mutex
-	options  Options
-	runners  map[int]*runner
-	inbounds map[int]*inboundRunner
-	blocked  map[string]string
-	capture  captureState
-	account  accountState
+	mutex     sync.Mutex
+	options   Options
+	runners   map[int]*runner
+	inbounds  map[int]*inboundRunner
+	blocked   map[string]string
+	capture   captureState
+	account   accountState
+	journal   *journal
+	books     map[string]*logBook
+	outbounds []config.Outbound
+	settings  config.Settings
+	snapshot  config.Config
+	active    bool
+	changed   int64
 }
 
 type runner struct {
@@ -52,12 +63,13 @@ type runner struct {
 	settings  config.Settings
 	signature string
 	bypass    int
+	key       string
+	book      *logBook
 	cancel    context.CancelFunc
 	done      chan struct{}
 	mutex     sync.Mutex
 	id        string
 	status    Status
-	lines     []string
 }
 
 type policy struct {
@@ -79,6 +91,7 @@ const (
 	StateDown         = "down"
 	StateReconnecting = "reconnecting"
 	StateFailed       = "failed"
+	StateStopped      = "stopped"
 )
 
 const maxLogLines = 300
@@ -91,9 +104,15 @@ func NewManager(options Options) (*Manager, error) {
 	} else if err = options.Tools.cleanup(); err != nil {
 		return nil, fmt.Errorf("failed to cleanup network state: %w", err)
 	}
+	journal, err := openJournal(options.StateDir)
+	if err != nil {
+		return nil, err
+	}
 	return &Manager{options: options, runners: map[int]*runner{},
 		inbounds: map[int]*inboundRunner{}, blocked: map[string]string{},
-		capture: captureState{device: CaptureDevice}}, nil
+		capture: captureState{device: CaptureDevice}, journal: journal,
+		books: map[string]*logBook{}, outbounds: []config.Outbound{},
+		changed: time.Now().Unix()}, nil
 }
 
 func sleep(ctx context.Context, duration time.Duration) {
@@ -111,48 +130,64 @@ func (failure *fatalError) Unwrap() error {
 	return failure.cause
 }
 
-func (manager *Manager) Apply(outbounds []config.Outbound, settings config.Settings) {
+func (manager *Manager) SetActive(active bool, snapshot config.Config) {
 	manager.mutex.Lock()
 	defer manager.mutex.Unlock()
-	wanted, bypass := map[int]bool{}, 0
-	if manager.options.HostNetwork && settings.Capture {
-		bypass = CaptureMark
-	}
-	for _, outbound := range outbounds {
-		signature := makeSignature(outbound, settings, bypass)
-		wanted[outbound.Slot] = outbound.Enabled
-		if current, found := manager.runners[outbound.Slot]; found && outbound.Enabled &&
-			current.signature == signature {
-			current.rename(outbound.ID)
-			continue
-		} else if found {
-			current.close()
-			delete(manager.runners, outbound.Slot)
+	if active && !manager.active {
+		for _, outbound := range snapshot.Outbounds {
+			if outbound.Enabled && outbound.IsTunnel() {
+				manager.autostart(outboundKey(outbound.Slot), outbound.Autostart)
+			}
 		}
-		if outbound.Enabled {
-			manager.runners[outbound.Slot] = manager.launch(outbound, settings, signature, bypass)
+		for _, inbound := range snapshot.Inbounds {
+			if inbound.Enabled {
+				manager.autostart(inboundKey(inbound.Port), inbound.Autostart)
+			}
 		}
 	}
-	for slot, current := range manager.runners {
-		if !wanted[slot] {
-			current.close()
-			delete(manager.runners, slot)
-		}
+	if active != manager.active {
+		manager.active, manager.changed = active, time.Now().Unix()
 	}
 }
 
-func (manager *Manager) Restart(id string) error {
+func (manager *Manager) Apply(outbounds []config.Outbound, settings config.Settings) {
 	manager.mutex.Lock()
 	defer manager.mutex.Unlock()
-	current := manager.find(id)
-	if current == nil {
-		return fmt.Errorf("outbound '%v' is not running", id)
+	manager.outbounds, manager.settings = slices.Clone(outbounds), settings
+	manager.applyOutbounds()
+}
+
+func (manager *Manager) Control(id string, action string) error {
+	manager.mutex.Lock()
+	defer manager.mutex.Unlock()
+	index := slices.IndexFunc(manager.outbounds, func(outbound config.Outbound) bool {
+		return outbound.ID == id
+	})
+	if index < 0 {
+		return fmt.Errorf("outbound '%v' does not exist", id)
 	}
-	current.close()
-	outbound := current.outbound
-	outbound.ID = id
-	manager.runners[outbound.Slot] = manager.launch(outbound, current.settings,
-		current.signature, current.bypass)
+	outbound := manager.outbounds[index]
+	if !outbound.Enabled {
+		return fmt.Errorf("outbound '%v' is disabled", id)
+	} else if !outbound.IsTunnel() && action != ActionRestart {
+		return fmt.Errorf("outbound '%v' has no service to %v", id, action)
+	} else if outbound.IsTunnel() && action != ActionStop && !manager.active {
+		return fmt.Errorf("failed to %v outbound '%v': %v", action, id, messageInactive)
+	}
+	key := outboundKey(outbound.Slot)
+	if current, found := manager.runners[outbound.Slot]; found && (action != ActionStart ||
+		current.snapshot().State == StateFailed) {
+		current.close()
+		delete(manager.runners, outbound.Slot)
+	}
+	if action == ActionStop {
+		manager.journal.set(key, ServiceRecord{State: StateStopped, Message: messageStopped,
+			Since: time.Now().Unix()})
+		manager.book(key).add(stamp("%v", messageStopped))
+	} else if outbound.IsTunnel() {
+		manager.journal.set(key, ServiceRecord{State: intentRunning, Since: time.Now().Unix()})
+	}
+	manager.applyOutbounds()
 	return nil
 }
 
@@ -162,6 +197,15 @@ func (manager *Manager) Status() map[string]Status {
 	result := map[string]Status{}
 	for _, current := range manager.runners {
 		result[current.name()] = current.snapshot()
+	}
+	for _, outbound := range manager.outbounds {
+		if _, found := manager.runners[outbound.Slot]; found || !outbound.Enabled ||
+			!outbound.IsTunnel() {
+			continue
+		}
+		state, message, since := manager.dormant(outboundKey(outbound.Slot))
+		result[outbound.ID] = Status{State: state, Message: message, Since: since, Latency: -1,
+			DNS: []string{}, Domains: []string{}, Routes: []string{}}
 	}
 	return result
 }
@@ -187,10 +231,10 @@ func (manager *Manager) Counters() map[string][2]int64 {
 func (manager *Manager) Log(id string) []string {
 	manager.mutex.Lock()
 	defer manager.mutex.Unlock()
-	if current := manager.find(id); current != nil {
-		current.mutex.Lock()
-		defer current.mutex.Unlock()
-		return append([]string{}, current.lines...)
+	for _, outbound := range manager.outbounds {
+		if outbound.ID == id {
+			return manager.book(outboundKey(outbound.Slot)).snapshot()
+		}
 	}
 	return []string{}
 }
@@ -200,38 +244,149 @@ func (manager *Manager) Close() {
 	defer manager.mutex.Unlock()
 	for port, current := range manager.inbounds {
 		current.close()
+		current.book.add(stamp("stopped: Proximity is shutting down"))
 		delete(manager.inbounds, port)
 	}
 	manager.account.remove(manager.options.Tools)
 	for slot, current := range manager.runners {
 		current.close()
+		current.book.add(stamp("stopped: Proximity is shutting down"))
 		delete(manager.runners, slot)
 	}
 	manager.capture.remove(manager.options.Tools)
 }
 
-func (manager *Manager) find(id string) *runner {
-	for _, current := range manager.runners {
-		if current.name() == id {
-			return current
+func (manager *Manager) applyOutbounds() {
+	wanted, keys, bypass := map[int]bool{}, map[string]bool{}, 0
+	if manager.options.HostNetwork && manager.settings.Capture {
+		bypass = CaptureMark
+	}
+	for _, outbound := range manager.outbounds {
+		key, signature := outboundKey(outbound.Slot), makeSignature(outbound, manager.settings, bypass)
+		current, found := manager.runners[outbound.Slot]
+		active := outbound.Enabled && manager.wanted(key, outbound.IsTunnel(), signature, found)
+		if wanted[outbound.Slot], keys[key] = active, outbound.Enabled; found && active &&
+			current.signature == signature {
+			current.rename(outbound.ID)
+			continue
+		} else if found {
+			current.close()
+			manager.retire(current.book, outbound.Enabled && outbound.IsTunnel())
+			delete(manager.runners, outbound.Slot)
+		}
+		if active {
+			manager.runners[outbound.Slot] = manager.launch(outbound, manager.settings, signature,
+				bypass)
 		}
 	}
-	return nil
+	for slot, current := range manager.runners {
+		if !wanted[slot] {
+			current.close()
+			delete(manager.runners, slot)
+		}
+	}
+	manager.forget(outboundPrefix, func(slot int) bool {
+		return slices.ContainsFunc(manager.outbounds, func(outbound config.Outbound) bool {
+			return outbound.Slot == slot
+		})
+	}, keys)
+}
+
+func (manager *Manager) wanted(key string, service bool, signature string, running bool) bool {
+	if !service {
+		return true
+	} else if !manager.active {
+		return false
+	}
+	record, found := manager.journal.get(key)
+	if !found || record.State == intentRunning {
+		return true
+	} else if record.State == StateFailed && record.Signature != digest(signature) {
+		manager.journal.set(key, ServiceRecord{State: intentRunning, Since: time.Now().Unix()})
+		return true
+	}
+	return record.State == StateFailed && running
+}
+
+func (manager *Manager) autostart(key string, enabled bool) {
+	if record, found := manager.journal.get(key); enabled || (found &&
+		record.State != intentRunning) {
+		return
+	}
+	manager.journal.set(key, ServiceRecord{State: StateStopped, Message: messageAutostart,
+		Since: time.Now().Unix()})
+	manager.book(key).add(stamp("%v", messageAutostart))
+}
+
+func (manager *Manager) dormant(key string) (string, string, int64) {
+	if record, found := manager.journal.get(key); found && record.State != intentRunning {
+		return record.State, record.Message, record.Since
+	}
+	return StateStopped, messageInactive, manager.changed
+}
+
+func (manager *Manager) retire(book *logBook, service bool) {
+	if service && !manager.active {
+		book.add(stamp("stopped: %v", messageInactive))
+	}
+}
+
+func (manager *Manager) forget(prefix string, exists func(slot int) bool, keys map[string]bool) {
+	manager.journal.remove(func(key string) bool {
+		return !strings.HasPrefix(key, prefix) || keys[key]
+	})
+	for key := range manager.books {
+		if slot, err := strconv.Atoi(strings.TrimPrefix(key, prefix)); err == nil &&
+			strings.HasPrefix(key, prefix) && !exists(slot) {
+			delete(manager.books, key)
+		}
+	}
+	if manager.options.StateDir == "" {
+		return
+	}
+	directory := filepath.Join(manager.options.StateDir, logsDirectory)
+	entries, err := os.ReadDir(directory)
+	if err != nil {
+		return
+	}
+	for _, entry := range entries {
+		name := strings.TrimSuffix(entry.Name(), logSuffix)
+		if slot, err := strconv.Atoi(strings.TrimPrefix(name, prefix)); err == nil &&
+			strings.HasPrefix(name, prefix) && !exists(slot) {
+			_ = os.Remove(filepath.Join(directory, entry.Name()))
+		}
+	}
+}
+
+func (manager *Manager) book(key string) *logBook {
+	if current, found := manager.books[key]; found {
+		return current
+	}
+	path := ""
+	if manager.options.StateDir != "" {
+		path = filepath.Join(manager.options.StateDir, logsDirectory, key+logSuffix)
+	}
+	result := openLogBook(path)
+	manager.books[key] = result
+	return result
 }
 
 func (manager *Manager) launch(outbound config.Outbound, settings config.Settings,
 	signature string, bypass int) *runner {
 	ctx, cancel := context.WithCancel(context.Background())
+	key := outboundKey(outbound.Slot)
 	result := &runner{manager: manager, outbound: outbound, settings: settings,
-		signature: signature, bypass: bypass, cancel: cancel, done: make(chan struct{}),
-		id: outbound.ID, status: Status{State: StateConnecting, Since: time.Now().Unix(),
-			Latency: -1, DNS: []string{}, Domains: []string{}, Routes: []string{}}}
+		signature: signature, bypass: bypass, key: key, book: manager.book(key), cancel: cancel,
+		done: make(chan struct{}), id: outbound.ID, status: Status{State: StateConnecting,
+			Since: time.Now().Unix(), Latency: -1, DNS: []string{}, Domains: []string{},
+			Routes: []string{}}}
+	result.logf("starting")
 	go result.run(ctx)
 	return result
 }
 
 func makeSignature(outbound config.Outbound, settings config.Settings, bypass int) string {
-	outbound.ID, outbound.Name, outbound.Group, outbound.Statistics = "", "", "", false
+	outbound.ID, outbound.Statistics, outbound.Autostart = "", false, false
 	if outbound.IsTunnel() && outbound.Monitoring != nil && outbound.Monitoring.Enabled {
 		settings = config.Settings{}
 	}
@@ -389,6 +544,9 @@ func (runner *runner) update(change func(status *Status)) {
 	}
 	current := runner.status
 	runner.mutex.Unlock()
+	if current.State != previous.State && runner.outbound.IsTunnel() {
+		runner.manager.observe(runner.key, current.State, current.Message, runner.signature)
+	}
 	if !sameStatus(previous, current) && runner.manager.options.Changed != nil {
 		runner.manager.options.Changed()
 	}
@@ -413,17 +571,21 @@ func (runner *runner) snapshot() Status {
 }
 
 func (runner *runner) logf(format string, arguments ...any) {
-	line := time.Now().Format("2006-01-02 15:04:05 ") + fmt.Sprintf(format, arguments...)
-	runner.mutex.Lock()
-	defer runner.mutex.Unlock()
-	if runner.lines = append(runner.lines, line); len(runner.lines) > maxLogLines {
-		runner.lines = runner.lines[len(runner.lines)-maxLogLines:]
-	}
+	runner.book.add(stamp(format, arguments...))
 }
 
 func (runner *runner) close() {
 	runner.cancel()
 	<-runner.done
+}
+
+func (manager *Manager) observe(key string, state string, message string, signature string) {
+	if state == StateUp {
+		manager.journal.set(key, ServiceRecord{State: intentRunning, Since: time.Now().Unix()})
+	} else if state == StateFailed {
+		manager.journal.set(key, ServiceRecord{State: StateFailed, Message: message,
+			Since: time.Now().Unix(), Signature: digest(signature)})
+	}
 }
 
 func sameStatus(first Status, second Status) bool {

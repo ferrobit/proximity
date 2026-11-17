@@ -82,11 +82,21 @@ signing in (secrets and the unreachable routes list are hidden).
 
 ![Outbounds](images/outbounds.png)
 
-An outbound is one outgoing connection. The table shows the order (↑ ↓), ID and name, type,
-group, the *Enabled* switch, whether statistics are collected, state with latency, and
-connection details (server, interface and tunnel address).
+An outbound is one outgoing connection. The table shows the order (↑ ↓), ID (*manual
+start* under a tunnel without autostart), type, the *Enabled* switch, whether statistics
+are collected, state with latency, and connection details (server, interface and tunnel
+address).
 
-Row actions: ✏️ **Edit**, 🔄 **Reconnect**, 📄 **Connection log**, 🗑️ **Delete**.
+Row actions: ✏️ **Edit**, 📄 **Connection log**, 🗑️ **Delete**, and:
+
+| Outbound | Actions |
+|---|---|
+| OpenVPN, AmneziaWG (tunnels) | ▶ **Start**, ⏸ **Stop** (with confirmation), 🔄 **Restart** |
+| HOST, SOCKS5, HTTP | 🔄 **Reconnect** |
+
+A stopped or failed tunnel keeps its state after a container restart: it is not started
+again until **Start** or **Restart** is pressed (or its settings change, for a failed one).
+The log is kept too, so the reason of the last failure stays visible.
 
 **Add outbound** opens a menu with the five types:
 
@@ -99,9 +109,8 @@ Every outbound dialog has a **General** tab:
 | Field | Meaning |
 |---|---|
 | ID | Unique among outbounds *and* fallbacks; empty → `<Type> <N>`. Renaming updates all references and does not interrupt a tunnel |
-| Name | Free-text description |
-| Group | New or existing group label, shown on the Dashboard |
 | Enabled | Off: the outbound is stopped and its routes are skipped |
+| Start automatically when the router starts | Tunnels only, on by default. Off: after the router starts, the tunnel stays stopped until **Start** |
 | Collect statistics | Count traffic and draw it on the chart |
 
 All fields are validated before saving. Changes are applied immediately.
@@ -186,7 +195,8 @@ OpenVPN is checked by pinging the VPN gateway through the tunnel.
 ![Connection log](images/outbound-log.png)
 
 The live log of an outbound (last 300 lines): process output, answered prompts, applied
-routes, check results. It refreshes every 1.5 s; **Follow new lines** keeps it scrolled to
+routes, check results, starts and stops. It is saved in `logs/` of the settings folder and
+survives container restarts. It refreshes every 1.5 s; **Follow new lines** keeps it scrolled to
 the bottom, **Copy** copies the whole log.
 
 ## Routes
@@ -239,16 +249,17 @@ Changes are applied immediately: saving restarts only the affected inbound, and 
 of users does not interrupt other clients.
 
 The table shows the port, the outbound, the state, connected OpenVPN clients (hover the
-counter for names and addresses), users and traffic. ↻ restarts an inbound, 📄 opens its
-log.
+counter for names and addresses), users and traffic. Actions: ▶ **Start**, ⏸ **Stop** (with
+confirmation), 🔄 **Restart**, 📄 log (kept across restarts). A stopped or failed inbound
+keeps its state after a container restart.
 
 ### General
 
 | Field | Meaning |
 |---|---|
 | ID | Unique among inbounds; empty → `SOCKS5 <N>` / `OpenVPN <N>` |
-| Name, Group | Free text; a group is a new or an existing string |
 | Enabled | Off: the port is closed |
+| Start automatically | On by default: the inbound starts with the router (unless it was stopped or failed) |
 | Collect statistics | Count upload and download traffic of the inbound |
 | Port number | Unique, `7800…7898` (the range published by the Docker files); empty → the first free port |
 | Outbound | **Router** — the routes decide, like for the proxy port; **Host** — the host Internet connection, routes are skipped; or one of the outbounds — everything goes there |
@@ -309,9 +320,10 @@ The page has four sections.
 ### Router service
 
 The state of the router (mihomo) and the **Start**, **Stop** and **Restart** buttons
-(Operator and Administrator). **Stop** asks for confirmation: the proxy port and the
-inbounds stop working and host traffic is no longer captured (it goes directly).
-Outbounds keep running. **Restart** starts a new mihomo process; it also starts a stopped
+(Operator and Administrator). **Stop** asks for confirmation: the proxy port, the
+inbounds and the tunnels (OpenVPN, AmneziaWG outbounds) stop, host traffic is no longer
+captured (it goes directly). HOST and proxy outbounds keep being checked. **Start** starts
+the services that have *Start automatically* on and were running before. **Restart** starts a new mihomo process; it also starts a stopped
 router.
 
 *Start the router when the container starts* (Administrator, applied at once):

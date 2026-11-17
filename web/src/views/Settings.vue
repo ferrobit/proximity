@@ -15,7 +15,7 @@
             <a-button type="primary" :disabled="!router || router.running || !!acting" :loading="acting === 'start'" @click="control('start')">
               <template #icon><PlayCircleOutlined /></template>Start</a-button>
             <a-popconfirm ok-text="Stop" ok-type="danger" :disabled="!router || router.stopped || !!acting" @confirm="control('stop')"
-              title="Stop the router?" description="The proxy port and inbounds stop working, host traffic is no longer captured.">
+              title="Stop the router?" description="The proxy port, inbounds and VPN outbounds stop, host traffic is no longer captured.">
               <a-button danger :disabled="!router || router.stopped || !!acting" :loading="acting === 'stop'">
                 <template #icon><PauseCircleOutlined /></template>Stop</a-button>
             </a-popconfirm>

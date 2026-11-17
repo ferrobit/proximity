@@ -12,18 +12,13 @@
                 <a-input v-model:value="form.id" :placeholder="outbound ? outbound.id : `${shortLabels[kind]} N`" />
               </a-form-item>
             </a-col>
-            <a-col :span="12">
-              <a-form-item label="Name" name="name" :rules="[{ max: 96, message: 'Up to 96 characters' }]">
-                <a-input v-model:value="form.name" placeholder="Free text description" />
-              </a-form-item>
-            </a-col>
-            <a-col :span="12">
-              <a-form-item label="Group" name="group" :rules="[{ max: 48, message: 'Up to 48 characters' }]">
-                <a-auto-complete v-model:value="form.group" :options="groups.map((value) => ({ value }))" placeholder="New or existing group" />
-              </a-form-item>
-            </a-col>
             <a-col :span="6"><a-form-item label="Enabled"><a-switch v-model:checked="form.enabled" /></a-form-item></a-col>
             <a-col :span="6"><a-form-item label="Collect statistics"><a-switch v-model:checked="form.statistics" /></a-form-item></a-col>
+            <a-col v-if="tunnel" :span="24">
+              <a-form-item extra="When it is off, the tunnel stays stopped after the router starts until Start is pressed. A tunnel that was stopped or failed is not started again.">
+                <a-checkbox v-model:checked="form.autostart">Start automatically when the router starts</a-checkbox>
+              </a-form-item>
+            </a-col>
           </a-row>
         </a-tab-pane>
         <a-tab-pane key="type" force-render>
@@ -168,8 +163,7 @@ import { typeLabels } from '../format'
 const props = defineProps({
   open: Boolean,
   outbound: { type: Object, default: null },
-  kind: { type: String, default: 'host' },
-  groups: { type: Array, default: () => [] }
+  kind: { type: String, default: 'host' }
 })
 const emit = defineEmits(['update:open', 'saved'])
 
@@ -201,7 +195,7 @@ const interfaceOptions = computed(() => interfaces.value.map((item) => ({
 
 function defaults(kind) {
   return {
-    id: '', name: '', group: '', type: kind, enabled: true, statistics: true,
+    id: '', type: kind, enabled: true, autostart: true, statistics: true,
     host: { mode: 'default', interface: undefined, gateway: '', attempts: 3, reconnect_timeout: 10 },
     socks5: { server: '', port: 1080, username: '', password: '', tls: false, skip_cert_verify: false, udp: true },
     http: { server: '', port: 3128, single: true, https_server: '', https_port: 3128, ftp_server: '', ftp_port: 3128, username: '', password: '', tls: false, skip_cert_verify: false },
@@ -288,11 +282,11 @@ async function save() {
     const first = failure.errorFields && failure.errorFields[0]
     if (first) {
       const group = String(first.name[0])
-      tab.value = group === 'monitoring' ? 'monitoring' : ['id', 'name', 'group'].includes(group) ? 'general' : 'type'
+      tab.value = group === 'monitoring' ? 'monitoring' : group === 'id' ? 'general' : 'type'
     }
     return
   }
-  const body = { id: form.id, name: form.name, group: form.group, type: props.kind, enabled: form.enabled, statistics: form.statistics }
+  const body = { id: form.id, type: props.kind, enabled: form.enabled, autostart: form.autostart, statistics: form.statistics }
   body[props.kind] = { ...form[props.kind] }
   if (props.kind === 'host' && body.host.mode !== 'interface') {
     body.host = { ...body.host, mode: 'default', interface: '', gateway: '' }

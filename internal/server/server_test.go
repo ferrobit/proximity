@@ -316,7 +316,7 @@ func TestServer_Backup(t *testing.T) {
 	code, exported, _ := call(t, server, admin, http.MethodGet, "/api/backup", nil)
 	require.Equal(t, http.StatusOK, code)
 	require.Equal(t, config.BackupFormat, exported["format"])
-	require.Equal(t, 5.0, exported["version"])
+	require.Equal(t, 6.0, exported["version"])
 	require.Len(t, exported["inbounds"], 1)
 	require.Len(t, exported["outbounds"], 1)
 	require.Len(t, exported["routes"], 1)
@@ -385,7 +385,7 @@ func TestServer_Inbounds(t *testing.T) {
 	require.Equal(t, http.StatusOK, code)
 	viewer := login(t, server, "viewer", "viewer123")
 	code, body, _ := call(t, server, admin, http.MethodPost, "/api/inbounds", config.Inbound{
-		Type: config.TypeSocks5, Enabled: true, Statistics: true, Group: "edge",
+		Type: config.TypeSocks5, Enabled: true, Statistics: true,
 		Users:  []config.InboundUser{{Enabled: true, Name: "alice", Password: "secret"}},
 		Socks5: &config.Socks5Server{TLS: true}})
 	require.Equal(t, http.StatusOK, code, body)
@@ -393,7 +393,7 @@ func TestServer_Inbounds(t *testing.T) {
 	require.Equal(t, 7800.0, body["port"])
 	require.Contains(t, body["socks5"].(map[string]any)["key"], "PRIVATE KEY")
 	code, body, _ = call(t, server, admin, http.MethodPost, "/api/inbounds", config.Inbound{
-		Type: config.TypeOpenVPN, Enabled: true, Outbound: config.ViaHost, Group: "edge",
+		Type: config.TypeOpenVPN, Enabled: true, Outbound: config.ViaHost,
 		Users: []config.InboundUser{{Enabled: true, Name: "bob", Password: "builder"}}})
 	require.Equal(t, http.StatusOK, code, body)
 	require.Equal(t, "OpenVPN 1", body["id"])
@@ -411,7 +411,7 @@ func TestServer_Inbounds(t *testing.T) {
 	{
 		code, body, _ := call(t, server, admin, http.MethodGet, "/api/inbounds", nil)
 		require.Equal(t, http.StatusOK, code)
-		require.Equal(t, []any{"edge"}, body["groups"])
+		require.NotContains(t, body, "groups")
 		require.Equal(t, []any{7800.0, 7898.0}, body["ports"])
 		items := body["inbounds"].([]any)
 		require.Len(t, items, 2)
@@ -501,7 +501,7 @@ func TestServer_Inbounds(t *testing.T) {
 		require.Equal(t, http.StatusBadRequest, code)
 		code, body, _ = call(t, server, admin, http.MethodPost, "/api/inbounds/Edge/restart", nil)
 		require.Equal(t, http.StatusBadRequest, code)
-		require.Equal(t, "inbound 'Edge' is not running", body["error"])
+		require.Equal(t, "inbound 'Edge' does not exist", body["error"])
 		code, body, _ = call(t, server, admin, http.MethodGet, "/api/inbounds/Edge/log", nil)
 		require.Equal(t, http.StatusOK, code)
 		require.Equal(t, []any{}, body["lines"])
@@ -517,6 +517,18 @@ func TestServer_Inbounds(t *testing.T) {
 		require.NotEqual(t, "disabled", status["state"])
 		code, _, _ = call(t, server, admin, http.MethodPost, "/api/inbounds/Edge/restart", nil)
 		require.Equal(t, http.StatusOK, code)
+		code, _, _ = call(t, server, viewer, http.MethodPost, "/api/inbounds/Edge/stop", nil)
+		require.Equal(t, http.StatusForbidden, code)
+		code, _, _ = call(t, server, admin, http.MethodPost, "/api/inbounds/Edge/stop", nil)
+		require.Equal(t, http.StatusOK, code)
+		require.Equal(t, link.StateStopped, server.manager.Inbounds()["Edge"].State)
+		require.NotContains(t, server.manager.Serving(), "Edge")
+		code, _, _ = call(t, server, admin, http.MethodPost, "/api/inbounds/Edge/start", nil)
+		require.Equal(t, http.StatusOK, code)
+		require.Contains(t, server.manager.Serving(), "Edge")
+		code, body, _ = call(t, server, admin, http.MethodPost, "/api/inbounds/missing/start", nil)
+		require.Equal(t, http.StatusBadRequest, code)
+		require.Equal(t, "inbound 'missing' does not exist", body["error"])
 		code, _, _ = call(t, server, admin, http.MethodDelete, "/api/inbounds/Edge", nil)
 		require.Equal(t, http.StatusOK, code)
 		code, body, _ = call(t, server, admin, http.MethodDelete, "/api/inbounds/Edge", nil)
@@ -531,10 +543,10 @@ func TestServer_Outbounds(t *testing.T) {
 	server := makeServer(t)
 	admin := login(t, server, "admin", "secret123")
 	for _, outbound := range []config.Outbound{
-		{Type: config.TypeHost, Enabled: true, Group: "uplinks", Statistics: true},
-		{Type: config.TypeSocks5, Enabled: true, Group: "work", Socks5: &config.Socks5Options{
+		{Type: config.TypeHost, Enabled: true, Statistics: true},
+		{Type: config.TypeSocks5, Enabled: true, Socks5: &config.Socks5Options{
 			Server: "127.0.0.1", Port: 1, Username: "user", Password: "pass"}},
-		{Type: config.TypeHTTP, Group: "work", HTTP: &config.HTTPOptions{Server: "proxy.test",
+		{Type: config.TypeHTTP, HTTP: &config.HTTPOptions{Server: "proxy.test",
 			Port: 3128, Password: "pass", Single: true}},
 		{Type: config.TypeOpenVPN, OpenVPN: &config.OpenVPNOptions{Config: sampleOpenVPN,
 			Password: "pass", OTPKey: "GEZDGNBVGY3TQOJQ", KeyPassword: "key"}},
@@ -555,7 +567,7 @@ func TestServer_Outbounds(t *testing.T) {
 	{
 		code, body, _ := call(t, server, admin, http.MethodGet, "/api/outbounds", nil)
 		require.Equal(t, http.StatusOK, code)
-		require.Equal(t, []any{"uplinks", "work"}, body["groups"])
+		require.NotContains(t, body, "groups")
 		views := body["outbounds"].([]any)
 		require.Len(t, views, 5)
 		first, second := views[0].(map[string]any), views[1].(map[string]any)
@@ -610,7 +622,7 @@ func TestServer_Outbounds(t *testing.T) {
 	}
 	{
 		code, _, _ := call(t, server, admin, http.MethodPut, "/api/outbounds/SOCKS5%201",
-			config.Outbound{Name: "renamed", Enabled: true, Socks5: &config.Socks5Options{
+			config.Outbound{Enabled: true, Socks5: &config.Socks5Options{
 				Server: "127.0.0.1", Port: 2}})
 		require.Equal(t, http.StatusOK, code)
 		code, _, _ = call(t, server, admin, http.MethodPut, "/api/outbounds/SOCKS5%201", 5)
@@ -626,7 +638,7 @@ func TestServer_Outbounds(t *testing.T) {
 		require.Equal(t, http.StatusBadRequest, code)
 		snapshot := server.store.Snapshot()
 		require.Equal(t, "SOCKS5 1", snapshot.Outbounds[0].ID)
-		require.Equal(t, "renamed", snapshot.Outbounds[0].Name)
+		require.False(t, snapshot.Outbounds[0].Autostart)
 		require.Equal(t, 2, snapshot.Outbounds[0].Socks5.Port)
 	}
 	{
@@ -635,7 +647,27 @@ func TestServer_Outbounds(t *testing.T) {
 		code, body, _ := call(t, server, admin, http.MethodPost, "/api/outbounds/HTTP%201/restart",
 			nil)
 		require.Equal(t, http.StatusBadRequest, code)
-		require.Equal(t, "outbound 'HTTP 1' is not running", body["error"])
+		require.Equal(t, "outbound 'HTTP 1' is disabled", body["error"])
+		code, body, _ = call(t, server, admin, http.MethodPost, "/api/outbounds/HOST%201/stop",
+			nil)
+		require.Equal(t, http.StatusBadRequest, code)
+		require.Equal(t, "outbound 'HOST 1' has no service to stop", body["error"])
+		code, body, _ = call(t, server, admin, http.MethodPost,
+			"/api/outbounds/HOST%201/start", nil)
+		require.Equal(t, http.StatusBadRequest, code)
+		require.Equal(t, "outbound 'HOST 1' has no service to start", body["error"])
+		code, body, _ = call(t, server, admin, http.MethodPost, "/api/outbounds",
+			map[string]any{"type": config.TypeHost})
+		require.Equal(t, http.StatusOK, code)
+		require.Equal(t, true, body["autostart"])
+		code, body, _ = call(t, server, admin, http.MethodPost, "/api/inbounds",
+			map[string]any{"type": config.TypeSocks5, "anonymous": true})
+		require.Equal(t, http.StatusOK, code)
+		require.Equal(t, true, body["autostart"])
+		code, _, _ = call(t, server, admin, http.MethodDelete, "/api/inbounds/SOCKS5%201", nil)
+		require.Equal(t, http.StatusOK, code)
+		code, _, _ = call(t, server, admin, http.MethodDelete, "/api/outbounds/HOST%202", nil)
+		require.Equal(t, http.StatusOK, code)
 		code, body, _ = call(t, server, admin, http.MethodGet, "/api/outbounds/HOST%201/log", nil)
 		require.Equal(t, http.StatusOK, code)
 		require.Contains(t, body, "lines")
@@ -763,7 +795,7 @@ func TestServer_RouterControl(t *testing.T) {
 	require.Equal(t, http.StatusOK, code)
 	viewer := login(t, server, "viewer", "viewer123")
 	code, _, _ = call(t, server, admin, http.MethodPost, "/api/inbounds", config.Inbound{
-		Type: config.TypeSocks5, Enabled: true, Anonymous: true})
+		Type: config.TypeSocks5, Enabled: true, Autostart: true, Anonymous: true})
 	require.Equal(t, http.StatusOK, code)
 	ctx, cancel := context.WithCancel(context.Background())
 	finished := make(chan struct{})

@@ -57,10 +57,9 @@ type OpenVPNServer struct {
 
 type Inbound struct {
 	ID         string         `json:"id"`
-	Name       string         `json:"name"`
-	Group      string         `json:"group"`
 	Type       string         `json:"type"`
 	Enabled    bool           `json:"enabled"`
+	Autostart  bool           `json:"autostart"`
 	Statistics bool           `json:"statistics"`
 	Port       int            `json:"port"`
 	Outbound   string         `json:"outbound"`
@@ -305,8 +304,6 @@ func (inbound Inbound) network() (netip.Prefix, bool) {
 
 func (inbound *Inbound) normalize() {
 	inbound.ID = strings.TrimSpace(inbound.ID)
-	inbound.Name = strings.TrimSpace(inbound.Name)
-	inbound.Group = strings.TrimSpace(inbound.Group)
 	if inbound.Outbound = strings.TrimSpace(inbound.Outbound); inbound.Outbound == "" {
 		inbound.Outbound = ViaRouter
 	}
@@ -352,8 +349,6 @@ func (inbound *Inbound) complete(taken []netip.Prefix, now time.Time) error {
 func (inbound *Inbound) validate() error {
 	if err := validateIdentifier(inbound.ID); err != nil {
 		return err
-	} else if len(inbound.Name) > 96 || len(inbound.Group) > 48 {
-		return errors.New("name or group is too long")
 	} else if err = validateRange("port", inbound.Port, InboundPortFirst,
 		InboundPortLast); err != nil {
 		return err

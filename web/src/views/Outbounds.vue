@@ -24,13 +24,10 @@
         </template>
         <template v-else-if="column.key === 'id'">
           <b>{{ record.id }}</b>
-          <div class="muted" v-if="record.name">{{ record.name }}</div>
+          <div class="muted" v-if="isService(record) && !record.autostart">manual start</div>
         </template>
         <template v-else-if="column.key === 'type'">
           <a-tag :color="typeColors[record.type]"><component :is="typeIcons[record.type]" /> {{ typeLabels[record.type] }}</a-tag>
-        </template>
-        <template v-else-if="column.key === 'group'">
-          <a-tag v-if="record.group">{{ record.group }}</a-tag>
         </template>
         <template v-else-if="column.key === 'enabled'">
           <a-switch size="small" :checked="record.enabled" :disabled="!canEdit()" @change="toggle(record, $event)" />
@@ -51,7 +48,16 @@
         <template v-else-if="column.key === 'actions'">
           <a-space v-if="canEdit()">
             <a-tooltip title="Edit"><a-button size="small" @click="open(record, record.type)"><template #icon><EditOutlined /></template></a-button></a-tooltip>
-            <a-tooltip title="Reconnect"><a-button size="small" :disabled="!record.enabled" @click="restart(record)"><template #icon><SyncOutlined /></template></a-button></a-tooltip>
+            <template v-if="isService(record)">
+              <a-tooltip title="Start"><a-button size="small" :disabled="!record.enabled || activeStates.includes(record.status.state)"
+                @click="control(record, 'start')"><template #icon><PlayCircleOutlined /></template></a-button></a-tooltip>
+              <a-popconfirm ok-text="Stop" ok-type="danger" :title="`Stop outbound '${record.id}'?`" :disabled="!record.enabled || record.status.state === 'stopped'" @confirm="control(record, 'stop')">
+                <a-tooltip title="Stop"><a-button size="small" :disabled="!record.enabled || record.status.state === 'stopped'">
+                  <template #icon><PauseCircleOutlined /></template></a-button></a-tooltip>
+              </a-popconfirm>
+              <a-tooltip title="Restart"><a-button size="small" :disabled="!record.enabled" @click="control(record, 'restart')"><template #icon><SyncOutlined /></template></a-button></a-tooltip>
+            </template>
+            <a-tooltip v-else title="Reconnect"><a-button size="small" :disabled="!record.enabled" @click="control(record, 'restart')"><template #icon><SyncOutlined /></template></a-button></a-tooltip>
             <a-tooltip title="Connection log"><a-button size="small" @click="showLog(record)"><template #icon><FileTextOutlined /></template></a-button></a-tooltip>
             <a-popconfirm :title="`Delete outbound '${record.id}'?`" @confirm="remove(record)">
               <a-button size="small" danger><template #icon><DeleteOutlined /></template></a-button>
@@ -60,7 +66,7 @@
         </template>
       </template>
     </a-table>
-    <OutboundDialog v-model:open="visible" :outbound="current" :kind="kind" :groups="groups" @saved="load" />
+    <OutboundDialog v-model:open="visible" :outbound="current" :kind="kind" @saved="load" />
     <a-modal v-model:open="logVisible" :title="`Connection log: ${logTitle}`" width="900px" :footer="null" destroy-on-close>
       <LogView :path="`/api/outbounds/${id(logTitle)}/log`" />
     </a-modal>
@@ -72,11 +78,11 @@ import { onMounted, onUnmounted, ref } from 'vue'
 import { message } from 'ant-design-vue'
 import {
   ArrowDownOutlined, ArrowUpOutlined, BarChartOutlined, CloudServerOutlined, DeleteOutlined, DownOutlined,
-  EditOutlined, ExportOutlined, FileTextOutlined, GlobalOutlined, LockOutlined, PlusOutlined, ReloadOutlined,
-  SafetyCertificateOutlined, SendOutlined, SyncOutlined
+  EditOutlined, ExportOutlined, FileTextOutlined, GlobalOutlined, LockOutlined, PauseCircleOutlined, PlayCircleOutlined,
+  PlusOutlined, ReloadOutlined, SafetyCertificateOutlined, SendOutlined, SyncOutlined
 } from '@ant-design/icons-vue'
 import { api, canEdit, id } from '../api'
-import { typeColors, typeLabels } from '../format'
+import { activeStates, isService, typeColors, typeLabels } from '../format'
 import StateTag from '../components/StateTag.vue'
 import LogView from '../components/LogView.vue'
 import OutboundDialog from './OutboundDialog.vue'
@@ -84,17 +90,15 @@ import OutboundDialog from './OutboundDialog.vue'
 const typeIcons = { host: GlobalOutlined, socks5: SendOutlined, http: CloudServerOutlined, openvpn: LockOutlined, amneziawg: SafetyCertificateOutlined }
 const columns = [
   { title: '', key: 'order', width: 90 },
-  { title: 'ID / Name', key: 'id' },
+  { title: 'ID', key: 'id' },
   { title: 'Type', key: 'type' },
-  { title: 'Group', key: 'group' },
   { title: 'Enabled', key: 'enabled', width: 80 },
   { title: '', key: 'statistics', width: 40 },
   { title: 'Status', key: 'state' },
   { title: 'Connection', key: 'details' },
-  { title: '', key: 'actions', width: 170 }
+  { title: '', key: 'actions', width: 250 }
 ]
 const outbounds = ref([])
-const groups = ref([])
 const loading = ref(false)
 const visible = ref(false)
 const current = ref(null)
@@ -108,7 +112,6 @@ async function load(quiet) {
   try {
     const data = await api.get('/api/outbounds', quiet === true)
     outbounds.value = data.outbounds
-    groups.value = data.groups
   } catch (error) {
     if (quiet !== true) message.error(error.message)
   } finally {
@@ -151,7 +154,8 @@ function strip(record) {
 const toggle = (record, enabled) => act(() => api.put(`/api/outbounds/${id(record.id)}`, { ...strip(record), enabled }))
 const move = (record, delta) => act(() => api.post(`/api/outbounds/${id(record.id)}/move`, { delta }))
 const remove = (record) => act(() => api.remove(`/api/outbounds/${id(record.id)}`))
-const restart = (record) => act(() => api.post(`/api/outbounds/${id(record.id)}/restart`), 'Reconnect requested')
+const controlResults = { start: 'Start requested', stop: 'Stopped', restart: 'Restart requested' }
+const control = (record, action) => act(() => api.post(`/api/outbounds/${id(record.id)}/${action}`), controlResults[action])
 
 function showLog(record) {
   logTitle.value = record.id

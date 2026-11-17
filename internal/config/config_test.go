@@ -10,7 +10,6 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
-	"strings"
 	"testing"
 	"time"
 
@@ -93,11 +92,11 @@ func TestAddFallback_Members(t *testing.T) {
 func TestAddInbound_Defaults(t *testing.T) {
 	config := makeConfig(t)
 	now := time.Unix(1700000000, 0)
-	socks, err := config.AddInbound(Inbound{Type: TypeSocks5, Enabled: true, Name: " proxy ",
+	socks, err := config.AddInbound(Inbound{Type: TypeSocks5, Enabled: true, Autostart: true,
 		Users: []InboundUser{{Enabled: true, Name: " alice ", Password: "secret"}}}, now)
 	require.NoError(t, err)
 	require.Equal(t, "SOCKS5 1", socks.ID)
-	require.Equal(t, "proxy", socks.Name)
+	require.True(t, socks.Autostart)
 	require.Equal(t, InboundPortFirst, socks.Port)
 	require.Equal(t, 1, socks.Slot())
 	require.Equal(t, ViaRouter, socks.Outbound)
@@ -182,7 +181,6 @@ func TestAddInbound_Invalid(t *testing.T) {
 		{Inbound{Type: "http"}, "unexpected inbound type 'http'"},
 		{Inbound{Type: TypeSocks5, ID: "OpenVPN 1"}, "ID 'OpenVPN 1' already exists"},
 		{Inbound{Type: TypeSocks5, ID: "bad/id"}, "invalid ID 'bad/id'"},
-		{Inbound{Type: TypeSocks5, Name: strings.Repeat("n", 97)}, "name or group is too long"},
 		{Inbound{Type: TypeSocks5, Port: 7800}, "port (7800) is used by inbound 'OpenVPN 1'"},
 		{Inbound{Type: TypeSocks5, Port: 7899}, "invalid port (7899), expected 7800..7898"},
 		{Inbound{Type: TypeSocks5, Outbound: "missing"}, "outbound 'missing' does not exist"},
@@ -294,10 +292,10 @@ func TestAddOutbound_Defaults(t *testing.T) {
 	{
 		require.NoError(t, config.RemoveOutbound("SOCKS5 1"))
 		outbound, err := config.AddOutbound(Outbound{Type: TypeHost, ID: " Office uplink ",
-			Name: " main ", Socks5: &Socks5Options{}})
+			Autostart: true, Socks5: &Socks5Options{}})
 		require.NoError(t, err)
 		require.Equal(t, "Office uplink", outbound.ID)
-		require.Equal(t, "main", outbound.Name)
+		require.True(t, outbound.Autostart)
 		require.Equal(t, 2, outbound.Slot)
 		require.Nil(t, outbound.Socks5)
 		require.Equal(t, "HOST 2", config.NextID(TypeLabel(TypeHost)))
@@ -314,7 +312,6 @@ func TestAddOutbound_Invalid(t *testing.T) {
 		{Outbound{Type: TypeHost, ID: "HOST 1"}, "ID 'HOST 1' already exists"},
 		{Outbound{Type: TypeHost, ID: "a,b"}, "invalid ID 'a,b'"},
 		{Outbound{Type: TypeHost, ID: "direct"}, "reserved ID 'direct'"},
-		{Outbound{Type: TypeHost, Group: string(make([]byte, 49))}, "name or group is too long"},
 		{Outbound{Type: TypeHost, Host: &HostOptions{Mode: "auto"}}, "unexpected host mode 'auto'"},
 		{Outbound{Type: TypeHost, Host: &HostOptions{Mode: HostInterface, Interface: "bad name"}},
 			"invalid interface name 'bad name'"},
@@ -613,8 +610,10 @@ func TestImport_Backup(t *testing.T) {
 		require.Equal(t, "Fallback 1", target.Settings.DefaultTarget)
 		require.Equal(t, "secret", target.Secret)
 		require.Len(t, target.Users, 1)
-		backup.Outbounds[0].Name = "changed"
-		require.Empty(t, target.Outbounds[0].Name)
+		statistics := backup.Outbounds[0].Statistics
+		backup.Outbounds[0].Statistics = !statistics
+		require.Equal(t, statistics, target.Outbounds[0].Statistics)
+		backup.Outbounds[0].Statistics = statistics
 	}
 	{
 		target := Default()
@@ -796,6 +795,25 @@ func TestOpen_Migrates(t *testing.T) {
 	require.Equal(t, "same", snapshot.Routes[1].ID)
 	require.Equal(t, "Route 2", snapshot.Routes[2].ID)
 	require.True(t, snapshot.Settings.Autostart)
+	require.True(t, snapshot.Outbounds[0].Autostart)
+	{
+		current := `{"version":6,"secret":"s","settings":{"mixed_port":7890,"bind_address":"*",` +
+			`"default_target":"DIRECT","log_level":"warning","probe_target":"1.1.1.1:443",` +
+			`"check_interval":30,"autostart":true},"users":[],"outbounds":[{"id":"HOST 1",` +
+			`"type":"host","slot":1,"enabled":true,"autostart":false,"name":"old",` +
+			`"group":"old","host":{"mode":"default"}}]}`
+		require.NoError(t, os.WriteFile(filepath.Join(directory, fileName), []byte(current),
+			0o600))
+		store, err := Open(directory)
+		require.NoError(t, err)
+		require.False(t, store.Snapshot().Outbounds[0].Autostart)
+		require.NoError(t, store.Update(func(*Config) error {
+			return nil
+		}))
+		data, err := os.ReadFile(filepath.Join(directory, fileName))
+		require.NoError(t, err)
+		require.NotContains(t, string(data), `"group"`)
+	}
 	{
 		current := `{"version":5,"secret":"s","settings":{"mixed_port":7890,"bind_address":"*",` +
 			`"default_target":"DIRECT","log_level":"warning","probe_target":"1.1.1.1:443",` +
@@ -924,10 +942,10 @@ func TestUpdateInbound_Identity(t *testing.T) {
 func TestUpdateOutbound_Identity(t *testing.T) {
 	config := makeConfig(t)
 	require.NoError(t, config.UpdateOutbound("SOCKS5 1", Outbound{Type: TypeHost, Slot: 77,
-		Name: "renamed", Socks5: &Socks5Options{Server: "10.0.0.9", Port: 1081}}))
+		Autostart: true, Socks5: &Socks5Options{Server: "10.0.0.9", Port: 1081}}))
 	outbound, found := config.FindOutbound("SOCKS5 1")
 	require.True(t, found)
-	require.Equal(t, Outbound{ID: "SOCKS5 1", Type: TypeSocks5, Slot: 2, Name: "renamed",
+	require.Equal(t, Outbound{ID: "SOCKS5 1", Type: TypeSocks5, Slot: 2, Autostart: true,
 		Socks5: &Socks5Options{Server: "10.0.0.9", Port: 1081}}, outbound)
 	require.ErrorContains(t, config.UpdateOutbound("SOCKS5 1", Outbound{}), "invalid server address")
 	require.ErrorContains(t, config.UpdateOutbound("missing", Outbound{}), "does not exist")

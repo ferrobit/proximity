@@ -106,8 +106,8 @@ func internalNew(options Options) (*Server, error) {
 	home := filepath.Join(options.ConfigPath, "mihomo")
 	server.tracker = router.NewTracker(filepath.Join(options.ConfigPath, "state.json"))
 	if server.manager, err = link.NewManager(link.Options{Directory: options.RunPath,
-		Executable: options.Executable, Tools: options.Tools, HostNetwork: options.HostNetwork,
-		Changed: server.notify}); err != nil {
+		StateDir: options.ConfigPath, Executable: options.Executable, Tools: options.Tools,
+		HostNetwork: options.HostNetwork, Changed: server.notify}); err != nil {
 		return nil, err
 	} else if server.mihomo, err = router.NewMihomo(options.MihomoBinary, home,
 		filepath.Join(options.RunPath, "mihomo.sock"), server.print); err != nil {
@@ -302,6 +302,7 @@ func (server *Server) synchronize() {
 	if !server.options.HostNetwork || !snapshot.Settings.Capture || !running {
 		server.capture()
 	}
+	server.manager.SetActive(running, snapshot)
 	server.manager.Apply(snapshot.Outbounds, snapshot.Settings)
 	links := server.manager.Status()
 	for _, outbound := range snapshot.Outbounds {
@@ -320,16 +321,19 @@ func (server *Server) synchronize() {
 			server.options.Logf("routes of '%v' changed (%v)", outbound.ID, len(status.Routes))
 		}
 	}
-	if snapshot = server.store.Snapshot(); running {
-		server.manager.ApplyInbounds(snapshot)
-	} else {
-		server.manager.ApplyInbounds(config.Config{Settings: snapshot.Settings})
-	}
+	snapshot = server.store.Snapshot()
+	server.manager.ApplyInbounds(snapshot)
 	server.tracker.SetCollected(snapshot.Outbounds)
 	server.tracker.SetInbounds(snapshot.Inbounds)
 	server.tracker.SetLimits(snapshot.Settings.UnreachableLimit,
 		time.Duration(snapshot.Settings.UnreachableLifetime)*time.Second)
-	data, warnings, err := router.Generate(snapshot, links, router.Options{
+	generated, serving := snapshot.Clone(), server.manager.Serving()
+	for index, inbound := range generated.Inbounds {
+		if !serving[inbound.ID] && generated.InboundProblem(inbound) == "" {
+			generated.Inbounds[index].Enabled = false
+		}
+	}
+	data, warnings, err := router.Generate(generated, links, router.Options{
 		Socket: server.mihomo.Socket(), ProxyBind: server.options.ProxyBind,
 		Capture: server.options.HostNetwork && snapshot.Settings.Capture})
 	if err == nil && running {
