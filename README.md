@@ -20,7 +20,7 @@
 </p>
 
 <p align="center">
-  <img src="docs/images/dashboard.png" alt="Proximity dashboard: outbound status, live throughput and connections charts, unreachable destinations" width="100%">
+  <img src="docs/images/connection-map.png" alt="Proximity connection map: sources, router, routes, fallbacks and outbounds with live state and traffic" width="100%">
 </p>
 
 ---
@@ -77,6 +77,7 @@ port **8899**.
 | 📥 **Inbounds** | SOCKS5 proxy servers and OpenVPN servers on ports 7800–7898 with their own users, optional anonymous access, TLS / TOTP, generated keys and certificates, one-click client configuration export; traffic goes to the host connection, to the routes or to a chosen outbound |
 | 📡 **VPN routes** | Routes pushed by OpenVPN appear as a read-only *provided* route you can enable with one switch |
 | 🩺 **Monitoring** | Link state, latency, configurable checks, retries and reconnects; states `good` / `connecting` / `reconnecting` / `failed` / `stopped`; start, stop and restart of outbounds and inbounds with state and logs kept across restarts; per-outbound connection log with auto-scroll |
+| 🗺️ **Connection map** | Live diagram of sources, router, routes, fallbacks and outbounds with state colors and animated traffic; hover to trace a path, click to edit settings; zoom, fit to screen and full screen |
 | 📈 **Statistics** | Upload/download totals and rates per outbound, interactive throughput chart (5 min / 15 min / 1 h) with an active connections chart beside it, list of unreachable destinations with reason and matched rule |
 | 🛡️ **Transparent mode** | Linux: captures all new outgoing host connections through a TUN device, hijacks DNS (fake-IP), sniffs TLS SNI / HTTP Host / QUIC, leaves LAN, Docker and inbound traffic alone |
 | 👥 **Access control** | Administrator, Operator, User and optional anonymous dashboard; secrets are hidden from read-only users |
@@ -87,11 +88,12 @@ port **8899**.
 
 | | |
 |---|---|
+| ![Dashboard](docs/images/dashboard.png) **Dashboard** — summary cards, live throughput and connections charts | ![Connection map popup](docs/images/connection-map-popover.png) **Connection map** — details, on/off and start/stop of any item; click to edit |
 | ![Outbounds](docs/images/outbounds.png) **Outbounds** — every exit with its state, latency and connection details | ![Routes](docs/images/routes.png) **Routes** — ordered rules with comments, overlap warnings and VPN-provided routes |
 | ![OpenVPN outbound](docs/images/outbound-openvpn.png) **OpenVPN outbound** — upload or edit `.ovpn`, credentials, TOTP | ![Connection log](docs/images/outbound-log.png) **Connection log** — live, auto-scrolling log of a tunnel |
 | ![Route editor](docs/images/route-dialog.png) **Route editor** — normalized preview before saving | ![Fallbacks](docs/images/fallbacks.png) **Fallbacks** — proxy groups in priority order, at the bottom of the Routes page |
 | ![Inbounds](docs/images/inbounds.png) **Inbounds** — SOCKS5 and OpenVPN servers with users, state and traffic | ![Client configuration](docs/images/inbound-export.png) **Client configuration** — preview, copy or download per user |
-| ![Settings](docs/images/settings.png) **Settings** — router, users, backup and restore | ![Dark theme](docs/images/dashboard-dark.png) **Dark theme** |
+| ![Settings](docs/images/settings.png) **Settings** — router service, router, users, backup and restore | ![Dark theme](docs/images/connection-map-dark.png) **Dark theme** |
 
 More screenshots with explanations are in the [User guide](docs/user-guide.md).
 
@@ -268,7 +270,7 @@ Full reference: [Routes](docs/routes.md).
 | Role | Rights |
 |---|---|
 | Administrator | everything, including users and settings |
-| Operator | edit Outbounds, Fallbacks and Routes; export and import the configuration |
+| Operator | edit outbounds, inbounds, fallbacks and routes, start and stop them and the router; export and import the configuration |
 | User | view only (passwords and keys are hidden) |
 | Anonymous | Dashboard only (can be disabled in Settings) |
 
@@ -310,14 +312,16 @@ repository itself is not changed. Component versions are Docker build arguments 
 
 ## Project status
 
-Version **1.2.0**. 99 Go tests pass, total statement coverage 93.2% (81.4–99.1% per
+Version **1.2.0**. 105 Go tests pass, total statement coverage 93.5% (81.4–99.1% per
 package). Transparent capture has been verified in isolated network namespaces and in a
 real Docker image: DIRECT, REJECT, domain → OpenVPN / AmneziaWG, LAN and inbound
 connections untouched, `rp_filter=1`, container stop and kill. Inbounds have been verified
 with real mihomo 1.19.34 and OpenVPN 2.6 in network namespaces: SOCKS5 authentication and
 TLS, an OpenVPN client with password + TOTP (appended and `static-challenge`), anonymous
 clients, token renegotiation, session kill on user change, traffic through the router,
-DNS hijack, traffic counters.
+DNS hijack, traffic counters. The web UI, including the connection map, has been checked in
+Chrome in the light and dark themes with a live OpenVPN tunnel, SOCKS5 and HTTP proxies and
+both inbound types.
 
 Not verified yet:
 

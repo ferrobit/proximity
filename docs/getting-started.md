@@ -140,6 +140,8 @@ curl -x socks5h://127.0.0.1:7899 https://ifconfig.me
 2. **Routes → Router configuration** shows the rules exactly as mihomo received them.
 3. Connections that failed (refused, timeout, DNS) are listed under **Unreachable
    routes** on the Dashboard with the outbound and the rule that matched.
+4. **Dashboard → Connection map** shows the whole chain at a glance: moving dashes mark
+   the routes and outbounds that carry traffic now, red items are down.
 
 ## Environment variables
 

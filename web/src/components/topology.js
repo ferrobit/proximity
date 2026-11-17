@@ -3,7 +3,7 @@ import { inboundLabels, rate, stateLabels, typeLabels } from '../format'
 export const nodeHeight = 62
 export const columnTitles = ['Sources', 'Router', 'Routes', 'Fallbacks', 'Outbounds', 'Internet']
 
-const columnWidths = [200, 170, 200, 180, 220, 156]
+const columnWidths = [212, 170, 222, 180, 224, 156]
 const gap = 14
 const pad = 22
 const header = 40

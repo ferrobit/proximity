@@ -1,11 +1,14 @@
 # Troubleshooting
 
-Start with three places in the UI — they answer most questions:
+Start with four places in the UI — they answer most questions:
 
-1. **Outbounds → 📄 Connection log** of the outbound in question.
-2. **Dashboard → Unreachable routes**: destination, reason, the outbound used and the rule
+1. **Dashboard → Connection map**: red items are down or failed, gray ones are disabled or
+   stopped. Hover over a route to see which outbound it really reaches (through a fallback,
+   too) and whether traffic flows there.
+2. **Outbounds → 📄 Connection log** of the outbound in question.
+3. **Dashboard → Unreachable routes**: destination, reason, the outbound used and the rule
    that matched.
-3. **Routes → Router configuration**: the rules exactly as mihomo received them.
+4. **Routes → Router configuration**: the rules exactly as mihomo received them.
 
 And the container log:
 

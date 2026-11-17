@@ -308,6 +308,11 @@ base32 TOTP key.
   connections) is added to an in-memory history of 720 samples (1 hour). The Dashboard
   throughput and connections charts request only new
   samples (`/api/history?since=…`). History is not persisted; totals are.
+- The Dashboard **connection map** has no API of its own: every 3 s the browser reads
+  `/api/outbounds`, `/api/inbounds`, `/api/routes`, `/api/fallbacks` and `/api/targets`,
+  builds the graph (sources → router → routes → fallbacks → outbounds → Internet) and lays
+  it out in columns. An edge carries traffic when the outbound (or inbound) at its end has
+  a non-zero rate; a fallback uses its first member in good state.
 - mihomo's log stream (`/logs?level=info`) is parsed for dial errors. Each error is
   classified (`refused`, `timeout`, `no route`, `unreachable`, `dns`, …) and stored with the
   destination, outbound, matched rule, count and first/last time. The list is bounded by

@@ -129,7 +129,9 @@ repository every second, so edits in `web/src` reload the page. Run the Go binar
 |---|---|
 | `src/App.vue` | layout, header statistics, navigation, sign-in and first-run dialogs, theme |
 | `src/api.js` | fetch wrapper, session state, role helpers |
-| `src/views/*.vue` | one view per section: `Routes.vue` shows `Fallbacks.vue` at the bottom, `Settings.vue` shows `Users.vue` as its second section; `OutboundDialog.vue` and `InboundDialog.vue` are the editors |
+| `src/views/*.vue` | one view per section: `Dashboard.vue` has the Overview, Connection map, Outbounds and Unreachable routes tabs, `Routes.vue` shows `Fallbacks.vue` at the bottom, `Settings.vue` shows `Users.vue` as its third section; `OutboundDialog.vue`, `InboundDialog.vue`, `RouteDialog.vue` and `FallbackDialog.vue` are the editors, shared by the section pages and the connection map |
+| `src/components/ConnectionMap.vue` | connection map: rendering, hover highlight, popups, edit dialogs, zoom, fit to screen and full screen |
+| `src/components/topology.js` | builds the map graph from the API data and lays it out in columns (pure functions) |
 | `src/components/TrafficChart.vue` | dependency-free SVG throughput chart |
 | `src/components/ConnectionsChart.vue` | dependency-free SVG chart of active connections |
 | `src/components/history.js` | shared `/api/history` loader for both Dashboard charts |
@@ -143,22 +145,23 @@ make cover    # with coverage per package; profile in ../proximity-build/coverag
 go test -race ./...   # by hand: uses the default Go caches
 ```
 
-Current state (version 1.2.0): **99 tests, all passing, 93.2% total statement coverage.**
+Current state (version 1.2.0): **105 tests, all passing, 93.5% total statement coverage.**
 
 | Package | Coverage |
 |---|---|
 | `cmd/proximity` | 81.4% |
 | `internal/auth` | 94.1% |
-| `internal/config` | 95.7% |
-| `internal/link` | 88.2% |
+| `internal/config` | 95.8% |
+| `internal/link` | 89.4% |
 | `internal/router` | 96.5% |
 | `internal/rules` | 99.1% |
-| `internal/server` | 94.0% |
+| `internal/server` | 94.2% |
 | `internal/wgconf` | 97.9% |
 
 Tests use fake tools (`ip`, `openvpn`, `iptables`, `ping` …) and a fake mihomo, so they run
 without root and without network access. `TestManager_Inbounds` binds one free TCP port in
-7800…7898 on the loopback address. Assertions use `testify/require`.
+7800…7898 on the loopback address. `TestManager_Capture` expects that the machine has no
+`proximity_tun` interface, so stop a locally running Proximity before `make test`. Assertions use `testify/require`.
 
 ## Code style
 

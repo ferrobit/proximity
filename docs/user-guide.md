@@ -2,12 +2,13 @@
 
 A tour of every page of the Proximity web UI (<http://localhost:8899>).
 
-> Screenshots were taken from a real Proximity 1.2.0 instance with live OpenVPN and
-> AmneziaWG tunnels, SOCKS5/HTTP proxies and generated traffic. Host names such as
-> `corp.example` are placeholders.
+> Screenshots were taken from a running Proximity 1.2.0 instance with a live OpenVPN
+> tunnel, SOCKS5 and HTTP proxies, an OpenVPN and a SOCKS5 inbound and generated traffic.
+> Host names such as `corp.example` and `proxy.example` are placeholders.
 
 - [Layout](#layout)
 - [Dashboard](#dashboard)
+  - [Connection map](#connection-map)
 - [Outbounds](#outbounds)
   - [HOST Internet](#host-internet)
   - [SOCKS5 Proxy](#socks5-proxy)
@@ -37,9 +38,14 @@ All lists refresh themselves; the **Refresh** buttons force an immediate reload.
 
 ![Dashboard](images/dashboard.png)
 
-The dashboard has tabs: **Overview**, **Connection map**, **Outbounds** and
-**Unreachable routes** (the map and the unreachable routes only for signed-in users). The selected tab is
-remembered in the browser.
+The dashboard has four tabs; the selected one is remembered in the browser:
+
+| Tab | Contents |
+|---|---|
+| **Overview** | Summary cards, the throughput and connections charts |
+| **Connection map** | A live diagram of sources, routes, fallbacks and outbounds, see [Connection map](#connection-map) (signed-in users) |
+| **Outbounds** | State, latency and traffic of every outbound; the tab shows *good / total* |
+| **Unreachable routes** | Connections that failed, with the reason and the matched rule (signed-in users); the tab shows their number |
 
 **Overview** — **cards** at the top: outbounds (good / total, enabled), routes (and the number
 of active router rules), total uploaded and downloaded bytes with the current rate, and
@@ -79,6 +85,9 @@ connections, time since the last state change.
 
 Operators can **Clear** the list.
 
+When *Anonymous users can view the dashboard* is on, the Dashboard is visible without
+signing in: only the **Overview** and **Outbounds** tabs, with secrets hidden.
+
 ### Connection map
 
 ![Connection map](images/connection-map.png)
@@ -102,7 +111,10 @@ the Internet gets thicker with the rate.
 
 - Hover over an item to highlight everything that leads to it and everything it leads to,
   and to see its details. The popup also has an **on/off** switch and, for outbounds,
-  inbounds and the router, **Start**, **Stop** and **Restart**.
+  inbounds and the router, **Start**, **Stop** and **Restart**:
+
+  ![Connection map popup](images/connection-map-popover.png)
+
 - Click an outbound, inbound, route, fallback or *Everything else* to open its settings
   dialog (operators and administrators). Changes are applied at once and the map is
   redrawn. Click the router or a source to open Settings.
@@ -116,8 +128,10 @@ the Internet gets thicker with the rate.
 - **Full screen** (the last button) spreads the map over the whole screen; dialogs and
   popups work there too. **Esc** or the same button returns to the dashboard.
 
-When *Anonymous users can view the dashboard* is on, the Dashboard is visible without
-signing in (secrets and the unreachable routes list are hidden).
+Each item shows a colored icon of its type, the ID, a short description (remote server,
+directive and first parameter, port) and a metric on the right: latency for outbounds,
+`#N` for routes, the number of connected clients for OpenVPN inbounds. The map is redrawn
+every 3 seconds.
 
 ## Outbounds
 
@@ -186,7 +200,7 @@ Proxy credentials and *TLS to proxy (HTTPS proxy)* are optional.
 
 Tabs: **General**, **OpenVPN**, **Authentication**, **Monitoring**.
 
-**OpenVPN** tab:
+**OpenVPN** tab (above):
 
 - **VPN configuration file** — *Upload .ovpn file* or paste/edit the text; inline
   `<ca>`, `<cert>`, `<key>`, `<tls-auth>` blocks are supported.
@@ -194,6 +208,8 @@ Tabs: **General**, **OpenVPN**, **Authentication**, **Monitoring**.
   outbound through the VPN's DNS.
 
 **Authentication** tab:
+
+![OpenVPN outbound, Authentication tab](images/outbound-openvpn-auth.png)
 
 - **User name / User password** — answered automatically when the server asks.
 - **OTP key** — base32 TOTP secret; *OTP code usage* is either *Answer the CHALLENGE
@@ -260,6 +276,9 @@ sets the default target.
 
   ![Router configuration](images/router-config.png)
 
+Routes, fallbacks and the default target can also be edited from the
+[Connection map](#connection-map): click a route, a fallback or *Everything else*.
+
 The full reference, with all directives, normalization rules and recipes, is in
 [Routes](routes.md).
 
@@ -321,7 +340,7 @@ or deleted, or when anonymous connections are off and there is no enabled user.
 
 ### OpenVPN
 
-![OpenVPN inbound](images/inbound-openvpn.png)
+![OpenVPN inbound, Server tab](images/inbound-openvpn.png)
 
 The OpenVPN inbound dialog has the tabs **General**, **Server**, **Clients**, **Security**,
 **Keys and certificates** and **Users**. When a field is invalid, saving opens its tab.
@@ -429,5 +448,7 @@ The 💡 button in the header switches between light and dark themes; the choice
 in the browser.
 
 ![Dark theme](images/dashboard-dark.png)
+
+![Connection map in the dark theme](images/connection-map-dark.png)
 
 ![Outbounds in the dark theme](images/outbounds-dark.png)

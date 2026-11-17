@@ -80,12 +80,12 @@
               <div class="node-text">
                 <div class="node-head">
                   <span class="node-title"><LockOutlined v-if="node.provided" class="node-flag" />{{ node.title }}</span>
-                  <span v-if="node.unused" class="node-tag">unused</span>
-                  <span class="node-metric">{{ node.metric }}</span>
+                    <span class="node-metric">{{ node.metric }}</span>
                   <span class="node-dot" />
                 </div>
                 <div class="node-subtitle">{{ node.subtitle }}</div>
                 <div v-if="node.extra" class="node-extra">{{ node.extra }}</div>
+                <div v-else-if="node.unused" class="node-extra"><span class="node-tag">unused</span></div>
               </div>
             </div>
           </a-popover>
@@ -446,14 +446,14 @@ onUnmounted(() => {
   color: #fff; font-size: 17px; }
 .node-text { flex: 1; min-width: 0; line-height: 1.3; }
 .node-head { display: flex; align-items: center; gap: 5px; }
-.node-title { flex: 1; min-width: 0; font-weight: 600; font-size: 13px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.node-title { flex: 0 1 auto; min-width: 0; font-weight: 600; font-size: 13px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .node-subtitle { font-size: 11.5px; color: var(--text-secondary); white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
   font-family: var(--font-mono); }
 .node-flag { margin-right: 4px; color: #d4a106; }
-.node-tag { flex: none; padding: 0 5px; border-radius: 4px; font-size: 10px; font-weight: 500; background: rgba(250, 173, 20, .18); color: #d48806; }
+.node-tag { flex: none; padding: 0 4px; border-radius: 4px; font-size: 9.5px; font-weight: 500; background: rgba(250, 173, 20, .18); color: #d48806; }
 .node-dot { flex: none; width: 8px; height: 8px; border-radius: 50%; background: var(--state); }
 .node-busy .node-dot { animation: pulse 1.2s ease-in-out infinite; }
-.node-metric { flex: none; font-size: 11px; color: var(--text-secondary); white-space: nowrap; }
+.node-metric { flex: none; margin-left: auto; font-size: 11px; color: var(--text-secondary); white-space: nowrap; }
 .node-extra { font-size: 11px; color: var(--accent); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; font-variant-numeric: tabular-nums; }
 @keyframes pulse { 50% { opacity: .25; } }
 .port { position: absolute; top: 50%; width: 9px; height: 9px; margin-top: -4.5px; border-radius: 50%; background: var(--node-surface);
