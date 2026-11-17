@@ -2,6 +2,35 @@
   <div>
     <h2 class="pane-title"><SettingOutlined /> Settings</h2>
     <div>
+      <h3 class="pane-subtitle"><PoweroffOutlined /> Router service</h3>
+      <a-card size="small" class="settings-card">
+        <div class="service">
+          <div class="service-state">
+            <a-badge :status="service.badge" />
+            <b>{{ service.text }}</b>
+            <span v-if="router && router.running && router.version" class="muted">mihomo {{ router.version }}</span>
+            <span v-if="router && router.restarts" class="muted">· unexpected exits: {{ router.restarts }}</span>
+          </div>
+          <a-space v-if="canEdit()" wrap>
+            <a-button type="primary" :disabled="!router || router.running || !!acting" :loading="acting === 'start'" @click="control('start')">
+              <template #icon><PlayCircleOutlined /></template>Start</a-button>
+            <a-popconfirm ok-text="Stop" ok-type="danger" :disabled="!router || router.stopped || !!acting" @confirm="control('stop')"
+              title="Stop the router?" description="The proxy port and inbounds stop working, host traffic is no longer captured.">
+              <a-button danger :disabled="!router || router.stopped || !!acting" :loading="acting === 'stop'">
+                <template #icon><PauseCircleOutlined /></template>Stop</a-button>
+            </a-popconfirm>
+            <a-button :disabled="!router || !!acting" :loading="acting === 'restart'" @click="control('restart')">
+              <template #icon><ReloadOutlined /></template>Restart</a-button>
+          </a-space>
+        </div>
+        <a-alert v-if="service.problem" type="error" show-icon :message="service.problem" class="service-alert" />
+        <div class="service-autostart">
+          <a-checkbox :checked="form.autostart" :disabled="!isAdmin() || saving" @change="setAutostart($event.target.checked)">Start the router when the container starts</a-checkbox>
+          <div class="muted service-hint">The router starts only if it was running when the container stopped. When the option is off, the router stays stopped after a container restart.</div>
+        </div>
+      </a-card>
+    </div>
+    <div class="pane-section">
       <h3 class="pane-subtitle"><DeploymentUnitOutlined /> Router</h3>
       <a-card size="small" class="settings-card">
         <a-form ref="formRef" layout="vertical" :model="form" :disabled="!isAdmin()">
@@ -69,16 +98,18 @@
 </template>
 
 <script setup>
-import { onMounted, reactive, ref } from 'vue'
+import { computed, onMounted, reactive, ref } from 'vue'
 import { message, Modal } from 'ant-design-vue'
 import {
-  ApiOutlined, DatabaseOutlined, DeploymentUnitOutlined, DownloadOutlined, HeartOutlined, SaveOutlined, SettingOutlined,
-  StopOutlined, UploadOutlined
+  ApiOutlined, DatabaseOutlined, DeploymentUnitOutlined, DownloadOutlined, HeartOutlined, PauseCircleOutlined, PlayCircleOutlined,
+  PoweroffOutlined, ReloadOutlined, SaveOutlined, SettingOutlined, StopOutlined, UploadOutlined
 } from '@ant-design/icons-vue'
 import { api, canEdit, isAdmin, loadSession, session } from '../api'
 import Users from './Users.vue'
 
+const props = defineProps({ overview: { type: Object, default: null } })
 const emit = defineEmits(['refresh'])
+const actionResults = { start: 'Router started', stop: 'Router stopped', restart: 'Router restarted' }
 const lifetimeUnits = [
   { value: 60, label: 'minutes' },
   { value: 3600, label: 'hours' },
@@ -88,7 +119,20 @@ const formRef = ref()
 const busy = ref(false)
 const exporting = ref(false)
 const importing = ref(false)
+const saving = ref(false)
+const acting = ref('')
+const router = computed(() => (props.overview ? props.overview.router : null))
+const service = computed(() => {
+  const state = router.value
+  const failure = props.overview ? props.overview.failure : ''
+  if (!state) return { badge: 'processing', text: 'Loading…', problem: '' }
+  if (state.running && failure) return { badge: 'warning', text: 'Running, the configuration is not applied', problem: failure }
+  if (state.running) return { badge: 'success', text: 'Running', problem: '' }
+  if (state.stopped) return { badge: 'default', text: 'Stopped', problem: '' }
+  return { badge: 'error', text: 'Not running', problem: failure || state.message }
+})
 const form = reactive({
+  autostart: true,
   mixed_port: 7899, bind_address: '*', default_target: 'DIRECT', log_level: 'warning', ipv6: false, anonymous_dashboard: true,
   connectivity_checks: true, probe_target: '1.1.1.1:443', check_interval: 30, capture: true, unreachable_limit: 100,
   unreachable_lifetime: 86400, lifetime: 1, lifetime_unit: 86400
@@ -129,7 +173,7 @@ async function save() {
     const { lifetime, lifetime_unit: unit, ...settings } = form
     await api.put('/api/settings', {
       ...settings, default_target: current.default_target, anonymous_dashboard: current.anonymous_dashboard,
-      unreachable_lifetime: lifetime * unit
+      autostart: current.autostart, unreachable_lifetime: lifetime * unit
     })
     await reload()
     emit('refresh')
@@ -138,6 +182,39 @@ async function save() {
     message.error(error.message)
   } finally {
     busy.value = false
+  }
+}
+
+async function control(action) {
+  acting.value = action
+  try {
+    const result = await api.post(`/api/router/${action}`)
+    if (result.failure) {
+      message.error(result.failure)
+    } else if (!result.completed) {
+      message.warning('The router is still processing the command')
+    } else {
+      message.success(actionResults[action])
+    }
+    emit('refresh')
+  } catch (error) {
+    message.error(error.message)
+  } finally {
+    acting.value = ''
+  }
+}
+
+async function setAutostart(enabled) {
+  saving.value = true
+  try {
+    const current = await api.get('/api/settings', true)
+    await api.put('/api/settings', { ...current, autostart: enabled })
+    form.autostart = enabled
+    message.success(enabled ? 'Autostart enabled' : 'Autostart disabled')
+  } catch (error) {
+    message.error(error.message)
+  } finally {
+    saving.value = false
   }
 }
 
@@ -197,4 +274,9 @@ onMounted(load)
 
 <style scoped>
 .settings-card { max-width: 860px; }
+.service { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; }
+.service-state { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.service-alert { margin-top: 12px; }
+.service-autostart { margin-top: 12px; }
+.service-hint { margin: 4px 0 0 24px; font-size: 13px; }
 </style>

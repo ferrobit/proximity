@@ -26,6 +26,7 @@ type Settings struct {
 	Capture             bool   `json:"capture"`
 	UnreachableLimit    int    `json:"unreachable_limit"`
 	UnreachableLifetime int    `json:"unreachable_lifetime"`
+	Autostart           bool   `json:"autostart"`
 }
 
 type User struct {
@@ -175,8 +176,9 @@ const (
 	OTPAppend    = "append"
 )
 
-const currentVersion = 4
+const currentVersion = 5
 const inboundVersion = 4
+const autostartVersion = 5
 const maxSlot = 9999
 const defaultAttempts = 3
 const defaultReconnectTimeout = 10
@@ -204,7 +206,7 @@ func Default() Config {
 		DefaultTarget: TargetDirect, LogLevel: "warning", AnonymousDashboard: true,
 		ConnectivityChecks: true, ProbeTarget: defaultProbeTarget, CheckInterval: 30,
 		Capture: true, UnreachableLimit: defaultUnreachableLimit,
-		UnreachableLifetime: defaultUnreachableLifetime}, Users: []User{},
+		UnreachableLifetime: defaultUnreachableLifetime, Autostart: true}, Users: []User{},
 		Outbounds: []Outbound{}, Fallbacks: []Fallback{}, Routes: []Route{},
 		Inbounds: []Inbound{}}
 }

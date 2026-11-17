@@ -679,6 +679,20 @@ func TestImport_Backup(t *testing.T) {
 		require.NoError(t, target.Import(current, true))
 		require.Equal(t, []Inbound{}, target.Inbounds)
 	}
+	{
+		require.True(t, Default().Settings.Autostart)
+		current := config.Export(time.Now())
+		current.Settings.Autostart = false
+		target := Default()
+		require.NoError(t, target.Import(current, true))
+		require.False(t, target.Settings.Autostart)
+		previous := current
+		previous.Version = autostartVersion - 1
+		require.NoError(t, target.Import(previous, false))
+		require.False(t, target.Settings.Autostart)
+		require.NoError(t, target.Import(previous, true))
+		require.True(t, target.Settings.Autostart)
+	}
 }
 
 func TestInboundProblem_Reasons(t *testing.T) {
@@ -781,6 +795,17 @@ func TestOpen_Migrates(t *testing.T) {
 	require.Equal(t, "Route 1", snapshot.Routes[0].ID)
 	require.Equal(t, "same", snapshot.Routes[1].ID)
 	require.Equal(t, "Route 2", snapshot.Routes[2].ID)
+	require.True(t, snapshot.Settings.Autostart)
+	{
+		current := `{"version":5,"secret":"s","settings":{"mixed_port":7890,"bind_address":"*",` +
+			`"default_target":"DIRECT","log_level":"warning","probe_target":"1.1.1.1:443",` +
+			`"check_interval":30,"autostart":false},"users":[]}`
+		require.NoError(t, os.WriteFile(filepath.Join(directory, fileName), []byte(current),
+			0o600))
+		store, err := Open(directory)
+		require.NoError(t, err)
+		require.False(t, store.Snapshot().Settings.Autostart)
+	}
 }
 
 func TestRemoveOutbound_Cascade(t *testing.T) {

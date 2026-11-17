@@ -221,3 +221,36 @@ func TestNewMihomo_Problems(t *testing.T) {
 		mihomo.Close()
 	}
 }
+
+func TestStop_Lifecycle(t *testing.T) {
+	t.Setenv(fakeVariable, "1")
+	directory := t.TempDir()
+	socket := filepath.Join(directory, "mihomo.sock")
+	mihomo, err := NewMihomo(os.Args[0], directory, socket, func(string) {})
+	require.NoError(t, err)
+	defer mihomo.Close()
+	mihomo.Stop()
+	require.True(t, mihomo.State().Stopped)
+	data := makeDocument(t, socket, "warning", 7899)
+	require.NoError(t, mihomo.Apply(data))
+	require.Equal(t, State{Running: true, Version: "v0.0.1-fake",
+		Applied: mihomo.State().Applied}, mihomo.State())
+	mihomo.Stop()
+	state := mihomo.State()
+	require.False(t, state.Running)
+	require.True(t, state.Stopped)
+	require.Zero(t, state.Restarts)
+	require.Empty(t, state.Message)
+	require.Never(t, func() bool {
+		return mihomo.State().Running
+	}, restartDelay+500*time.Millisecond, 50*time.Millisecond)
+	_, err = mihomo.Connections()
+	require.Error(t, err)
+	require.NoError(t, mihomo.Apply(data))
+	state = mihomo.State()
+	require.True(t, state.Running)
+	require.False(t, state.Stopped)
+	connections, err := mihomo.Connections()
+	require.NoError(t, err)
+	require.Len(t, connections.Items, 1)
+}

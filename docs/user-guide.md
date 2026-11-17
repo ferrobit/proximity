@@ -304,7 +304,25 @@ of that user at once.
 
 ![Settings](images/settings.png)
 
-The page has three sections.
+The page has four sections.
+
+### Router service
+
+The state of the router (mihomo) and the **Start**, **Stop** and **Restart** buttons
+(Operator and Administrator). **Stop** asks for confirmation: the proxy port and the
+inbounds stop working and host traffic is no longer captured (it goes directly).
+Outbounds keep running. **Restart** starts a new mihomo process; it also starts a stopped
+router.
+
+*Start the router when the container starts* (Administrator, applied at once):
+
+| Option | Router state before the container restart | After the restart |
+|---|---|---|
+| on | running | running |
+| on | stopped | stopped |
+| off | any | stopped |
+
+The router state is saved to `router.json` in the settings folder.
 
 ### Router
 

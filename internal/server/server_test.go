@@ -103,6 +103,52 @@ func TestNew_Problems(t *testing.T) {
 	}
 }
 
+func TestNew_RouterState(t *testing.T) {
+	server := makeServer(t)
+	path := filepath.Join(server.options.ConfigPath, routerStateName)
+	saved := func() string {
+		data, err := os.ReadFile(path)
+		require.NoError(t, err)
+		return string(data)
+	}
+	reopen := func() *Server {
+		result, err := New(server.options)
+		require.NoError(t, err)
+		t.Cleanup(result.manager.Close)
+		return result
+	}
+	autostart := func(enabled bool) {
+		require.NoError(t, server.store.Update(func(config *config.Config) error {
+			config.Settings.Autostart = enabled
+			return nil
+		}))
+	}
+	require.True(t, server.active())
+	require.JSONEq(t, `{"running":true}`, saved())
+	require.NoError(t, os.WriteFile(path, []byte(`{"running":false}`), 0o600))
+	require.False(t, reopen().active())
+	require.JSONEq(t, `{"running":false}`, saved())
+	require.NoError(t, os.WriteFile(path, []byte(`{"running":true}`), 0o600))
+	autostart(false)
+	require.False(t, reopen().active())
+	require.JSONEq(t, `{"running":false}`, saved())
+	autostart(true)
+	require.False(t, reopen().active())
+	require.NoError(t, os.WriteFile(path, []byte(`{"running":true}`), 0o600))
+	require.True(t, reopen().active())
+	require.NoError(t, os.WriteFile(path, []byte("{"), 0o600))
+	require.True(t, reopen().active())
+	require.JSONEq(t, `{"running":true}`, saved())
+	{
+		require.NoError(t, os.Remove(path))
+		require.True(t, reopen().active())
+		require.NoError(t, os.Remove(path))
+		require.NoError(t, os.MkdirAll(filepath.Join(path, "blocked"), 0o700))
+		_, err := New(server.options)
+		require.ErrorContains(t, err, "server.New failed: failed to save router state")
+	}
+}
+
 func TestRun_Shutdown(t *testing.T) {
 	server := makeServer(t)
 	ctx, cancel := context.WithCancel(context.Background())
@@ -270,7 +316,7 @@ func TestServer_Backup(t *testing.T) {
 	code, exported, _ := call(t, server, admin, http.MethodGet, "/api/backup", nil)
 	require.Equal(t, http.StatusOK, code)
 	require.Equal(t, config.BackupFormat, exported["format"])
-	require.Equal(t, 4.0, exported["version"])
+	require.Equal(t, 5.0, exported["version"])
 	require.Len(t, exported["inbounds"], 1)
 	require.Len(t, exported["outbounds"], 1)
 	require.Len(t, exported["routes"], 1)
@@ -706,6 +752,73 @@ func TestServer_Rename(t *testing.T) {
 		require.Equal(t, "Work", snapshot.Routes[0].ID)
 		require.Equal(t, "Chain", snapshot.Routes[0].Target)
 	}
+}
+
+func TestServer_RouterControl(t *testing.T) {
+	server := makeServer(t)
+	admin := login(t, server, "admin", "secret123")
+	code, _, _ := call(t, server, admin, http.MethodPost, "/api/users",
+		userRequest{Name: "viewer", Role: config.RoleUser, Password: "viewer123",
+			Confirm: "viewer123"})
+	require.Equal(t, http.StatusOK, code)
+	viewer := login(t, server, "viewer", "viewer123")
+	code, _, _ = call(t, server, admin, http.MethodPost, "/api/inbounds", config.Inbound{
+		Type: config.TypeSocks5, Enabled: true, Anonymous: true})
+	require.Equal(t, http.StatusOK, code)
+	ctx, cancel := context.WithCancel(context.Background())
+	finished := make(chan struct{})
+	go func() {
+		server.loop(ctx)
+		close(finished)
+	}()
+	defer func() {
+		cancel()
+		<-finished
+	}()
+	server.notify()
+	control := func(action string) (map[string]any, map[string]any) {
+		code, body, _ := call(t, server, admin, http.MethodPost, "/api/router/"+action, nil)
+		require.Equal(t, http.StatusOK, code, body)
+		require.Equal(t, true, body["completed"])
+		return body["router"].(map[string]any), body
+	}
+	saved := func() string {
+		data, err := os.ReadFile(filepath.Join(server.options.ConfigPath, routerStateName))
+		require.NoError(t, err)
+		return string(data)
+	}
+	{
+		code, body, _ := call(t, server, viewer, http.MethodPost, "/api/router/stop", nil)
+		require.Equal(t, http.StatusForbidden, code)
+		require.Equal(t, "access denied for role 'user'", body["error"])
+		code, body, _ = call(t, server, admin, http.MethodPost, "/api/router/pause", nil)
+		require.Equal(t, http.StatusNotFound, code)
+		require.Equal(t, "unexpected router action 'pause'", body["error"])
+	}
+	state, body := control("stop")
+	require.Equal(t, true, state["stopped"])
+	require.Equal(t, false, state["running"])
+	require.Empty(t, body["failure"])
+	require.JSONEq(t, `{"running":false}`, saved())
+	require.False(t, server.active())
+	{
+		code, body, _ := call(t, server, viewer, http.MethodGet, "/api/dashboard", nil)
+		require.Equal(t, http.StatusOK, code)
+		require.Equal(t, true, body["router"].(map[string]any)["stopped"])
+		code, body, _ = call(t, server, admin, http.MethodGet, "/api/inbounds", nil)
+		require.Equal(t, http.StatusOK, code)
+		status := body["inbounds"].([]any)[0].(map[string]any)["status"].(map[string]any)
+		require.Equal(t, "router is stopped", status["message"])
+	}
+	state, body = control("start")
+	require.Equal(t, false, state["stopped"])
+	require.Contains(t, body["failure"], "failed to check router configuration")
+	require.JSONEq(t, `{"running":true}`, saved())
+	require.True(t, server.active())
+	state, body = control("restart")
+	require.Equal(t, false, state["stopped"])
+	require.Contains(t, body["failure"], "failed to check router configuration")
+	require.JSONEq(t, `{"running":true}`, saved())
 }
 
 func TestServer_Routes(t *testing.T) {

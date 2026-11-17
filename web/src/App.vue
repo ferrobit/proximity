@@ -164,6 +164,7 @@ const currentView = computed(() => {
   return (found || sections[0]).view
 })
 const routerBadge = computed(() => {
+  if (overview.value && overview.value.router.stopped) return 'default'
   if (!overview.value || !overview.value.router.running) return 'error'
   return overview.value.failure ? 'warning' : 'success'
 })

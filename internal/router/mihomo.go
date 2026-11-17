@@ -41,6 +41,7 @@ type Connections struct {
 
 type State struct {
 	Running  bool   `json:"running"`
+	Stopped  bool   `json:"stopped"`
 	Version  string `json:"version"`
 	Message  string `json:"message"`
 	Restarts int    `json:"restarts"`
@@ -112,6 +113,7 @@ func (mihomo *Mihomo) Apply(data []byte) error {
 	} else if bytes.Equal(data, mihomo.current) && mihomo.command != nil {
 		return nil
 	}
+	mihomo.state.Stopped = false
 	err := mihomo.apply(data)
 	if mihomo.state.Message = ""; err != nil {
 		mihomo.state.Message = err.Error()
@@ -138,21 +140,20 @@ func (mihomo *Mihomo) Watch(ctx context.Context, observe func(payload string)) {
 	}
 }
 
+func (mihomo *Mihomo) Stop() {
+	mihomo.mutex.Lock()
+	mihomo.state.Stopped, mihomo.state.Message = true, ""
+	command, finished := mihomo.command, mihomo.finished
+	mihomo.mutex.Unlock()
+	terminate(command, finished)
+}
+
 func (mihomo *Mihomo) Close() {
 	mihomo.mutex.Lock()
 	mihomo.closed = true
 	command, finished := mihomo.command, mihomo.finished
 	mihomo.mutex.Unlock()
-	if command == nil {
-		return
-	}
-	_ = command.Process.Signal(syscall.SIGTERM)
-	select {
-	case <-finished:
-	case <-time.After(5 * time.Second):
-		_ = command.Process.Kill()
-		<-finished
-	}
+	terminate(command, finished)
 }
 
 func (mihomo *Mihomo) apply(data []byte) error {
@@ -214,19 +215,19 @@ func (mihomo *Mihomo) start() error {
 func (mihomo *Mihomo) supervise(command *exec.Cmd, writer *io.PipeWriter, finished chan struct{}) {
 	err := command.Wait()
 	_ = writer.Close()
-	close(finished)
 	mihomo.mutex.Lock()
 	mihomo.command, mihomo.state.Running = nil, false
-	closed := mihomo.closed
+	closed := mihomo.closed || mihomo.state.Stopped
 	if !closed {
 		mihomo.state.Restarts++
 		mihomo.state.Message = fmt.Sprintf("router exited: %v", err)
 	}
 	mihomo.mutex.Unlock()
+	close(finished)
 	for !closed {
 		time.Sleep(restartDelay)
 		mihomo.mutex.Lock()
-		if closed = mihomo.closed || mihomo.command != nil; !closed {
+		if closed = mihomo.closed || mihomo.state.Stopped || mihomo.command != nil; !closed {
 			if err = mihomo.start(); err == nil {
 				mihomo.state.Message, closed = "", true
 			} else {
@@ -288,6 +289,19 @@ func (mihomo *Mihomo) request(method string, path string, body any, result any) 
 		return fmt.Errorf("failed to decode response '%v': %w", path, err)
 	}
 	return nil
+}
+
+func terminate(command *exec.Cmd, finished chan struct{}) {
+	if command == nil {
+		return
+	}
+	_ = command.Process.Signal(syscall.SIGTERM)
+	select {
+	case <-finished:
+	case <-time.After(5 * time.Second):
+		_ = command.Process.Kill()
+		<-finished
+	}
 }
 
 func lastLine(output []byte) string {

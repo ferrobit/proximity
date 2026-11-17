@@ -92,6 +92,8 @@ const (
 
 const anonymousName = "anonymous"
 
+var routerActions = []string{"start", "stop", "restart"}
+
 func redact(outbound config.Outbound) config.Outbound {
 	outbound = outbound.Clone()
 	if outbound.Socks5 != nil {
@@ -184,6 +186,7 @@ func (server *Server) register() {
 	server.handle("PUT /api/users/{name}", 3, server.updateUser)
 	server.handle("DELETE /api/users/{name}", 3, server.removeUser)
 	server.handle("GET /api/router/config", 2, server.getRouterConfig)
+	server.handle("POST /api/router/{action}", 2, server.controlRouter)
 	server.handle("GET /api/backup", 2, server.exportBackup)
 	server.handle("POST /api/backup", 2, server.importBackup)
 	server.mux.Handle("/", server.static())
@@ -193,6 +196,12 @@ func (server *Server) problems() ([]string, string) {
 	server.mutex.Lock()
 	defer server.mutex.Unlock()
 	return append([]string{}, server.warnings...), server.failure
+}
+
+func (server *Server) active() bool {
+	server.mutex.Lock()
+	defer server.mutex.Unlock()
+	return server.running
 }
 
 func (server *Server) capturing() bool {
@@ -594,6 +603,8 @@ func (server *Server) getInbounds(_ *http.Request, current session) (any, error)
 				Clients: []link.InboundClient{}}}
 		if status, found := states[inbound.ID]; found {
 			view.Status = status
+		} else if inbound.Enabled && !server.active() {
+			view.Status.Message = "router is stopped"
 		}
 		if current.level < 2 {
 			view.Inbound = redactInbound(inbound)
@@ -761,6 +772,23 @@ func (server *Server) removeUser(request *http.Request, current session) (any, e
 
 func (server *Server) getRouterConfig(_ *http.Request, _ session) (any, error) {
 	return map[string]string{"config": string(server.mihomo.Current())}, nil
+}
+
+func (server *Server) controlRouter(request *http.Request, current session) (any, error) {
+	action := request.PathValue("action")
+	if !slices.Contains(routerActions, action) {
+		return nil, fail(http.StatusNotFound, "unexpected router action '%v'", action)
+	}
+	sequence, err := server.control(action != "stop", action == "restart")
+	if err != nil {
+		return nil, err
+	}
+	server.options.Logf("router %v requested by '%v'", action, current.user.Name)
+	server.notify()
+	completed := server.await(sequence)
+	_, failure := server.problems()
+	return map[string]any{"router": server.mihomo.State(), "failure": failure,
+		"completed": completed}, nil
 }
 
 func (server *Server) exportBackup(_ *http.Request, _ session) (any, error) {

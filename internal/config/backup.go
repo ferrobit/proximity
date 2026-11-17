@@ -38,11 +38,6 @@ func (config *Config) Import(backup Backup, settings bool) error {
 		Inbounds: backup.Inbounds, Legacy: backup.Legacy}
 	source.adopt()
 	source = source.Clone()
-	target := source.Settings.DefaultTarget
-	if !settings {
-		source.Settings = config.Settings
-		source.Settings.DefaultTarget = target
-	}
 	for index := range source.Routes {
 		if source.Routes[index].Key != "" {
 			continue
@@ -52,7 +47,12 @@ func (config *Config) Import(backup Backup, settings bool) error {
 			source.Routes[index].Key = key
 		}
 	}
-	if source.migrate(); source.Outbounds == nil {
+	if source.migrate(); !settings {
+		target := source.Settings.DefaultTarget
+		source.Settings = config.Settings
+		source.Settings.DefaultTarget = target
+	}
+	if source.Outbounds == nil {
 		source.Outbounds = []Outbound{}
 	}
 	if source.Fallbacks == nil {

@@ -153,6 +153,16 @@ Empty key and certificate fields are generated on save.
 | `DELETE /api/routes/{key}` | 2 | Delete |
 | `POST /api/routes/{key}/move` | 2 | `{delta}` |
 | `GET /api/router/config` | 2 | `{config}` — current mihomo configuration |
+| `POST /api/router/start` | 2 | Start the router (mihomo, inbounds, host traffic capture) |
+| `POST /api/router/stop` | 2 | Stop the router |
+| `POST /api/router/restart` | 2 | Restart the mihomo process; starts a stopped router |
+
+Router actions wait until the change is applied (up to 30 s) and return
+`{router, failure, completed}`: `router` is the router state from the dashboard,
+`failure` is the error of the last configuration apply, `completed` is `false` when the
+wait timed out. The requested state is saved to `router.json` in the settings folder.
+The dashboard `router` object has `running` and `stopped` (stopped on request, not by a
+failure).
 
 ### Settings and backup
 
@@ -171,9 +181,13 @@ Settings object:
   "log_level": "warning", "ipv6": false, "anonymous_dashboard": true,
   "connectivity_checks": true, "probe_target": "1.1.1.1:443",
   "check_interval": 30, "capture": true,
-  "unreachable_limit": 100, "unreachable_lifetime": 86400
+  "unreachable_limit": 100, "unreachable_lifetime": 86400, "autostart": true
 }
 ```
+
+`autostart` — start the router when the container starts, but only if it was running
+when the container stopped. When it is `false`, the router always stays stopped after a
+restart. Configurations and backups older than version 5 get `true`.
 
 `unreachable_limit` (1…10000) and `unreachable_lifetime` (seconds, 60…31536000) bound the
 *Unreachable routes* list; omitted or zero values mean the defaults.

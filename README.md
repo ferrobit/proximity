@@ -285,6 +285,7 @@ Settings stay unchanged.
 |---|---|
 | `proximity.json` | users, outbounds, inbounds, fallbacks, routes, settings |
 | `state.json` | traffic counters and the list of unreachable destinations |
+| `router.json` | router state (running or stopped) for *Start the router when the container starts* |
 | `mihomo/config.yaml` | generated mihomo configuration (JSON, which is valid YAML) |
 
 > [!WARNING]

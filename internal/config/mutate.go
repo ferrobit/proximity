@@ -448,6 +448,9 @@ func (config *Config) migrate() {
 			config.Fallbacks[index].HealthCheck = true
 		}
 	}
+	if config.Version < autostartVersion {
+		config.Settings.Autostart = true
+	}
 	for index := range config.Routes {
 		route := &config.Routes[index]
 		if route.ID = strings.TrimSpace(route.ID); route.ID == "" ||

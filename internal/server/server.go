@@ -35,18 +35,27 @@ type Options struct {
 }
 
 type Server struct {
-	options  Options
-	store    *config.Store
-	manager  *link.Manager
-	mihomo   *router.Mihomo
-	tracker  *router.Tracker
-	dirty    chan struct{}
-	started  time.Time
-	mutex    sync.Mutex
-	warnings []string
-	failure  string
-	captured bool
-	mux      *http.ServeMux
+	options   Options
+	store     *config.Store
+	manager   *link.Manager
+	mihomo    *router.Mihomo
+	tracker   *router.Tracker
+	dirty     chan struct{}
+	started   time.Time
+	mutex     sync.Mutex
+	warnings  []string
+	failure   string
+	captured  bool
+	running   bool
+	restart   bool
+	requested int64
+	served    int64
+	statePath string
+	mux       *http.ServeMux
+}
+
+type routerState struct {
+	Running bool `json:"running"`
 }
 
 type session struct {
@@ -68,6 +77,9 @@ const pollInterval = 500 * time.Millisecond
 const measureInterval = 2 * time.Second
 const saveInterval = 30 * time.Second
 const failedLoginDelay = 700 * time.Millisecond
+const controlTimeout = 30 * time.Second
+const controlPoll = 50 * time.Millisecond
+const routerStateName = "router.json"
 
 var geodataFiles = []string{"geoip.metadb", "geosite.dat", "geoip.dat"}
 
@@ -111,9 +123,35 @@ func internalNew(options Options) (*Server, error) {
 			}
 		}
 	}
+	server.statePath = filepath.Join(options.ConfigPath, routerStateName)
+	running, err := readRouterState(server.statePath)
+	if err != nil {
+		options.Logf("%v", err)
+	}
+	autostart := store.Snapshot().Settings.Autostart
+	if !autostart {
+		options.Logf("router is stopped: autostart is disabled")
+	} else if !running {
+		options.Logf("router is stopped: it was stopped before the restart")
+	}
+	if _, err = server.control(running && autostart, false); err != nil {
+		return nil, err
+	}
 	store.Subscribe(server.notify)
 	server.register()
 	return server, nil
+}
+
+func readRouterState(path string) (bool, error) {
+	state := routerState{Running: true}
+	if data, err := os.ReadFile(path); errors.Is(err, os.ErrNotExist) {
+		return true, nil
+	} else if err != nil {
+		return true, fmt.Errorf("failed to read file '%v': %w", path, err)
+	} else if err = json.Unmarshal(data, &state); err != nil {
+		return true, fmt.Errorf("failed to decode file '%v': %w", path, err)
+	}
+	return state.Running, nil
 }
 
 func fail(code int, format string, arguments ...any) error {
@@ -208,9 +246,41 @@ func (server *Server) loop(ctx context.Context) {
 	}
 }
 
+func (server *Server) control(running bool, restart bool) (int64, error) {
+	server.mutex.Lock()
+	defer server.mutex.Unlock()
+	if data, err := json.Marshal(routerState{Running: running}); err != nil {
+		return 0, fmt.Errorf("failed to encode router state: %w", err)
+	} else if err = config.WriteFile(server.statePath, data); err != nil {
+		return 0, fmt.Errorf("failed to save router state: %w", err)
+	}
+	server.running, server.restart = running, restart && running
+	server.requested++
+	return server.requested, nil
+}
+
+func (server *Server) await(sequence int64) bool {
+	for deadline := time.Now().Add(controlTimeout); time.Now().Before(deadline); {
+		server.mutex.Lock()
+		served := server.served
+		server.mutex.Unlock()
+		if served >= sequence {
+			return true
+		}
+		time.Sleep(controlPoll)
+	}
+	return false
+}
+
+func (server *Server) complete(sequence int64) {
+	server.mutex.Lock()
+	defer server.mutex.Unlock()
+	server.served = max(server.served, sequence)
+}
+
 func (server *Server) capture() {
 	settings := server.store.Snapshot().Settings
-	captured := server.manager.Capture(settings.Capture, settings.IPv6)
+	captured := server.manager.Capture(settings.Capture && server.active(), settings.IPv6)
 	server.mutex.Lock()
 	defer server.mutex.Unlock()
 	if server.captured != captured {
@@ -220,8 +290,16 @@ func (server *Server) capture() {
 }
 
 func (server *Server) synchronize() {
+	server.mutex.Lock()
+	running, restart, sequence := server.running, server.restart, server.requested
+	server.restart = false
+	server.mutex.Unlock()
+	defer server.complete(sequence)
+	if !running || restart {
+		server.mihomo.Stop()
+	}
 	snapshot := server.store.Snapshot()
-	if !server.options.HostNetwork || !snapshot.Settings.Capture {
+	if !server.options.HostNetwork || !snapshot.Settings.Capture || !running {
 		server.capture()
 	}
 	server.manager.Apply(snapshot.Outbounds, snapshot.Settings)
@@ -242,8 +320,11 @@ func (server *Server) synchronize() {
 			server.options.Logf("routes of '%v' changed (%v)", outbound.ID, len(status.Routes))
 		}
 	}
-	snapshot = server.store.Snapshot()
-	server.manager.ApplyInbounds(snapshot)
+	if snapshot = server.store.Snapshot(); running {
+		server.manager.ApplyInbounds(snapshot)
+	} else {
+		server.manager.ApplyInbounds(config.Config{Settings: snapshot.Settings})
+	}
 	server.tracker.SetCollected(snapshot.Outbounds)
 	server.tracker.SetInbounds(snapshot.Inbounds)
 	server.tracker.SetLimits(snapshot.Settings.UnreachableLimit,
@@ -251,7 +332,7 @@ func (server *Server) synchronize() {
 	data, warnings, err := router.Generate(snapshot, links, router.Options{
 		Socket: server.mihomo.Socket(), ProxyBind: server.options.ProxyBind,
 		Capture: server.options.HostNetwork && snapshot.Settings.Capture})
-	if err == nil {
+	if err == nil && running {
 		err = server.mihomo.Apply(data)
 	}
 	server.capture()

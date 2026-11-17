@@ -90,6 +90,10 @@ it:
    re-checks transparent capture. Every 30 s the counters are saved to `state.json`.
 4. Outbound state changes (e.g. a tunnel goes up or down) trigger step 2 again, so
    fallbacks always contain the outbounds that currently work.
+5. When the router is stopped (Settings → Router service), synchronization stops mihomo
+   (no automatic restart), stops the inbounds and removes host traffic capture; outbounds
+   keep running. At startup the router runs only when `autostart` is on and
+   `router.json` says it was running.
 
 ## Outbounds and mihomo
 
@@ -317,6 +321,7 @@ All persistent data lives in the settings folder mounted as `/config`:
 |---|---|---|
 | `proximity.json` | on every change (atomic replace) | users, outbounds, inbounds, fallbacks, routes, settings, token secret |
 | `state.json` | every 30 s and on shutdown | traffic totals of outbounds and inbounds, unreachable routes |
+| `router.json` | on start, stop and restart of the router, and at startup | requested router state (`running`) |
 | `mihomo/config.yaml` | on every synchronization | generated mihomo configuration |
 | `mihomo/geoip.metadb`, `geosite.dat` | first start | GeoIP / GeoSite databases |
 
