@@ -30,3 +30,9 @@
 .rule-dark .rule-directive { color: #cbd5e1; }
 .rule-dark .rule-logic { color: #d8b4fe; }
 .rule-dark .rule-target { color: #5eead4; background: rgba(45, 212, 191, .14); }
+.rule-key { color: #0369a1; }
+.rule-string { color: #92400e; }
+.rule-dark .rule-key { color: #7dd3fc; }
+.rule-dark .rule-string { color: #e5c07b; }
+.rule-secret { color: #b91c1c; font-style: italic; }
+.rule-dark .rule-secret { color: #fca5a5; }

@@ -69,8 +69,8 @@
     </a-table>
     <Fallbacks @changed="load" />
     <RouteDialog v-model:open="visible" :route="editing" :targets="targets" :directives="directives" @saved="load" />
-    <a-modal v-model:open="configVisible" title="Generated router (mihomo) configuration" width="860px" :footer="null">
-      <pre class="mono log-view">{{ configText }}</pre>
+    <a-modal v-model:open="configVisible" title="Generated router (mihomo) configuration" width="960px" :footer="null">
+      <ConfigView :text="configText" :file-name="configFile" />
     </a-modal>
   </div>
 </template>
@@ -85,6 +85,7 @@ import {
 import { api, canEdit, id } from '../api'
 import { targetOptions as groupTargets } from '../format'
 import { routeTone, rowTone } from '../states'
+import ConfigView from '../components/ConfigView.vue'
 import Fallbacks from './Fallbacks.vue'
 import RouteDialog from './RouteDialog.vue'
 
@@ -111,6 +112,7 @@ const editing = ref(null)
 const allWarnings = ref(false)
 const configVisible = ref(false)
 const configText = ref('')
+const configFile = ref('mihomo-config.yaml')
 
 const shownWarnings = computed(() => allWarnings.value ? warnings.value : warnings.value.slice(0, 5))
 const warned = computed(() => new Set(warnings.value.flatMap((item) => item.keys)))
@@ -164,6 +166,7 @@ const setDefault = (target) => act(() => api.put('/api/routes/default', { target
 async function showConfig() {
   try {
     configText.value = (await api.get('/api/router/config')).config
+    configFile.value = `mihomo-config-${new Date().toISOString().replace(/\.\d+Z$/, '').replace(/[-:]/g, '').replace('T', '-')}.yaml`
     configVisible.value = true
   } catch (error) {
     message.error(error.message)

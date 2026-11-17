@@ -169,4 +169,4 @@ Please include:
 - `scripts/proximity.sh logs --tail 300`;
 - the connection log of the affected outbound (passwords are not printed there, but
   check before posting);
-- **Routes → Router configuration** with secrets removed.
+- **Routes → Router configuration** saved with *Hide passwords* on.

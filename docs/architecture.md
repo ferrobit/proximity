@@ -124,7 +124,8 @@ Fallbacks become `proxy-groups`:
 A fallback with no enabled members is skipped with a warning; routes that target it are
 skipped too.
 
-The generated configuration can be viewed in **Routes → Router configuration**.
+The generated configuration can be viewed in **Routes → Router configuration** (highlighted,
+with **Copy** and **Save**). It is JSON, which mihomo reads as YAML.
 
 ![Generated router configuration](images/router-config.png)
 
