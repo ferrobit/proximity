@@ -32,7 +32,7 @@ export function duration(seconds) {
   return `${minutes}m ${seconds % 60}s`
 }
 
-export const typeLabels = { host: 'HOST Internet', socks5: 'SOCKS5 Proxy', http: 'HTTP Proxy', openvpn: 'OpenVPN', amneziawg: 'AmneziaWG' }
+export const typeLabels = { host: 'HOST Network', socks5: 'SOCKS5 Proxy', http: 'HTTP Proxy', openvpn: 'OpenVPN', amneziawg: 'AmneziaWG' }
 export const typeColors = { host: 'blue', socks5: 'purple', http: 'geekblue', openvpn: 'orange', amneziawg: 'magenta' }
 export const inboundLabels = { socks5: 'SOCKS5', openvpn: 'OpenVPN' }
 export const inboundColors = { socks5: 'purple', openvpn: 'orange' }

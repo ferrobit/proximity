@@ -143,7 +143,7 @@ stopped by a user, by the router stop, or not started because `autostart` is off
 Inbound object: `{id, type, enabled, autostart, attempts, reconnect_timeout, statistics,
 port, outbound, anonymous,
 users: [{enabled, name, password}]}` plus one block by `type`. `outbound` is `@router`
-(routes decide), `@host` (host Internet connection) or an outbound ID.
+(routes decide), `@host` (host network connection) or an outbound ID.
 
 | Type | Block |
 |---|---|

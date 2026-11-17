@@ -71,7 +71,7 @@ port **8899**.
 
 | Area | What you get |
 |---|---|
-| 🌐 **Outbounds** | HOST Internet (default route or a specific interface/gateway), SOCKS5 (auth, TLS, UDP relay), HTTP proxy (separate HTTPS/FTP servers, TLS), OpenVPN (login, password, TOTP one-time codes, private key password), AmneziaWG (`.conf` upload, `vpn://` key import, QR code from an image) |
+| 🌐 **Outbounds** | HOST Network (default route or a specific interface/gateway), SOCKS5 (auth, TLS, UDP relay), HTTP proxy (separate HTTPS/FTP servers, TLS), OpenVPN (login, password, TOTP one-time codes, private key password), AmneziaWG (`.conf` upload, `vpn://` key import, QR code from an image) |
 | 🔀 **Fallbacks** | Proxy groups of outbounds in priority order (bottom of the Routes page): either "first outbound that Proximity sees as good" or a mihomo health check by URL |
 | 🧭 **Routes** | 15 mihomo directives, editor with syntax highlighting (domains, subdomains, IPs, masks, ports, comments), load/save/sort of the lists, automatic normalization (URLs → domains, IDN → punycode, `IP:port` → `AND` rule, masks), `#` comments, overlap and duplicate warnings, up/down ordering |
 | 📥 **Inbounds** | SOCKS5 proxy servers and OpenVPN servers on ports 7800–7898 with their own users, optional anonymous access, TLS / TOTP, generated keys and certificates, one-click client configuration export; traffic goes to the host connection, to the routes or to a chosen outbound |
@@ -191,7 +191,7 @@ flowchart LR
     Core -- "generates config,<br/>reads /connections and /logs" --> Mihomo
     Core -- "starts, answers prompts,<br/>monitors" --> OVPN
     Core -- "starts, configures,<br/>monitors" --> AWG
-    Mihomo -- "HOST Internet" --> ISP(("ISP"))
+    Mihomo -- "HOST Network" --> ISP(("ISP"))
     Mihomo -- "SOCKS5 / HTTP" --> Proxy(("Proxy servers"))
     Mihomo -- "routing-mark" --> OVPN --> VPN1(("OpenVPN server"))
     Mihomo -- "routing-mark" --> AWG --> VPN2(("AmneziaWG server"))
@@ -201,7 +201,7 @@ How each outbound type is connected to mihomo:
 
 | Outbound | mihomo side |
 |---|---|
-| HOST Internet | proxy `direct`; for a specific interface — `interface-name`, with a gateway — `routing-mark` |
+| HOST Network | proxy `direct`; for a specific interface — `interface-name`, with a gateway — `routing-mark` |
 | SOCKS5 Proxy | proxy `socks5` |
 | HTTP Proxy | proxy `http` (CONNECT tunnel); separate HTTPS/FTP servers become extra proxies selected by port 443/21 |
 | OpenVPN | `openvpn` process on interface `proximity_o<N>` + `direct` with `routing-mark` |

@@ -10,7 +10,7 @@ A tour of every page of the Proximity web UI (<http://localhost:8899>).
 - [Dashboard](#dashboard)
   - [Connection map](#connection-map)
 - [Outbounds](#outbounds)
-  - [HOST Internet](#host-internet)
+  - [HOST Network](#host-network)
   - [SOCKS5 Proxy](#socks5-proxy)
   - [HTTP Proxy](#http-proxy)
   - [OpenVPN](#openvpn)
@@ -169,7 +169,7 @@ Every outbound dialog has a **General** tab:
 
 All fields are validated before saving. Changes are applied immediately.
 
-### HOST Internet
+### HOST Network
 
 ![HOST outbound](images/outbound-host.png)
 
@@ -349,7 +349,7 @@ keeps its state after a container restart.
 | Reconnection timeout, seconds | Default 10. Pause between attempts |
 | Collect statistics | Count upload and download traffic of the inbound |
 | Port number | Unique, `7800…7898` (the range published by the Docker files); empty → the first free port |
-| Outbound | **Router** — the routes decide, like for the proxy port; **Host** — the host Internet connection, routes are skipped; or one of the outbounds — everything goes there |
+| Outbound | **Router** — the routes decide, like for the proxy port; **Host** — the host network connection, routes are skipped; or one of the outbounds — everything goes there |
 
 An inbound does not start (state *failed* with the reason) when its outbound is disabled
 or deleted, or when anonymous connections are off and there is no enabled user.

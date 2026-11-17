@@ -75,7 +75,7 @@ Go to **Outbounds → Add outbound** and choose a type.
 
 | You have… | Add outbound | Key fields |
 |---|---|---|
-| A normal internet connection | **HOST Internet** | *Outgoing connection*: default host routing, or a specific interface (+ gateway) |
+| A normal internet connection | **HOST Network** | *Outgoing connection*: default host routing, or a specific interface (+ gateway) |
 | A SOCKS5 server | **SOCKS5 Proxy** | server, port (1080), optional user/password, TLS, UDP relay |
 | An HTTP proxy (Squid etc.) | **HTTP Proxy** | server, port (3128); optionally separate HTTPS and FTP servers |
 | An `.ovpn` file | **OpenVPN** | upload/paste the file, user, password, optional TOTP key |

@@ -285,7 +285,7 @@ const form = reactive({})
 const title = computed(() => saved.value ? `Edit ${inboundLabels[props.kind]} inbound '${saved.value}'` : `Add ${inboundLabels[props.kind]} inbound`)
 const outboundOptions = computed(() => [
   { value: '@router', label: 'Router — routes decide' },
-  { value: '@host', label: 'Host — host Internet connection' },
+  { value: '@host', label: 'Host — host network connection' },
   ...props.outbounds.map((item) => ({ value: item.id, label: item.enabled ? item.id : `${item.id} (disabled)` }))
 ])
 const otpLink = computed(() => `otpauth://totp/Proximity:${encodeURIComponent(form.id || saved.value || 'OpenVPN')}?secret=${String(form.openvpn.otp_key).replace(/[\s=-]/g, '')}&issuer=Proximity`)
