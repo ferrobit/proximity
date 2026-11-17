@@ -6,14 +6,17 @@
         <a-tab-pane key="general" force-render>
           <template #tab><ProfileOutlined /> General</template>
           <a-row :gutter="16">
-            <a-col :span="12">
+            <a-col :span="9">
               <a-form-item label="ID" name="id" :rules="[{ pattern: idPattern, message: 'Letters, digits, space, _ . - (up to 48)' }]"
                 :extra="outbound ? 'Unique among outbounds and fallbacks; references are updated on rename' : 'Unique, allocated automatically when empty'">
                 <a-input v-model:value="form.id" :placeholder="outbound ? outbound.id : `${shortLabels[kind]} N`" />
               </a-form-item>
             </a-col>
-            <a-col :span="6"><a-form-item label="Enabled"><a-switch v-model:checked="form.enabled" /></a-form-item></a-col>
-            <a-col :span="6"><a-form-item label="Collect statistics"><a-switch v-model:checked="form.statistics" /></a-form-item></a-col>
+            <a-col :span="5"><a-form-item label="Enabled"><a-switch v-model:checked="form.enabled" /></a-form-item></a-col>
+            <a-col :span="5"><a-form-item label="Collect statistics"><a-switch v-model:checked="form.statistics" /></a-form-item></a-col>
+            <a-col :span="5">
+              <a-form-item label="Verbose" :tooltip="verboseHint"><a-switch v-model:checked="form.verbose" /></a-form-item>
+            </a-col>
             <a-col :span="24">
               <a-form-item :extra="autostartHint">
                 <a-checkbox v-model:checked="form.autostart">Start automatically when the router starts</a-checkbox>
@@ -184,6 +187,7 @@ const form = reactive({})
 
 const tunnel = computed(() => props.kind === 'openvpn' || props.kind === 'amneziawg')
 const authFields = ['username', 'password', 'otp_key', 'otp_mode', 'key_password']
+const verboseHint = computed(() => tunnel.value ? 'Detailed debug log: Proximity messages, traced connections and maximum verbosity of the tunnel' : 'Detailed debug log: Proximity messages and traced connections')
 const autostartHint = 'Off: after the router starts the outbound stays stopped until Start. An outbound that was stopped or failed is not started again.'
 const attemptsHint = computed(() => tunnel.value
   ? 'When all attempts in a row fail, the tunnel fails and stays down until Start or Restart'
@@ -196,7 +200,7 @@ const interfaceOptions = computed(() => interfaces.value.map((item) => ({
 
 function defaults(kind) {
   return {
-    id: '', type: kind, enabled: true, autostart: true, attempts: 3, reconnect_timeout: 10, statistics: true,
+    id: '', type: kind, enabled: true, autostart: true, attempts: 3, reconnect_timeout: 10, statistics: true, verbose: false,
     host: { mode: 'default', interface: undefined, gateway: '' },
     socks5: { server: '', port: 1080, username: '', password: '', tls: false, skip_cert_verify: false, udp: true },
     http: { server: '', port: 3128, single: true, https_server: '', https_port: 3128, ftp_server: '', ftp_port: 3128, username: '', password: '', tls: false, skip_cert_verify: false },
@@ -290,7 +294,7 @@ async function save() {
   }
   const body = {
     id: form.id, type: props.kind, enabled: form.enabled, autostart: form.autostart, attempts: form.attempts,
-    reconnect_timeout: form.reconnect_timeout, statistics: form.statistics
+    reconnect_timeout: form.reconnect_timeout, statistics: form.statistics, verbose: form.verbose
   }
   body[props.kind] = { ...form[props.kind] }
   if (props.kind === 'host' && body.host.mode !== 'interface') {

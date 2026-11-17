@@ -50,6 +50,34 @@ func TestChainOwner_Lines(t *testing.T) {
 	}
 }
 
+func TestConnection_Describe(t *testing.T) {
+	{
+		connection := Connection{Chains: []string{"Proxy DE", "Streaming"}, Rule: "DomainSuffix",
+			Payload: "youtube.com", Metadata: Metadata{Network: "tcp", Source: "127.0.0.1",
+				SourcePort: "41000", Destination: "142.250.1.1", Port: "443",
+				Host: "www.youtube.com", Process: "curl"}}
+		require.Equal(t, "tcp 127.0.0.1:41000 -> www.youtube.com:443 (142.250.1.1), "+
+			"rule DomainSuffix(youtube.com), chain Streaming -> Proxy DE, process curl",
+			connection.Describe())
+		require.Equal(t, "Proxy DE", connection.Outbound())
+	}
+	{
+		connection := Connection{Chains: []string{"DIRECT"}, Rule: "Match",
+			Metadata: Metadata{Network: "udp", Source: "10.77.1.2", SourcePort: "5353",
+				Destination: "fd00::1", Port: "53"}}
+		require.Equal(t, "udp 10.77.1.2:5353 -> [fd00::1]:53, rule Match, chain DIRECT",
+			connection.Describe())
+		require.Equal(t, "?", Connection{}.Outbound())
+	}
+	{
+		connection := Connection{Chains: []string{"Corp VPN"}, Rule: "Match",
+			Metadata: Metadata{Network: "tcp", Source: "127.0.0.1", SourcePort: "35004",
+				Port: "443", Host: "speed.cloudflare.com"}}
+		require.Equal(t, "tcp 127.0.0.1:35004 -> speed.cloudflare.com:443, rule Match, chain Corp VPN",
+			connection.Describe())
+	}
+}
+
 func TestHistory_Samples(t *testing.T) {
 	tracker := NewTracker("")
 	tracker.SetCollected(makeCollected())

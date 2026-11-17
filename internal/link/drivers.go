@@ -38,6 +38,7 @@ type hostDriver struct {
 }
 
 type proxyDriver struct {
+	runner *runner
 	target string
 	bypass int
 }
@@ -58,6 +59,8 @@ type amneziaDriver struct {
 const amneziaTimeout = 10 * time.Second
 const amneziaDefaultMTU = 1280
 const amneziaSockets = "/var/run/amneziawg"
+const amneziaLogLevel = "error"
+const amneziaDebugLogLevel = "verbose"
 
 var amneziaPattern = regexp.MustCompile(`^(DEBUG: )?\(\S+\) \d{4}/\d\d/\d\d \d\d:\d\d:\d\d `)
 
@@ -69,11 +72,11 @@ func makeDriver(runner *runner) driver {
 		return &hostDriver{runner: runner, tools: tools, options: *outbound.Host,
 			table: Table(outbound.Slot)}
 	case config.TypeSocks5:
-		return &proxyDriver{bypass: runner.bypass, target: net.JoinHostPort(
+		return &proxyDriver{runner: runner, bypass: runner.bypass, target: net.JoinHostPort(
 			outbound.Socks5.Server, strconv.Itoa(outbound.Socks5.Port))}
 	case config.TypeHTTP:
-		return &proxyDriver{bypass: runner.bypass, target: net.JoinHostPort(outbound.HTTP.Server,
-			strconv.Itoa(outbound.HTTP.Port))}
+		return &proxyDriver{runner: runner, bypass: runner.bypass,
+			target: net.JoinHostPort(outbound.HTTP.Server, strconv.Itoa(outbound.HTTP.Port))}
 	case config.TypeOpenVPN:
 		return makeOpenVPNDriver(runner)
 	default:
@@ -89,6 +92,8 @@ func (driver *hostDriver) marked() bool {
 }
 
 func (driver *hostDriver) start(_ context.Context) error {
+	driver.runner.debugf("mode '%v', interface '%v', gateway '%v', routing table %v",
+		driver.options.Mode, driver.options.Interface, driver.options.Gateway, driver.table)
 	if driver.options.Mode != config.HostInterface {
 		return nil
 	} else if linkState(driver.options.Interface) == "absent" {
@@ -108,6 +113,7 @@ func (driver *hostDriver) start(_ context.Context) error {
 func (driver *hostDriver) check(ctx context.Context, timeout time.Duration) (time.Duration,
 	error) {
 	target := driver.runner.settings.ProbeTarget
+	driver.runner.debugf("checking TCP connection to '%v'", target)
 	if driver.marked() {
 		return dialProbe(ctx, target, driver.table, "", timeout)
 	} else if driver.options.Mode == config.HostInterface {
@@ -136,11 +142,13 @@ func (driver *hostDriver) dispose() {
 }
 
 func (driver *proxyDriver) start(_ context.Context) error {
+	driver.runner.debugf("proxy server '%v'", driver.target)
 	return nil
 }
 
 func (driver *proxyDriver) check(ctx context.Context, timeout time.Duration) (time.Duration,
 	error) {
+	driver.runner.debugf("checking TCP connection to proxy server '%v'", driver.target)
 	return dialProbe(ctx, driver.target, driver.bypass, "", timeout)
 }
 
@@ -173,8 +181,13 @@ func (driver *amneziaDriver) start(ctx context.Context) error {
 	driver.parsed = parsed
 	driver.tools.removeDevice(driver.device)
 	driver.runner.logf("starting '%v' on device '%v'", driver.tools.AmneziaGo, driver.device)
+	level := amneziaLogLevel
+	if driver.runner.outbound.Verbose {
+		level = amneziaDebugLogLevel
+	}
+	driver.runner.debugf("routing table %v, LOG_LEVEL=%v", driver.table, level)
 	command := exec.Command(driver.tools.AmneziaGo, "--foreground", driver.device)
-	command.Env = append(os.Environ(), "LOG_LEVEL=verbose", "WG_PROCESS_FOREGROUND=1")
+	command.Env = append(os.Environ(), "LOG_LEVEL="+level, "WG_PROCESS_FOREGROUND=1")
 	command.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
 	reader, writer := io.Pipe()
 	command.Stdout, command.Stderr = writer, writer

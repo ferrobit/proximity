@@ -221,8 +221,8 @@ its **General** tab.
   (`dev`, `up`, `route-up`, `script-security`, `auth-user-pass` file, `management`,
   `daemon`, `log`, `user`/`group`, `chroot`, plugins …) are removed; `dev-type tun|tap` is
   kept.
-- `openvpn` is started inside a pseudo-terminal with `--dev proximity_o<slot>`,
-  `--route-noexec` and `proximity hook` as the `up` / `route-up` script.
+- `openvpn` is started inside a pseudo-terminal with `--dev proximity_o<slot>`, `--verb 3`
+  (`--verb 6` for a verbose outbound), `--route-noexec` and `proximity hook` as the `up` / `route-up` script.
 - Prompts are answered from the outbound settings: user name, password, private key
   password and the one-time code. The code is generated with `oathtool --totp -b` from the
   base32 *OTP key*, and either typed into the `CHALLENGE` prompt or appended to the
@@ -239,8 +239,8 @@ its **General** tab.
 - The configuration is parsed (`Interface`/`Peer`, Amnezia parameters `Jc`, `Jmin`, `Jmax`,
   `S1`, `S2`, `H1`–`H4`); `vpn://` keys exported by the Amnezia app are converted to a
   normal `.conf`; the UI can also decode a QR code from an image (in the browser, with jsQR).
-- `amneziawg-go proximity_a<slot>` is started (log level verbose, its output goes to the
-  connection log). Proximity waits until the interface exists and the control socket
+- `amneziawg-go proximity_a<slot>` is started (`LOG_LEVEL=error`, `verbose` for a verbose
+  outbound; its output goes to the connection log). Proximity waits until the interface exists and the control socket
   `/var/run/amneziawg/proximity_a<slot>.sock` accepts connections (otherwise `awg`
   would remove the socket, try the kernel module and fail), then applies the configuration with `awg setconf`, addresses and MTU
   (default 1280) are set, and the default route goes into the tunnel's table.
@@ -334,7 +334,7 @@ All persistent data lives in the settings folder mounted as `/config`:
 | `state.json` | every 30 s and on shutdown | traffic totals of outbounds and inbounds, unreachable routes |
 | `router.json` | on start, stop and restart of the router, and at startup | requested router state (`running`) |
 | `services.json` | on every service state change | state of tunnels and inbounds: `running`, `stopped`, `failed` with message |
-| `logs/<outbound\|inbound>-<N>.log` | on every log line (trimmed to 300 lines) | logs of outbounds (by slot) and inbounds (by port) |
+| `logs/<outbound\|inbound>-<N>.log` | on every log line (trimmed to 300 lines, 3000 for a verbose service) | logs of outbounds (by slot) and inbounds (by port) |
 | `mihomo/config.yaml` | on every synchronization | generated mihomo configuration |
 | `mihomo/geoip.metadb`, `geosite.dat` | first start | GeoIP / GeoSite databases |
 

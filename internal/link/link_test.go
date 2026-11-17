@@ -394,6 +394,18 @@ func TestLogBook_Rotation(t *testing.T) {
 		blocked.add("not written")
 		require.Equal(t, []string{"not written"}, blocked.snapshot())
 	}
+	{
+		verbose := openLogBook("")
+		verbose.resize(true)
+		for index := range maxLogLines + 5 {
+			verbose.add(fmt.Sprintf("line %v", index))
+		}
+		require.Len(t, verbose.snapshot(), maxLogLines+5)
+		verbose.resize(false)
+		verbose.add("trimmed")
+		require.Len(t, verbose.snapshot(), maxLogLines)
+		require.Equal(t, "trimmed", verbose.snapshot()[maxLogLines-1])
+	}
 }
 
 func TestManager_AmneziaFailure(t *testing.T) {
@@ -454,7 +466,7 @@ func TestManager_Inbounds(t *testing.T) {
 		Enabled: true, Statistics: true, Anonymous: true, Attempts: 1}, time.Now())
 	require.NoError(t, err)
 	_, err = snapshot.AddInbound(config.Inbound{Type: config.TypeOpenVPN, ID: "VPN", Port: port - 1,
-		Enabled: true, Statistics: true, Users: []config.InboundUser{
+		Enabled: true, Statistics: true, Verbose: true, Users: []config.InboundUser{
 			{Enabled: true, Name: "bob", Password: "builder"},
 			{Enabled: true, Name: "eve", Password: "listener"}, {Name: "off", Password: "x"}},
 		OpenVPN: &config.OpenVPNServer{Network: "10.77.2.0/24", OTP: true, Listen: "192.0.2.1",
@@ -486,7 +498,7 @@ func TestManager_Inbounds(t *testing.T) {
 			"username-as-common-name\nscript-security 2\nauth-user-pass-verify "+
 			"\"/usr/local/bin/proximity verify "+filepath.Join(home, "auth.json")+"\" via-file\n"+
 			"auth-user-pass-optional\ntmp-dir "+home+"\nmanagement "+
-			filepath.Join(home, "management.sock")+" unix\nverb 3\nlocal 192.0.2.1\n"+
+			filepath.Join(home, "management.sock")+" unix\nverb 6\nlocal 192.0.2.1\n"+
 			"auth-gen-token\nexplicit-exit-notify 1\nclient-to-client\n"+
 			"push \"redirect-gateway def1\"\npush \"block-outside-dns\"\n"+
 			"push \"route 192.168.10.0 255.255.255.0\"\npush \"dhcp-option DNS 198.18.0.2\"\n"+
@@ -537,7 +549,16 @@ func TestManager_Inbounds(t *testing.T) {
 		log := strings.Join(manager.InboundLog("VPN"), "\n")
 		require.Contains(t, log, "Initialization Sequence Completed")
 		require.NotContains(t, log, "MANAGEMENT: unix")
+		require.Contains(t, log, "debug: protocol udp, listen '192.0.2.1', network '10.77.2.0/24', "+
+			"verbosity 6")
+		require.Contains(t, log, "debug: state connecting -> up")
+		require.Contains(t, log, "debug: client 'bob' connected from 192.0.2.5:5000 as 10.77.2.2")
 		require.Empty(t, manager.InboundLog("missing"))
+		manager.TraceInbound("VPN", []string{"connection traced"})
+		manager.TraceInbound("Socks", []string{"connection hidden"})
+		require.Contains(t, strings.Join(manager.InboundLog("VPN"), "\n"), "debug: connection traced")
+		socks := strings.Join(manager.InboundLog("Socks"), "\n")
+		require.NotContains(t, socks, "debug:")
 	}
 	{
 		renamed := snapshot.Clone()
@@ -651,7 +672,9 @@ func TestManager_OpenVPN(t *testing.T) {
 		arguments, err := os.ReadFile(filepath.Join(directory, "openvpn.log"))
 		require.NoError(t, err)
 		require.Contains(t, string(arguments), "--dev proximity_o7 --dev-type tun --route-noexec")
+		require.Contains(t, string(arguments), "--verb 3 ")
 		require.NotContains(t, string(arguments), "--mark")
+		require.NotContains(t, log, "debug:")
 		require.Contains(t, string(calls), "-4 route replace default dev proximity_o7 table 51007")
 		require.Contains(t, string(calls),
 			"-4 route replace 10.99.0.0/16 via 10.88.0.1 dev proximity_o7 table 51007")
@@ -684,6 +707,24 @@ func TestManager_OpenVPN(t *testing.T) {
 		manager.Apply([]config.Outbound{outbound}, config.Settings{CheckInterval: 5})
 		status := waitState(t, manager, "VPN", StateFailed)
 		require.Equal(t, "password is required by server", status.Message)
+	}
+	{
+		require.NoError(t, os.WriteFile(tools.Ping, []byte("#!/bin/bash\nexit 0\n"), 0o700))
+		outbound.Verbose = true
+		outbound.OpenVPN = &config.OpenVPNOptions{Config: sampleOpenVPN, Username: "alice",
+			Password: "wonderland", OTPKey: "GEZDGNBVGY3TQOJQ", OTPMode: config.OTPAppend}
+		manager.Apply([]config.Outbound{outbound}, config.Settings{CheckInterval: 5})
+		waitState(t, manager, "VPN", StateUp)
+		arguments, err := os.ReadFile(filepath.Join(directory, "openvpn.log"))
+		require.NoError(t, err)
+		require.Contains(t, string(arguments), "--verb 6 ")
+		log := strings.Join(manager.Log("VPN"), "\n")
+		require.Contains(t, log, "debug: type openvpn, attempts 1, reconnect timeout 1 s")
+		require.Contains(t, log, "debug: monitoring every 5 s, timeout 1 s, retries 1, "+
+			"target '127.0.0.1:1'")
+		require.Contains(t, log, "debug: routing table 51007, command: ")
+		require.Contains(t, log, "debug: state connecting -> up")
+		require.NotContains(t, log, "wonderland")
 	}
 }
 
@@ -820,7 +861,7 @@ func TestManager_Proxies(t *testing.T) {
 	manager.SetActive(true, config.Config{})
 	settings := config.Settings{ProbeTarget: target, CheckInterval: 5, ConnectivityChecks: true}
 	outbounds := []config.Outbound{
-		{ID: "S", Type: config.TypeSocks5, Enabled: true, Slot: 1,
+		{ID: "S", Type: config.TypeSocks5, Enabled: true, Slot: 1, Verbose: true,
 			Socks5: &config.Socks5Options{Server: host, Port: number}},
 		{ID: "H", Type: config.TypeHTTP, Enabled: true, Slot: 2,
 			HTTP: &config.HTTPOptions{Server: "127.0.0.1", Port: 1}},
@@ -845,7 +886,28 @@ func TestManager_Proxies(t *testing.T) {
 	}, 5*time.Second, 20*time.Millisecond)
 	require.NotContains(t, manager.Status(), "X")
 	require.Contains(t, strings.Join(manager.Log("H"), "\n"), "connectivity check 1 of 1 failed")
+	require.NotContains(t, strings.Join(manager.Log("H"), "\n"), "debug:")
 	require.Empty(t, manager.Log("missing"))
+	{
+		log := strings.Join(manager.Log("S"), "\n")
+		require.Contains(t, log, "debug: connectivity checks true, every 5 s, probe target '"+
+			target+"'")
+		require.Contains(t, log, "debug: proxy server '"+target+"'")
+		require.Contains(t, log, "debug: checking TCP connection to proxy server '"+target+"'")
+		require.Contains(t, log, "debug: connectivity check 1 of 1 passed in ")
+		require.Contains(t, log, "debug: state connecting -> up")
+		lines := []string{}
+		for index := range maxTracedLines + 3 {
+			lines = append(lines, fmt.Sprintf("connection %v", index))
+		}
+		manager.TraceOutbound("S", lines)
+		manager.TraceOutbound("H", lines)
+		log = strings.Join(manager.Log("S"), "\n")
+		require.Contains(t, log, fmt.Sprintf("debug: connection %v", maxTracedLines-1))
+		require.NotContains(t, log, fmt.Sprintf("debug: connection %v", maxTracedLines))
+		require.Contains(t, log, "debug: 3 more connections are not shown")
+		require.NotContains(t, strings.Join(manager.Log("H"), "\n"), "debug: connection")
+	}
 	require.Empty(t, manager.Counters())
 	{
 		require.NoError(t, manager.Control("S", ActionRestart))

@@ -6,14 +6,17 @@
         <a-tab-pane key="general" force-render>
           <template #tab><ProfileOutlined /> General</template>
           <a-row :gutter="16">
-            <a-col :span="12">
+            <a-col :span="9">
               <a-form-item label="ID" name="id" :rules="[{ pattern: idPattern, message: 'Letters, digits, space, _ . - (up to 48)' }]"
                 :extra="saved ? 'Unique among inbounds' : 'Unique, allocated automatically when empty'">
                 <a-input v-model:value="form.id" :placeholder="saved || `${inboundLabels[kind]} N`" />
               </a-form-item>
             </a-col>
-            <a-col :span="6"><a-form-item label="Enabled"><a-switch v-model:checked="form.enabled" /></a-form-item></a-col>
-            <a-col :span="6"><a-form-item label="Collect statistics"><a-switch v-model:checked="form.statistics" /></a-form-item></a-col>
+            <a-col :span="5"><a-form-item label="Enabled"><a-switch v-model:checked="form.enabled" /></a-form-item></a-col>
+            <a-col :span="5"><a-form-item label="Collect statistics"><a-switch v-model:checked="form.statistics" /></a-form-item></a-col>
+            <a-col :span="5">
+              <a-form-item label="Verbose" :tooltip="verboseHint"><a-switch v-model:checked="form.verbose" /></a-form-item>
+            </a-col>
             <a-col :span="24">
               <a-form-item :extra="autostartHint">
                 <a-checkbox v-model:checked="form.autostart">Start automatically when the router starts</a-checkbox>
@@ -258,6 +261,7 @@ const networkPattern = /^(\d{1,3}\.){3}\d{1,3}\/\d{1,2}$/
 const alphabet = 'ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz23456789'
 const listenRules = [{ required: true, pattern: /^\*$|^(\d{1,3}\.){3}\d{1,3}$/, message: '* or IPv4 address' }]
 const pemRules = [{ required: true, pattern: /-----BEGIN [A-Za-z0-9 ]+-----/, message: 'PEM text expected; press Regenerate to create it' }]
+const verboseHint = computed(() => props.kind === 'openvpn' ? 'Detailed debug log: Proximity messages, clients, traced connections and maximum verbosity of the server' : 'Detailed debug log: Proximity messages and traced connections')
 const userColumns = [
   { title: 'Enabled', key: 'enabled', width: 80 },
   { title: 'User name', key: 'name' },
@@ -291,7 +295,7 @@ const outboundOptions = computed(() => [
 const otpLink = computed(() => `otpauth://totp/Proximity:${encodeURIComponent(form.id || saved.value || 'OpenVPN')}?secret=${String(form.openvpn.otp_key).replace(/[\s=-]/g, '')}&issuer=Proximity`)
 
 function defaults(kind) {
-  const result = { id: '', enabled: true, autostart: true, attempts: 3, reconnect_timeout: 10, statistics: true, port: null, outbound: '@router', anonymous: false, users: [] }
+  const result = { id: '', enabled: true, autostart: true, attempts: 3, reconnect_timeout: 10, statistics: true, verbose: false, port: null, outbound: '@router', anonymous: false, users: [] }
   if (kind === 'socks5') {
     result.socks5 = { listen: '*', udp: true, tls: false, certificate: '', key: '' }
   } else {
@@ -398,7 +402,7 @@ async function copy(text, done) {
 function makeBody() {
   const body = {
     id: form.id, type: props.kind, enabled: form.enabled, autostart: form.autostart, attempts: form.attempts,
-    reconnect_timeout: form.reconnect_timeout, statistics: form.statistics, port: form.port || 0,
+    reconnect_timeout: form.reconnect_timeout, statistics: form.statistics, verbose: form.verbose, port: form.port || 0,
     outbound: form.outbound, anonymous: form.anonymous, users: form.users.map((user) => ({ ...user, name: user.name.trim() }))
   }
   if (props.kind === 'socks5') {

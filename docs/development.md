@@ -151,17 +151,17 @@ make cover    # with coverage per package; profile in ../proximity-build/coverag
 go test -race ./...   # by hand: uses the default Go caches
 ```
 
-Current state (version 1.2.0): **105 tests, all passing, 93.5% total statement coverage.**
+Current state (version 1.2.0): **107 tests, all passing, 93.5% total statement coverage.**
 
 | Package | Coverage |
 |---|---|
 | `cmd/proximity` | 81.4% |
 | `internal/auth` | 94.1% |
-| `internal/config` | 95.8% |
-| `internal/link` | 89.4% |
-| `internal/router` | 96.5% |
+| `internal/config` | 95.7% |
+| `internal/link` | 89.6% |
+| `internal/router` | 96.6% |
 | `internal/rules` | 99.1% |
-| `internal/server` | 94.2% |
+| `internal/server` | 93.7% |
 | `internal/wgconf` | 97.9% |
 
 Tests use fake tools (`ip`, `openvpn`, `iptables`, `ping` …) and a fake mihomo, so they run

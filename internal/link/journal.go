@@ -34,6 +34,7 @@ type logBook struct {
 	path    string
 	lines   []string
 	written int
+	limit   int
 }
 
 const (
@@ -89,7 +90,7 @@ func openJournal(directory string) (*journal, error) {
 }
 
 func openLogBook(path string) *logBook {
-	result := &logBook{path: path, lines: []string{}}
+	result := &logBook{path: path, lines: []string{}, limit: maxLogLines}
 	if data, err := os.ReadFile(path); err == nil && len(data) != 0 && path != "" {
 		lines := strings.Split(strings.TrimRight(string(data), "\n"), "\n")
 		result.written = len(lines)
@@ -142,12 +143,12 @@ func (journal *journal) save() {
 func (book *logBook) add(line string) {
 	book.mutex.Lock()
 	defer book.mutex.Unlock()
-	if book.lines = append(book.lines, line); len(book.lines) > maxLogLines {
-		book.lines = book.lines[len(book.lines)-maxLogLines:]
+	if book.lines = append(book.lines, line); len(book.lines) > book.limit {
+		book.lines = book.lines[len(book.lines)-book.limit:]
 	}
 	if book.path == "" {
 		return
-	} else if book.written >= 2*maxLogLines {
+	} else if book.written >= 2*book.limit {
 		book.written = len(book.lines)
 		_ = config.WriteFile(book.path, []byte(strings.Join(book.lines, "\n")+"\n"))
 		return
@@ -159,6 +160,14 @@ func (book *logBook) add(line string) {
 	defer file.Close()
 	if _, err = file.WriteString(line + "\n"); err == nil {
 		book.written++
+	}
+}
+
+func (book *logBook) resize(verbose bool) {
+	book.mutex.Lock()
+	defer book.mutex.Unlock()
+	if book.limit = maxLogLines; verbose {
+		book.limit = maxVerboseLines
 	}
 }
 

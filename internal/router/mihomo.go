@@ -22,7 +22,14 @@ import (
 )
 
 type Metadata struct {
-	Inbound string `json:"inboundName"`
+	Inbound     string `json:"inboundName"`
+	Network     string `json:"network"`
+	Source      string `json:"sourceIP"`
+	SourcePort  string `json:"sourcePort"`
+	Destination string `json:"destinationIP"`
+	Port        string `json:"destinationPort"`
+	Host        string `json:"host"`
+	Process     string `json:"process"`
 }
 
 type Connection struct {
@@ -30,6 +37,8 @@ type Connection struct {
 	Upload   int64    `json:"upload"`
 	Download int64    `json:"download"`
 	Chains   []string `json:"chains"`
+	Rule     string   `json:"rule"`
+	Payload  string   `json:"rulePayload"`
 	Metadata Metadata `json:"metadata"`
 }
 

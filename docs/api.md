@@ -92,6 +92,7 @@ Outbound object (fields depend on `type`):
   "attempts": 3,
   "reconnect_timeout": 10,
   "statistics": true,
+  "verbose": false,
   "socks5": {"server": "proxy.ams.example.net", "port": 1080,
              "username": "alice", "password": "secret",
              "tls": false, "skip_cert_verify": false, "udp": true}
@@ -141,7 +142,7 @@ stopped by a user, by the router stop, or not started because `autostart` is off
 | `POST /api/inbounds/generate` | 2 | `{kind, ca_certificate, ca_key}` → new key material. `kind`: `all`, `pki` (CA + server + client), `server`, `client` (both signed by the given CA), `tls_crypt`, `otp_key`, `tls` (self-signed certificate for SOCKS5) |
 
 Inbound object: `{id, type, enabled, autostart, attempts, reconnect_timeout, statistics,
-port, outbound, anonymous,
+verbose, port, outbound, anonymous,
 users: [{enabled, name, password}]}` plus one block by `type`. `outbound` is `@router`
 (routes decide), `@host` (host network connection) or an outbound ID.
 

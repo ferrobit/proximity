@@ -270,6 +270,16 @@ func (manager *Manager) InboundLog(id string) []string {
 	return []string{}
 }
 
+func (manager *Manager) TraceInbound(id string, lines []string) {
+	manager.mutex.Lock()
+	defer manager.mutex.Unlock()
+	for _, inbound := range manager.snapshot.Inbounds {
+		if inbound.ID == id && inbound.Verbose {
+			trace(manager.book(inboundKey(inbound.Port)), lines)
+		}
+	}
+}
+
 func (manager *Manager) listen(inbound config.Inbound, signature string,
 	bypass int) *inboundRunner {
 	ctx, cancel := context.WithCancel(context.Background())
@@ -278,7 +288,9 @@ func (manager *Manager) listen(inbound config.Inbound, signature string,
 		bypass: bypass, key: key, book: manager.book(key), cancel: cancel,
 		done: make(chan struct{}), id: inbound.ID,
 		status: emptyInboundStatus(StateConnecting, "")}
+	result.book.resize(inbound.Verbose)
 	result.logf("starting")
+	result.debugSettings()
 	if inbound.Type == config.TypeOpenVPN {
 		result.acceptor = makeOpenVPNAcceptor(result)
 	} else {
@@ -298,8 +310,11 @@ func (runner *inboundRunner) run(ctx context.Context) {
 	defer runner.acceptor.dispose()
 	failures := 0
 	for ctx.Err() == nil {
+		runner.debugf("starting the inbound, attempt %v of %v", failures+1,
+			max(1, runner.inbound.Attempts))
 		err := runner.acceptor.start(ctx)
 		if err == nil {
+			runner.debugf("the inbound is started")
 			failures = 0
 			runner.update(func(status *InboundStatus) {
 				runner.acceptor.describe(status)
@@ -353,14 +368,37 @@ func (runner *inboundRunner) watch(ctx context.Context) error {
 
 func (runner *inboundRunner) update(change func(status *InboundStatus)) {
 	runner.mutex.Lock()
-	previous := runner.status.State
-	if change(&runner.status); runner.status.State != previous {
+	previous := runner.status
+	if change(&runner.status); runner.status.State != previous.State {
 		runner.status.Since = time.Now().Unix()
 	}
 	current := runner.status
 	runner.mutex.Unlock()
-	if current.State != previous {
+	if current.State != previous.State {
 		runner.manager.observe(runner.key, current.State, current.Message, runner.signature)
+		runner.debugf("state %v -> %v", previous.State, current.State)
+	}
+	runner.traceClients(previous.Clients, current.Clients)
+}
+
+func (runner *inboundRunner) traceClients(previous []InboundClient, current []InboundClient) {
+	if !runner.inbound.Verbose {
+		return
+	}
+	known := map[string]InboundClient{}
+	for _, client := range previous {
+		known[client.Name+"|"+client.Address] = client
+	}
+	for _, client := range current {
+		if key := client.Name + "|" + client.Address; known[key].Address != "" {
+			delete(known, key)
+		} else {
+			runner.debugf("client '%v' connected from %v as %v", client.Name, client.Address,
+				client.Virtual)
+		}
+	}
+	for _, client := range known {
+		runner.debugf("client '%v' from %v disconnected", client.Name, client.Address)
 	}
 }
 
@@ -386,6 +424,27 @@ func (runner *inboundRunner) snapshot() InboundStatus {
 
 func (runner *inboundRunner) logf(format string, arguments ...any) {
 	runner.book.add(stamp(format, arguments...))
+}
+
+func (runner *inboundRunner) debugf(format string, arguments ...any) {
+	if runner.inbound.Verbose {
+		runner.book.add(stamp(debugPrefix+format, arguments...))
+	}
+}
+
+func (runner *inboundRunner) debugSettings() {
+	inbound := runner.inbound
+	runner.debugf("type %v, port %v, outbound '%v', anonymous %v, users %v of %v enabled",
+		inbound.Type, inbound.Port, inbound.Outbound, inbound.Anonymous,
+		len(inbound.ActiveUsers()), len(inbound.Users))
+	runner.debugf("attempts %v, reconnect timeout %v s, statistics %v", inbound.Attempts,
+		inbound.ReconnectTimeout, inbound.Statistics)
+	if server := inbound.OpenVPN; server != nil {
+		runner.debugf("protocol %v, listen '%v', network '%v', verbosity %v", server.Protocol,
+			server.Listen, server.Network, max(server.Verbosity, openvpnDebugVerbosity))
+	} else if socks := inbound.Socks5; socks != nil {
+		runner.debugf("listen '%v', UDP %v, TLS %v", socks.Listen, socks.UDP, socks.TLS)
+	}
 }
 
 func (runner *inboundRunner) close() {

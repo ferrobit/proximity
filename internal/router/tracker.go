@@ -502,6 +502,33 @@ func (tracker *Tracker) share(deltas map[string]Traffic, weights map[string]int,
 	}
 }
 
+func (connection Connection) Outbound() string {
+	return connection.owner()
+}
+
+func (connection Connection) Describe() string {
+	metadata := connection.Metadata
+	target := net.JoinHostPort(metadata.Destination, metadata.Port)
+	if metadata.Host != "" {
+		if target = net.JoinHostPort(metadata.Host, metadata.Port); metadata.Destination != "" {
+			target += " (" + metadata.Destination + ")"
+		}
+	}
+	rule := connection.Rule
+	if connection.Payload != "" {
+		rule += "(" + connection.Payload + ")"
+	}
+	chain := slices.Clone(connection.Chains)
+	slices.Reverse(chain)
+	result := fmt.Sprintf("%v %v -> %v, rule %v, chain %v", metadata.Network,
+		net.JoinHostPort(metadata.Source, metadata.SourcePort), target, rule,
+		strings.Join(chain, " -> "))
+	if metadata.Process != "" {
+		result += ", process " + metadata.Process
+	}
+	return result
+}
+
 func (connection Connection) owner() string {
 	if len(connection.Chains) == 0 {
 		return unknownOwner

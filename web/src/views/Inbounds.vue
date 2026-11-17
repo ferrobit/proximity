@@ -25,6 +25,7 @@
         <template v-else-if="column.key === 'id'">
           <b class="nowrap">{{ record.id }}</b>
           <div class="muted" v-if="!record.autostart">manual start</div>
+          <div class="muted" v-if="record.verbose"><BugOutlined /> verbose log</div>
         </template>
         <template v-else-if="column.key === 'type'">
           <a-tag :color="inboundColors[record.type]"><component :is="typeIcons[record.type]" /> {{ inboundLabels[record.type] }}</a-tag>
@@ -95,7 +96,7 @@
 import { onMounted, onUnmounted, ref } from 'vue'
 import { message } from 'ant-design-vue'
 import {
-  ArrowDownOutlined, ArrowUpOutlined, BarChartOutlined, DeleteOutlined, DownOutlined, EditOutlined, FileTextOutlined,
+  ArrowDownOutlined, ArrowUpOutlined, BarChartOutlined, BugOutlined, DeleteOutlined, DownOutlined, EditOutlined, FileTextOutlined,
   ImportOutlined, LockOutlined, PauseCircleOutlined, PlayCircleOutlined, PlusOutlined, ReloadOutlined, SendOutlined, SwapOutlined,
   SyncOutlined, TeamOutlined
 } from '@ant-design/icons-vue'

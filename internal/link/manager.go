@@ -95,6 +95,9 @@ const (
 )
 
 const maxLogLines = 300
+const maxVerboseLines = 3000
+const debugPrefix = "debug: "
+const maxTracedLines = 20
 const defaultCheckTimeout = 5 * time.Second
 const monitoringGrace = 3 * time.Second
 
@@ -236,6 +239,16 @@ func (manager *Manager) Log(id string) []string {
 	return []string{}
 }
 
+func (manager *Manager) TraceOutbound(id string, lines []string) {
+	manager.mutex.Lock()
+	defer manager.mutex.Unlock()
+	for _, outbound := range manager.outbounds {
+		if outbound.ID == id && outbound.Verbose {
+			trace(manager.book(outboundKey(outbound.Slot)), lines)
+		}
+	}
+}
+
 func (manager *Manager) Close() {
 	manager.mutex.Lock()
 	defer manager.mutex.Unlock()
@@ -375,7 +388,9 @@ func (manager *Manager) launch(outbound config.Outbound, settings config.Setting
 		done: make(chan struct{}), id: outbound.ID, status: Status{State: StateConnecting,
 			Since: time.Now().Unix(), Latency: -1, DNS: []string{}, Domains: []string{},
 			Routes: []string{}}}
+	result.book.resize(outbound.Verbose)
 	result.logf("starting")
+	result.debugSettings()
 	go result.run(ctx)
 	return result
 }
@@ -413,11 +428,13 @@ func (runner *runner) run(ctx context.Context) {
 			status.State, status.Message = state, message
 		})
 		latency := time.Duration(-1)
+		runner.debugf("starting the link, attempt %v of %v", failures+1, policy.limit)
 		err := driver.start(ctx)
 		if err == nil && policy.verify {
 			latency, err = runner.probe(ctx, driver, defaultCheckTimeout, 1)
 		}
 		if err == nil {
+			runner.debugf("the link is started")
 			runner.update(func(status *Status) {
 				driver.describe(status)
 				status.State, status.Message = StateUp, ""
@@ -449,6 +466,7 @@ func (runner *runner) run(ctx context.Context) {
 			state = StateReconnecting
 			message = fmt.Sprintf("reconnect attempt %v of %v: %v", failures, policy.limit-1, err)
 			runner.fail(state, message)
+			runner.debugf("next attempt in %v", policy.delay)
 			sleep(ctx, policy.delay)
 		}
 	}
@@ -509,6 +527,10 @@ func (runner *runner) probe(ctx context.Context, driver driver, timeout time.Dur
 	var failure error
 	for attempt := range retries {
 		latency, err := driver.check(ctx, timeout)
+		if err == nil {
+			runner.debugf("connectivity check %v of %v passed in %v ms", attempt+1, retries,
+				latency.Milliseconds())
+		}
 		if err == nil || ctx.Err() != nil {
 			return latency, err
 		}
@@ -539,6 +561,7 @@ func (runner *runner) update(change func(status *Status)) {
 	runner.mutex.Unlock()
 	if current.State != previous.State {
 		runner.manager.observe(runner.key, current.State, current.Message, runner.signature)
+		runner.debugf("state %v -> %v", previous.State, current.State)
 	}
 	if !sameStatus(previous, current) && runner.manager.options.Changed != nil {
 		runner.manager.options.Changed()
@@ -567,6 +590,28 @@ func (runner *runner) logf(format string, arguments ...any) {
 	runner.book.add(stamp(format, arguments...))
 }
 
+func (runner *runner) debugf(format string, arguments ...any) {
+	if runner.outbound.Verbose {
+		runner.book.add(stamp(debugPrefix+format, arguments...))
+	}
+}
+
+func (runner *runner) debugSettings() {
+	outbound, settings := runner.outbound, runner.settings
+	runner.debugf("type %v, attempts %v, reconnect timeout %v s, statistics %v", outbound.Type,
+		outbound.Attempts, outbound.ReconnectTimeout, outbound.Statistics)
+	if monitoring := outbound.Monitoring; outbound.IsTunnel() && monitoring != nil &&
+		monitoring.Enabled {
+		runner.debugf("monitoring every %v s, timeout %v s, retries %v, target '%v'",
+			monitoring.Interval, monitoring.Timeout, monitoring.Retries, monitoring.Target)
+	} else if outbound.IsTunnel() {
+		runner.debugf("monitoring is off")
+	} else {
+		runner.debugf("connectivity checks %v, every %v s, probe target '%v'",
+			settings.ConnectivityChecks, settings.CheckInterval, settings.ProbeTarget)
+	}
+}
+
 func (runner *runner) close() {
 	runner.cancel()
 	<-runner.done
@@ -578,6 +623,16 @@ func (manager *Manager) observe(key string, state string, message string, signat
 	} else if state == StateFailed {
 		manager.journal.set(key, ServiceRecord{State: StateFailed, Message: message,
 			Since: time.Now().Unix(), Signature: digest(signature)})
+	}
+}
+
+func trace(book *logBook, lines []string) {
+	for index, line := range lines {
+		if index == maxTracedLines {
+			book.add(stamp(debugPrefix+"%v more connections are not shown", len(lines)-index))
+			return
+		}
+		book.add(stamp(debugPrefix+"%v", line))
 	}
 }
 

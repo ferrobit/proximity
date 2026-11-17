@@ -63,6 +63,7 @@ type Inbound struct {
 	Attempts         int            `json:"attempts"`
 	ReconnectTimeout int            `json:"reconnect_timeout"`
 	Statistics       bool           `json:"statistics"`
+	Verbose          bool           `json:"verbose"`
 	Port             int            `json:"port"`
 	Outbound         string         `json:"outbound"`
 	Anonymous        bool           `json:"anonymous"`
@@ -294,6 +295,10 @@ func (inbound Inbound) ActiveUsers() []InboundUser {
 		}
 	}
 	return result
+}
+
+func (inbound Inbound) Network() (netip.Prefix, bool) {
+	return inbound.network()
 }
 
 func (inbound Inbound) network() (netip.Prefix, bool) {

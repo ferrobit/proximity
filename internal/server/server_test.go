@@ -1067,6 +1067,46 @@ func TestServer_Setup(t *testing.T) {
 	}
 }
 
+func TestServer_Trace(t *testing.T) {
+	server := makeServer(t)
+	admin := login(t, server, "admin", "secret123")
+	for _, outbound := range []config.Outbound{
+		{ID: "Quiet", Type: config.TypeHost, Enabled: true},
+		{ID: "Loud", Type: config.TypeHost, Enabled: true, Verbose: true}} {
+		code, _, _ := call(t, server, admin, http.MethodPost, "/api/outbounds", outbound)
+		require.Equal(t, http.StatusOK, code)
+	}
+	code, _, _ := call(t, server, admin, http.MethodPost, "/api/inbounds", config.Inbound{
+		ID: "Team", Type: config.TypeSocks5, Enabled: true, Verbose: true, Anonymous: true,
+		Outbound: config.ViaRouter, Socks5: &config.Socks5Server{Listen: config.ListenAny}})
+	require.Equal(t, http.StatusOK, code)
+	server.synchronize()
+	require.True(t, server.store.Snapshot().Outbounds[1].Verbose)
+	loud := router.Connection{ID: "1", Upload: 2048, Download: 3 << 20, Chains: []string{"Loud"},
+		Rule: "Match", Metadata: router.Metadata{Network: "tcp", Source: "127.0.0.1",
+			SourcePort: "40000", Destination: "192.0.2.10", Port: "443", Host: "a.test"}}
+	quiet := router.Connection{ID: "2", Chains: []string{"Quiet"}, Rule: "Match",
+		Metadata: router.Metadata{Network: "tcp", Inbound: "Team", Source: "127.0.0.1",
+			SourcePort: "40001", Destination: "192.0.2.11", Port: "80"}}
+	other := router.Connection{ID: "3", Chains: []string{"Quiet"}, Rule: "Match",
+		Metadata: router.Metadata{Network: "tcp", Inbound: "DEFAULT-MIXED"}}
+	server.trace(router.Connections{Items: []router.Connection{loud, quiet, other}})
+	require.Len(t, server.traced, 2)
+	server.trace(router.Connections{Items: []router.Connection{loud}})
+	server.trace(router.Connections{})
+	require.Empty(t, server.traced)
+	outbound := strings.Join(server.manager.Log("Loud"), "\n")
+	require.Contains(t, outbound, "debug: connection tcp 127.0.0.1:40000 -> a.test:443 "+
+		"(192.0.2.10), rule Match, chain Loud")
+	require.Contains(t, outbound, "s, sent 2.0 KB, received 3.0 MB: tcp 127.0.0.1:40000")
+	require.NotContains(t, strings.Join(server.manager.Log("Quiet"), "\n"), "debug:")
+	inbound := strings.Join(server.manager.InboundLog("Team"), "\n")
+	require.Contains(t, inbound, "debug: connection tcp 127.0.0.1:40001 -> 192.0.2.11:80, "+
+		"rule Match, chain Quiet")
+	require.Contains(t, inbound, "debug: closed after ")
+	require.Equal(t, "512 B", traceSize(512))
+}
+
 func TestStatic_Files(t *testing.T) {
 	server := makeServer(t)
 	dist := fstest.MapFS{"dist/index.html": {Data: []byte(`<div id="app"></div>`)},

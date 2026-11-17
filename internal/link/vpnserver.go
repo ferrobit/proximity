@@ -397,9 +397,12 @@ func (acceptor *openvpnAcceptor) store(state authState) error {
 func (acceptor *openvpnAcceptor) render() string {
 	inbound, server := acceptor.runner.inbound, acceptor.runner.inbound.OpenVPN
 	mask := net.IP(net.CIDRMask(acceptor.network.Bits(), 32)).String()
-	protocol := "udp4"
+	protocol, verbosity := "udp4", server.Verbosity
 	if server.Protocol == config.ProtocolTCP {
 		protocol = "tcp4-server"
+	}
+	if inbound.Verbose {
+		verbosity = max(verbosity, openvpnDebugVerbosity)
 	}
 	verify := acceptor.runner.manager.options.Executable + " verify " +
 		filepath.Join(acceptor.directory, "auth.json")
@@ -414,7 +417,7 @@ func (acceptor *openvpnAcceptor) render() string {
 		"duplicate-cn", "username-as-common-name", "script-security 2",
 		`auth-user-pass-verify "` + verify + `" via-file`, "auth-user-pass-optional",
 		"tmp-dir " + acceptor.directory, "management " + acceptor.socket + " unix",
-		"verb " + strconv.Itoa(server.Verbosity)}
+		"verb " + strconv.Itoa(verbosity)}
 	if server.Listen != config.ListenAny {
 		lines = append(lines, "local "+server.Listen)
 	}

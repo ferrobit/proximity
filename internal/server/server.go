@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io/fs"
 	"net/http"
+	"net/netip"
 	"os"
 	"path/filepath"
 	"strings"
@@ -51,6 +52,21 @@ type Server struct {
 	served    int64
 	statePath string
 	mux       *http.ServeMux
+	traced    map[string]tracedConnection
+}
+
+type tracedConnection struct {
+	outbound string
+	inbound  string
+	text     string
+	started  time.Time
+	upload   int64
+	download int64
+}
+
+type traceLines struct {
+	outbounds map[string][]string
+	inbounds  map[string][]string
 }
 
 type routerState struct {
@@ -101,7 +117,8 @@ func internalNew(options Options) (*Server, error) {
 		options.Logf("%v", message)
 	}
 	server := &Server{options: options, store: store, dirty: make(chan struct{}, 1),
-		started: time.Now(), warnings: []string{}, mux: http.NewServeMux()}
+		started: time.Now(), warnings: []string{}, mux: http.NewServeMux(),
+		traced: map[string]tracedConnection{}}
 	home := filepath.Join(options.ConfigPath, "mihomo")
 	server.tracker = router.NewTracker(filepath.Join(options.ConfigPath, "state.json"))
 	if server.manager, err = link.NewManager(link.Options{Directory: options.RunPath,
@@ -139,6 +156,17 @@ func internalNew(options Options) (*Server, error) {
 	store.Subscribe(server.notify)
 	server.register()
 	return server, nil
+}
+
+func traceSize(value int64) string {
+	units, size, index := []string{"B", "KB", "MB", "GB", "TB"}, float64(value), 0
+	for size >= 1024 && index < 4 {
+		size, index = size/1024, index+1
+	}
+	if index == 0 {
+		return fmt.Sprintf("%v B", value)
+	}
+	return fmt.Sprintf("%.1f %v", size, units[index])
 }
 
 func readRouterState(path string) (bool, error) {
@@ -232,6 +260,7 @@ func (server *Server) loop(ctx context.Context) {
 			connections, err := server.mihomo.Connections()
 			if err == nil {
 				server.tracker.Update(connections, server.manager.Counters())
+				server.trace(connections)
 			}
 			if err == nil && time.Since(measured) >= measureInterval {
 				server.tracker.UpdateInbounds(connections, server.manager.InboundCounters())
@@ -242,6 +271,65 @@ func (server *Server) loop(ctx context.Context) {
 				server.options.Logf("%v", err)
 			}
 		}
+	}
+}
+
+func (server *Server) trace(connections router.Connections) {
+	snapshot := server.store.Snapshot()
+	outbounds, inbounds, networks := map[string]bool{}, map[string]bool{}, map[string]netip.Prefix{}
+	active := len(server.traced) != 0
+	for _, outbound := range snapshot.Outbounds {
+		outbounds[outbound.ID], active = outbound.Verbose, active || outbound.Verbose
+	}
+	for _, inbound := range snapshot.Inbounds {
+		if inbounds[inbound.ID], active = inbound.Verbose, active || inbound.Verbose; !inbound.Verbose {
+			continue
+		} else if prefix, found := inbound.Network(); found {
+			networks[inbound.ID] = prefix
+		}
+	}
+	if !active {
+		return
+	}
+	lines, current := traceLines{outbounds: map[string][]string{},
+		inbounds: map[string][]string{}}, map[string]tracedConnection{}
+	for _, connection := range connections.Items {
+		item, known := server.traced[connection.ID]
+		if !known {
+			item = tracedConnection{text: connection.Describe(), started: time.Now()}
+			if outbounds[connection.Outbound()] {
+				item.outbound = connection.Outbound()
+			}
+			if inbounds[connection.Metadata.Inbound] {
+				item.inbound = connection.Metadata.Inbound
+			} else if address, err := netip.ParseAddr(connection.Metadata.Source); err == nil {
+				for id, prefix := range networks {
+					if prefix.Contains(address) {
+						item.inbound = id
+					}
+				}
+			}
+			if item.outbound == "" && item.inbound == "" {
+				continue
+			}
+			lines.add(item, "connection "+item.text)
+		}
+		item.upload, item.download = connection.Upload, connection.Download
+		current[connection.ID] = item
+	}
+	for id, item := range server.traced {
+		if _, alive := current[id]; !alive {
+			lines.add(item, fmt.Sprintf("closed after %.1f s, sent %v, received %v: %v",
+				time.Since(item.started).Seconds(), traceSize(item.upload),
+				traceSize(item.download), item.text))
+		}
+	}
+	server.traced = current
+	for id, items := range lines.outbounds {
+		server.manager.TraceOutbound(id, items)
+	}
+	for id, items := range lines.inbounds {
+		server.manager.TraceInbound(id, items)
 	}
 }
 
@@ -418,4 +506,13 @@ func (server *Server) static(dist fs.FS) http.Handler {
 		}
 		files.ServeHTTP(writer, request)
 	})
+}
+
+func (lines traceLines) add(item tracedConnection, line string) {
+	if item.outbound != "" {
+		lines.outbounds[item.outbound] = append(lines.outbounds[item.outbound], line)
+	}
+	if item.inbound != "" {
+		lines.inbounds[item.inbound] = append(lines.inbounds[item.inbound], line)
+	}
 }

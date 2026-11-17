@@ -166,8 +166,24 @@ Every outbound dialog has a **General** tab:
 | Connection attempts | Default 3. Failed attempts in a row before the outbound is `failed`: a tunnel then stays down until **Start** / **Restart**; HOST and proxies keep being checked and recover by themselves |
 | Reconnection timeout, seconds | Default 10. Pause between attempts |
 | Collect statistics | Count traffic and draw it on the chart |
+| Verbose | Off by default. Writes detailed debug information to the [connection log](#connection-log) (see below) |
 
 All fields are validated before saving. Changes are applied immediately.
+
+**Verbose** is meant for finding problems. A verbose outbound is marked *verbose log* in the
+table, and its log keeps the last 3000 lines instead of 300. It adds:
+
+- `debug:` lines from Proximity: the settings in effect, every attempt and state change,
+  every connectivity check with its time, the routing table and the command line of the
+  tunnel process;
+- every connection that goes through the outbound: source, target, matched route, chain and
+  process, and when it closes, its duration and traffic (connections shorter than 0.5 s may
+  be missed; at most 20 new connections are listed per second);
+- maximum verbosity of the external program: OpenVPN runs with `--verb 6` instead of
+  `--verb 3` (every packet is logged), AmneziaWG with `LOG_LEVEL=verbose` instead of
+  `error`.
+
+Switch it off when the problem is found: OpenVPN at `--verb 6` writes thousands of lines.
 
 ### HOST Network
 
@@ -252,7 +268,7 @@ OpenVPN is checked by pinging the VPN gateway through the tunnel.
 
 ![Connection log](images/outbound-log.png)
 
-The live log of an outbound (last 300 lines): process output, answered prompts, applied
+The live log of an outbound (last 300 lines, 3000 with *Verbose*): process output, answered prompts, applied
 routes, check results, starts and stops. It is saved in `logs/` of the settings folder and
 survives container restarts. It refreshes every 1.5 s; **Follow new lines** keeps it scrolled to
 the bottom, **Copy** copies the whole log, **Download** saves it as
@@ -348,6 +364,7 @@ keeps its state after a container restart.
 | Connection attempts | Default 3. Failed starts in a row before the inbound is `failed`; it then stays stopped until **Start** / **Restart** |
 | Reconnection timeout, seconds | Default 10. Pause between attempts |
 | Collect statistics | Count upload and download traffic of the inbound |
+| Verbose | Off by default. The inbound log gets `debug:` lines: settings, attempts, state changes, clients that connect and disconnect (OpenVPN), and every connection of its clients with its duration and traffic. The OpenVPN server runs with at least `verb 6`, and the log keeps 3000 lines |
 | Port number | Unique, `7800…7898` (the range published by the Docker files); empty → the first free port |
 | Outbound | **Router** — the routes decide, like for the proxy port; **Host** — the host network connection, routes are skipped; or one of the outbounds — everything goes there |
 

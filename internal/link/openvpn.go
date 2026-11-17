@@ -35,6 +35,8 @@ type openvpnDriver struct {
 }
 
 const openvpnTimeout = 60 * time.Second
+const openvpnVerbosity = 3
+const openvpnDebugVerbosity = 6
 const openvpnReady = "Initialization Sequence Completed"
 const openvpnAuthFailed = "AUTH_FAILED"
 const openvpnChallenge = "AUTH_FAILED,CRV1"
@@ -108,13 +110,20 @@ func (driver *openvpnDriver) start(ctx context.Context) error {
 	}
 	driver.tools.removeDevice(driver.device)
 	script := driver.runner.manager.options.Executable + " hook " + hook
+	verbosity := openvpnVerbosity
+	if driver.runner.outbound.Verbose {
+		verbosity = openvpnDebugVerbosity
+	}
 	command := exec.Command(driver.tools.OpenVPN, "--config", path, "--cd", driver.directory,
 		"--dev", driver.device, "--dev-type", kind, "--route-noexec", "--script-security", "2",
 		"--up", script, "--route-up", script, "--auth-retry", "interact", "--auth-nocache",
-		"--verb", "3", "--ignore-unknown-option", "block-outside-dns", "register-dns")
+		"--verb", strconv.Itoa(verbosity), "--ignore-unknown-option", "block-outside-dns",
+		"register-dns")
 	if driver.runner.bypass != 0 {
 		command.Args = append(command.Args, "--mark", strconv.Itoa(driver.runner.bypass))
 	}
+	driver.runner.debugf("routing table %v, command: %v", driver.table,
+		strings.Join(command.Args, " "))
 	terminal, err := startTerminal(command)
 	if err != nil {
 		return err

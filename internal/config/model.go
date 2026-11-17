@@ -101,6 +101,7 @@ type Outbound struct {
 	Attempts         int               `json:"attempts"`
 	ReconnectTimeout int               `json:"reconnect_timeout"`
 	Statistics       bool              `json:"statistics"`
+	Verbose          bool              `json:"verbose"`
 	Slot             int               `json:"slot"`
 	Host             *HostOptions      `json:"host,omitempty"`
 	Socks5           *Socks5Options    `json:"socks5,omitempty"`
