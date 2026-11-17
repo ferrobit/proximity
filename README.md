@@ -16,7 +16,7 @@
   <img alt="Vue" src="https://img.shields.io/badge/Vue-3-42b883?logo=vuedotjs&logoColor=white">
   <img alt="mihomo" src="https://img.shields.io/badge/mihomo-v1.19.34-0b1f2a">
   <img alt="Docker" src="https://img.shields.io/badge/Docker-ready-2496ED?logo=docker&logoColor=white">
-  <a href="LICENSE"><img alt="License: MIT" src="https://img.shields.io/badge/license-MIT-blue"></a>
+  <a href="LICENSE.md"><img alt="License: MIT" src="https://img.shields.io/badge/license-MIT-blue"></a>
 </p>
 
 <p align="center">
@@ -349,5 +349,18 @@ Bug reports and test results from these environments are very welcome.
 
 ## License
 
-Proximity is released under the [MIT License](LICENSE). Bundled third-party components
-(mihomo, OpenVPN, amneziawg-go, amneziawg-tools, GeoIP/GeoSite data) keep their own licenses.
+Proximity is free software distributed under the [MIT License](LICENSE.md), one of the most
+permissive open source licenses. In short:
+
+- You may use, copy, modify, merge, publish, distribute, sublicense and sell the software,
+  in open source and in closed-source commercial products alike.
+- You must keep the copyright notice and the license text in all copies or substantial
+  portions of the software.
+- No warranty: the software is provided "as is", and the authors are not liable for any
+  claim or damages arising from its use.
+
+This summary is for convenience only; the full text in [LICENSE.md](LICENSE.md) is what
+applies. SPDX identifier: `MIT`.
+
+Bundled third-party components (mihomo, OpenVPN, amneziawg-go, amneziawg-tools, GeoIP/GeoSite
+data) keep their own licenses.
