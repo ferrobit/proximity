@@ -37,7 +37,11 @@ All lists refresh themselves; the **Refresh** buttons force an immediate reload.
 
 ![Dashboard](images/dashboard.png)
 
-**Cards** at the top: outbounds (good / total, enabled), routes (and the number
+The dashboard has tabs: **Overview**, **Connection map**, **Outbounds** and
+**Unreachable routes** (the map and the unreachable routes only for signed-in users). The selected tab is
+remembered in the browser.
+
+**Overview** — **cards** at the top: outbounds (good / total, enabled), routes (and the number
 of active router rules), total uploaded and downloaded bytes with the current rate, and
 the router state with its uptime. The capture mode is shown in the header
 (`transparent`).
@@ -58,12 +62,12 @@ active connections over the same time window, with the current, peak and average
 Hover to see the exact count at a moment in time. On narrow screens it moves below the
 throughput chart.
 
-**Outbounds** table: status (enabled / disabled / unused — not referenced by any route or
+**Outbounds** tab — a table: status (enabled / disabled / unused — not referenced by any route or
 fallback), operation state (`good`, `connecting`, `reconnecting`, `failed`), tunnel link
 state and interface, latency, total traffic, current rates with the number of
 connections, time since the last state change.
 
-**Unreachable routes** (signed-in users) — connections that failed, grouped by destination:
+**Unreachable routes** tab (signed-in users) — connections that failed, grouped by destination:
 
 | Column | Meaning |
 |---|---|
@@ -74,6 +78,43 @@ connections, time since the last state change.
 | Count, Last seen | how often and how recently |
 
 Operators can **Clear** the list.
+
+### Connection map
+
+![Connection map](images/connection-map.png)
+
+A live picture of what is connected to what, from left to right:
+
+| Column | Items |
+|---|---|
+| Sources | *Host applications* (transparent capture), the *Proxy port* and every inbound |
+| Router | mihomo, which checks the routes |
+| Routes | routes in priority order (`#1`, `#2` …) and *Everything else* (`MATCH`) |
+| Fallbacks | fallbacks; numbered edges show the priority of their outbounds, the filled number is the outbound in use |
+| Outbounds | outbounds with the remote server, latency and rate, plus `DIRECT` and `REJECT` when used |
+| Internet | destination servers |
+
+An inbound whose outbound is not *Router* is connected straight to its outbound (dotted
+edge). The color of an item and of the edges that lead to it shows the state: green —
+good, blue — connecting, amber — warning, red — down or failed, gray — disabled or
+stopped. Moving dashes show the edges that carry traffic now; the edge from an outbound to
+the Internet gets thicker with the rate.
+
+- Hover over an item to highlight everything that leads to it and everything it leads to,
+  and to see its details. The popup also has an **on/off** switch and, for outbounds,
+  inbounds and the router, **Start**, **Stop** and **Restart**.
+- Click an outbound, inbound, route, fallback or *Everything else* to open its settings
+  dialog (operators and administrators). Changes are applied at once and the map is
+  redrawn. Click the router or a source to open Settings.
+- **Show disabled** hides or shows disabled items.
+- **Zoom**: turn the mouse wheel over the map (the point under the cursor stays in place),
+  or use **−** / **+**; the percentage button returns to 100%. **Fit to screen** (on by
+  default) scales the map so that it fits the window and keeps it fitted when the window
+  is resized. A map larger than the window gets scroll bars; drag an empty place to move
+  it, or hold **Shift** and turn the wheel to scroll sideways. The zoom is remembered in
+  the browser.
+- **Full screen** (the last button) spreads the map over the whole screen; dialogs and
+  popups work there too. **Esc** or the same button returns to the dashboard.
 
 When *Anonymous users can view the dashboard* is on, the Dashboard is visible without
 signing in (secrets and the unreachable routes list are hidden).

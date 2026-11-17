@@ -41,3 +41,12 @@ export const stateLabels = { up: 'good', connecting: 'connecting', reconnecting:
 export const usageColors = { enabled: 'green', disabled: 'default', unused: 'gold' }
 export const reasonColors = { refused: 'red', timeout: 'orange', dns: 'purple', unreachable: 'volcano', 'no route': 'volcano', reset: 'magenta', error: 'default' }
 export const activeStates = ['up', 'connecting', 'reconnecting']
+
+const builtinNames = { DIRECT: 'DIRECT (host default routing)', REJECT: 'REJECT (block)' }
+const targetOption = (item) => ({ value: item.id, label: (builtinNames[item.id] || item.id) + (item.enabled ? '' : ' (disabled)') })
+
+export const targetOptions = (targets) => [
+  { label: 'Built-in', options: targets.filter((item) => item.kind === 'builtin').map(targetOption) },
+  { label: 'Outbounds', options: targets.filter((item) => item.kind === 'outbound').map(targetOption) },
+  { label: 'Fallbacks', options: targets.filter((item) => item.kind === 'fallback').map(targetOption) }
+]

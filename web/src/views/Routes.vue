@@ -68,29 +68,7 @@
       </template>
     </a-table>
     <Fallbacks @changed="load" />
-    <a-modal v-model:open="visible" :title="dialogTitle" width="680px" :confirm-loading="busy" destroy-on-close
-      :ok-button-props="{ disabled: readOnly }" ok-text="Save" @ok="save">
-      <a-form ref="formRef" layout="vertical" :model="form">
-        <a-row :gutter="16">
-          <a-col :span="16"><a-form-item label="ID" name="id" :rules="[{ max: 64, message: 'Up to 64 characters' }]" extra="Unique among routes, allocated automatically when empty">
-            <a-input v-model:value="form.id" :disabled="readOnly" :placeholder="editing ? editing.id : 'Route N'" /></a-form-item></a-col>
-          <a-col :span="8"><a-form-item label="Enabled"><a-switch v-model:checked="form.enabled" :disabled="readOnly" /></a-form-item></a-col>
-          <a-col :span="12"><a-form-item label="Directive" name="directive" :rules="[{ required: true }]">
-            <a-select v-model:value="form.directive" :disabled="readOnly" show-search :options="directives.map((value) => ({ value }))" @change="preview" /></a-form-item></a-col>
-          <a-col :span="12"><a-form-item label="Target" name="target" :rules="[{ required: true, message: 'Select target' }]">
-            <a-select v-model:value="form.target" :disabled="readOnly" show-search :options="targetOptions" @change="preview" /></a-form-item></a-col>
-        </a-row>
-        <a-form-item label="Rule parameters (one per line, lines starting with # are comments)" name="text" :rules="[{ required: true, message: 'Enter at least one parameter' }]" :extra="hints[form.directive]">
-          <a-textarea v-model:value="form.text" class="mono" :rows="8" :disabled="readOnly" spellcheck="false" @change="preview" />
-        </a-form-item>
-        <a-alert v-if="previewError" type="error" show-icon :message="previewError" />
-        <a-collapse v-else-if="previewLines.length" ghost>
-          <a-collapse-panel key="lines" :header="`Router rules: ${previewLines.length}`">
-            <pre class="mono log-view" style="max-height: 180px">{{ previewLines.join('\n') }}</pre>
-          </a-collapse-panel>
-        </a-collapse>
-      </a-form>
-    </a-modal>
+    <RouteDialog v-model:open="visible" :route="editing" :targets="targets" :directives="directives" @saved="load" />
     <a-modal v-model:open="configVisible" title="Generated router (mihomo) configuration" width="860px" :footer="null">
       <pre class="mono log-view">{{ configText }}</pre>
     </a-modal>
@@ -98,32 +76,17 @@
 </template>
 
 <script setup>
-import { computed, onMounted, reactive, ref } from 'vue'
+import { computed, onMounted, ref } from 'vue'
 import { message } from 'ant-design-vue'
 import {
   ArrowDownOutlined, ArrowUpOutlined, CodeOutlined, DeleteOutlined, EditOutlined, EyeOutlined, LockOutlined,
   PlusOutlined, ReloadOutlined, RightOutlined, SwapOutlined, WarningOutlined
 } from '@ant-design/icons-vue'
 import { api, canEdit, id } from '../api'
+import { targetOptions as groupTargets } from '../format'
 import Fallbacks from './Fallbacks.vue'
+import RouteDialog from './RouteDialog.vue'
 
-const hints = {
-  'DOMAIN': 'Exact host name, for example: www.example.com',
-  'DOMAIN-SUFFIX': 'Domain and all its subdomains, for example: example.com',
-  'DOMAIN-KEYWORD': 'Part of the host name, for example: google',
-  'DOMAIN-WILDCARD': 'Host name with * and ? wildcards, for example: *.cdn.example.com',
-  'DOMAIN-REGEX': 'Regular expression for the host name, for example: ^ads\\d+\\.example\\.com$',
-  'GEOSITE': 'Category of the geosite database, for example: youtube',
-  'GEOIP': 'Country code of the destination IP, for example: RU',
-  'IP-CIDR': 'IP, network or IP:port. Examples: 10.0.0.0/8, 1.2.3.4 (→ /32), 1.2.3.4:443 (→ IP and port rule)',
-  'IP-ASN': 'Autonomous system number, for example: 13335',
-  'SRC-IP-CIDR': 'Source address or network of the client, for example: 192.168.1.0/24',
-  'DST-PORT': 'Destination port or range, for example: 443 or 8000-8100',
-  'SRC-PORT': 'Source port or range',
-  'NETWORK': 'tcp or udp',
-  'PROCESS-NAME': 'Process name, works only with host network mode, for example: curl',
-  'PROCESS-PATH': 'Full path of the process, works only with host network mode'
-}
 const columns = [
   { title: '', key: 'order', width: 90 },
   { title: '#', key: 'number', width: 44 },
@@ -143,31 +106,14 @@ const targets = ref([])
 const defaultTarget = ref('DIRECT')
 const loading = ref(false)
 const visible = ref(false)
-const busy = ref(false)
 const editing = ref(null)
 const allWarnings = ref(false)
-const formRef = ref()
-const form = reactive({ id: '', directive: 'DOMAIN-SUFFIX', target: undefined, enabled: true, text: '' })
-const previewLines = ref([])
-const previewError = ref('')
 const configVisible = ref(false)
 const configText = ref('')
-let previewTimer = null
 
-const readOnly = computed(() => !!(editing.value && editing.value.provided))
-const dialogTitle = computed(() => !editing.value ? 'Add route' : readOnly.value ? 'Provided route (read-only)' : 'Edit route')
 const shownWarnings = computed(() => allWarnings.value ? warnings.value : warnings.value.slice(0, 5))
 const warned = computed(() => new Set(warnings.value.flatMap((item) => item.keys)))
-const targetOptions = computed(() => [
-  { label: 'Built-in', options: targets.value.filter((item) => item.kind === 'builtin').map(option) },
-  { label: 'Outbounds', options: targets.value.filter((item) => item.kind === 'outbound').map(option) },
-  { label: 'Fallbacks', options: targets.value.filter((item) => item.kind === 'fallback').map(option) }
-])
-
-function option(item) {
-  const names = { DIRECT: 'DIRECT (host default routing)', REJECT: 'REJECT (block)' }
-  return { value: item.id, label: (names[item.id] || item.id) + (item.enabled ? '' : ' (disabled)') }
-}
+const targetOptions = computed(() => groupTargets(targets.value))
 
 function targetColor(target) {
   const found = targets.value.find((item) => item.id === target)
@@ -195,32 +141,7 @@ async function load() {
 
 function open(record) {
   editing.value = record
-  Object.assign(form, record
-    ? { id: record.id, directive: record.directive, target: record.target, enabled: record.enabled, text: record.params.join('\n') }
-    : { id: '', directive: 'DOMAIN-SUFFIX', target: undefined, enabled: true, text: '' })
-  previewLines.value = []
-  previewError.value = ''
   visible.value = true
-  if (record) preview()
-}
-
-const body = () => ({ id: form.id, directive: form.directive, target: form.target, enabled: form.enabled, params: form.text.split('\n') })
-
-function preview() {
-  clearTimeout(previewTimer)
-  previewTimer = setTimeout(async () => {
-    if (!form.text.trim()) {
-      previewLines.value = []
-      previewError.value = ''
-      return
-    }
-    try {
-      previewLines.value = (await api.post('/api/routes/preview', { ...body(), target: form.target || 'TARGET' })).lines
-      previewError.value = ''
-    } catch (error) {
-      previewError.value = error.message
-    }
-  }, 350)
 }
 
 async function act(action) {
@@ -232,16 +153,6 @@ async function act(action) {
     message.error(error.message)
     return false
   }
-}
-
-async function save() {
-  await formRef.value.validate()
-  busy.value = true
-  const done = await act(() => editing.value
-    ? api.put(`/api/routes/${id(editing.value.key)}`, body())
-    : api.post('/api/routes', body()))
-  busy.value = false
-  visible.value = !done
 }
 
 const toggle = (record, enabled) => act(() => api.put(`/api/routes/${id(record.key)}`, { ...record, enabled }))
