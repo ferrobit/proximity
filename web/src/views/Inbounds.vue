@@ -86,7 +86,7 @@
     </a-table>
     <InboundDialog v-model:open="visible" :inbound="current" :kind="kind" :outbounds="outbounds" :ports="ports" @saved="load" />
     <a-modal v-model:open="logVisible" :title="`Inbound log: ${logTitle}`" width="900px" :footer="null" destroy-on-close>
-      <LogView :path="`/api/inbounds/${id(logTitle)}/log`" />
+      <LogView :path="`/api/inbounds/${id(logTitle)}/log`" :file-name="`inbound-${logTitle}`" />
     </a-modal>
   </div>
 </template>

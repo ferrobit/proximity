@@ -65,7 +65,7 @@
     </a-table>
     <OutboundDialog v-model:open="visible" :outbound="current" :kind="kind" @saved="load" />
     <a-modal v-model:open="logVisible" :title="`Connection log: ${logTitle}`" width="900px" :footer="null" destroy-on-close>
-      <LogView :path="`/api/outbounds/${id(logTitle)}/log`" />
+      <LogView :path="`/api/outbounds/${id(logTitle)}/log`" :file-name="`outbound-${logTitle}`" />
     </a-modal>
   </div>
 </template>

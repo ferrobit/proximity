@@ -7,6 +7,9 @@
       <span class="spacer" />
       <a-checkbox v-model:checked="follow">Follow new lines</a-checkbox>
       <a-button size="small" @click="copy"><template #icon><CopyOutlined /></template>Copy</a-button>
+      <a-tooltip title="Save the log as a text file">
+        <a-button size="small" :disabled="!lines.length" @click="download"><template #icon><DownloadOutlined /></template>Download</a-button>
+      </a-tooltip>
     </div>
     <div ref="view" :class="['mono', 'log-view', 'log-body', { 'log-dark': dark }]" @scroll="scrolled">
       <div v-if="!lines.length" class="log-empty">No messages yet</div>
@@ -23,7 +26,7 @@
 <script setup>
 import { computed, nextTick, onMounted, onUnmounted, ref } from 'vue'
 import { message, theme } from 'ant-design-vue'
-import { CopyOutlined } from '@ant-design/icons-vue'
+import { CopyOutlined, DownloadOutlined } from '@ant-design/icons-vue'
 import { api } from '../api'
 import { copyText } from '../clipboard'
 import { parseLogLine } from './logSyntax'
@@ -31,7 +34,8 @@ import { useDarkTheme } from './ruleTheme'
 
 const props = defineProps({
   path: { type: String, required: true },
-  interval: { type: Number, default: 1500 }
+  interval: { type: Number, default: 1500 },
+  fileName: { type: String, default: 'proximity' }
 })
 const lines = ref([])
 const follow = ref(true)
@@ -75,6 +79,16 @@ async function copy() {
   } catch (error) {
     message.error('Clipboard is not available')
   }
+}
+
+function download() {
+  const stamp = new Date().toISOString().replace(/\.\d+Z$/, '').replace(/[-:]/g, '').replace('T', '-')
+  const name = `${props.fileName.replace(/[^\p{L}\p{N}._-]+/gu, '-')}-${stamp}.log`
+  const link = document.createElement('a')
+  link.href = URL.createObjectURL(new Blob([lines.value.join('\n') + '\n'], { type: 'text/plain' }))
+  link.download = name
+  link.click()
+  setTimeout(() => URL.revokeObjectURL(link.href), 1000)
 }
 
 onMounted(() => {

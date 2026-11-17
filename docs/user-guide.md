@@ -255,7 +255,8 @@ OpenVPN is checked by pinging the VPN gateway through the tunnel.
 The live log of an outbound (last 300 lines): process output, answered prompts, applied
 routes, check results, starts and stops. It is saved in `logs/` of the settings folder and
 survives container restarts. It refreshes every 1.5 s; **Follow new lines** keeps it scrolled to
-the bottom, **Copy** copies the whole log.
+the bottom, **Copy** copies the whole log, **Download** saves it as
+`outbound-<ID>-<date>-<time>.log` (`inbound-…` for inbounds, time in UTC).
 
 Lines are highlighted (the same in the inbound log):
 
