@@ -129,13 +129,31 @@
             <a-col :span="12"><a-form-item label="Private key password (optional)"><a-input-password v-model:value="form.openvpn.key_password" autocomplete="new-password" /></a-form-item></a-col>
           </a-row>
         </a-tab-pane>
-        <a-tab-pane v-if="tunnel" key="monitoring" force-render>
+        <a-tab-pane key="monitoring" force-render>
           <template #tab><HeartOutlined /> Monitoring</template>
-          <a-form-item label="Enable monitoring"><a-switch v-model:checked="form.monitoring.enabled" /></a-form-item>
-          <a-alert type="info" show-icon style="margin-bottom: 16px" :message="kind === 'openvpn'
+          <a-form-item :extra="recoveryHint">
+            <a-checkbox v-model:checked="form.recovery.enabled">Restore lost connections</a-checkbox>
+          </a-form-item>
+          <a-row :gutter="16">
+            <a-col :span="12">
+              <a-form-item label="Restore after, seconds" :name="['recovery', 'delay']" :rules="range(1, 86400)" extra="Pause before a new series of connection attempts">
+                <a-input-number v-model:value="form.recovery.delay" :disabled="!form.recovery.enabled" style="width: 100%" />
+              </a-form-item>
+            </a-col>
+            <a-col :span="12">
+              <a-form-item label="Recovery attempts" :name="['recovery', 'attempts']" :rules="range(0, 1000)" extra="0: unlimited">
+                <a-input-number v-model:value="form.recovery.attempts" :disabled="!form.recovery.enabled" style="width: 100%" />
+              </a-form-item>
+            </a-col>
+          </a-row>
+          <a-divider v-if="tunnel" />
+          <a-form-item v-if="tunnel" label="Enable monitoring" extra="A failed check is a signal that the connection is lost: reconnection starts without waiting for the tunnel to notice">
+            <a-switch v-model:checked="form.monitoring.enabled" />
+          </a-form-item>
+          <a-alert v-if="tunnel" type="info" show-icon style="margin-bottom: 16px" :message="kind === 'openvpn'
             ? 'Pings the default gateway obtained from the VPN through the tunnel.'
             : 'Opens a TCP connection to the check target through the tunnel.'" />
-          <a-row :gutter="16">
+          <a-row v-if="tunnel" :gutter="16">
             <a-col :span="24" v-if="kind === 'amneziawg'">
               <a-form-item label="Check target (host:port)" :name="['monitoring', 'target']" :rules="[{ pattern: /^[^\s:]+:\d{1,5}$|^\[[0-9a-fA-F:]+\]:\d{1,5}$/, message: 'host:port expected' }]">
                 <a-input v-model:value="form.monitoring.target" placeholder="1.1.1.1:443" />
@@ -191,8 +209,11 @@ const authFields = ['username', 'password', 'otp_key', 'otp_mode', 'key_password
 const verboseHint = computed(() => tunnel.value ? 'Detailed debug log: Proximity messages, traced connections and maximum verbosity of the tunnel' : 'Detailed debug log: Proximity messages and traced connections')
 const autostartHint = 'Off: after the router starts the outbound stays stopped until Start. An outbound that was stopped or failed is not started again.'
 const attemptsHint = computed(() => tunnel.value
-  ? 'When all attempts in a row fail, the tunnel fails and stays down until Start or Restart'
-  : 'When all attempts in a row fail, the outbound is marked failed; checks continue and it recovers by itself')
+  ? 'When all attempts in a row fail, the tunnel is restored as set on the Monitoring tab; without recovery it fails and stays down until Start or Restart'
+  : 'When all attempts in a row fail, the outbound is marked failed and is checked again as set on the Monitoring tab')
+const recoveryHint = computed(() => tunnel.value
+  ? 'When all connection attempts fail, the tunnel waits and starts a new series of attempts. Errors that need your action (wrong credentials, rejected certificate, bad configuration) are not retried. Off: the tunnel fails and stays down until Start or Restart'
+  : 'A failed outbound is checked again after the pause and returns to good by itself. Off: it stays failed until Restart')
 const title = computed(() => props.outbound ? `Edit outbound '${props.outbound.id}'` : `Add ${typeLabels[props.kind]} outbound`)
 const interfaceOptions = computed(() => interfaces.value.map((item) => ({
   value: item.name,
@@ -207,7 +228,8 @@ function defaults(kind) {
     http: { server: '', port: 3128, single: true, https_server: '', https_port: 3128, ftp_server: '', ftp_port: 3128, username: '', password: '', tls: false, skip_cert_verify: false },
     openvpn: { config: '', username: '', password: '', otp_key: '', otp_mode: 'challenge', key_password: '', use_dns: true },
     amneziawg: { config: '', use_dns: true },
-    monitoring: { enabled: true, interval: 30, timeout: 5, retries: 3, target: '1.1.1.1:443' }
+    monitoring: { enabled: true, interval: 30, timeout: 5, retries: 3, target: '1.1.1.1:443' },
+    recovery: { enabled: true, delay: 60, attempts: 0 }
   }
 }
 
@@ -288,14 +310,15 @@ async function save() {
     const first = failure.errorFields && failure.errorFields[0]
     if (first) {
       const group = String(first.name[0])
-      tab.value = group === 'monitoring' ? 'monitoring' : ['id', 'attempts', 'reconnect_timeout'].includes(group) ? 'general'
+      tab.value = group === 'monitoring' || group === 'recovery' ? 'monitoring' : ['id', 'attempts', 'reconnect_timeout'].includes(group) ? 'general'
         : group === 'openvpn' && authFields.includes(String(first.name[1])) ? 'authentication' : 'type'
     }
     return
   }
   const body = {
     id: form.id, type: props.kind, enabled: form.enabled, autostart: form.autostart, attempts: form.attempts,
-    reconnect_timeout: form.reconnect_timeout, statistics: form.statistics, verbose: form.verbose
+    reconnect_timeout: form.reconnect_timeout, statistics: form.statistics, verbose: form.verbose,
+    recovery: { ...form.recovery }
   }
   body[props.kind] = { ...form[props.kind] }
   if (props.kind === 'host' && body.host.mode !== 'interface') {

@@ -167,7 +167,7 @@ Every outbound dialog has a **General** tab:
 | ID | Unique among outbounds *and* fallbacks; empty → `<Type> <N>`. Renaming updates all references and does not interrupt a tunnel |
 | Enabled | Off: the outbound is stopped and its routes are skipped |
 | Start automatically when the router starts | On by default. Off: after the router starts, the outbound stays stopped until **Start** |
-| Connection attempts | Default 3. Failed attempts in a row before the outbound is `failed`: a tunnel then stays down until **Start** / **Restart**; HOST and proxies keep being checked and recover by themselves |
+| Connection attempts | Default 3. Failed attempts in a row before the connection is considered lost; what happens next is set by *Restore lost connections* on the **Monitoring** tab |
 | Reconnection timeout, seconds | Default 10. Pause between attempts |
 | Statistics | Count traffic and draw it on the chart |
 | Verbose | Off by default. Writes detailed debug information to the [connection log](#connection-log) (see below) |
@@ -260,7 +260,25 @@ as **Routes of OpenVPN N**.
 
 ### Monitoring
 
-Tunnels (OpenVPN, AmneziaWG) have a **Monitoring** tab:
+Every outbound and inbound has a **Monitoring** tab. It starts with the recovery settings:
+
+| Field | Meaning |
+|---|---|
+| Restore lost connections | On by default. When all *Connection attempts* fail, Proximity waits and starts a new series of attempts; the state is `reconnecting` with the message `recovery attempt N: …`. Off: the service becomes `failed` and waits for **Start** / **Restart** |
+| Restore after, seconds | Default 60 (1…86400). Pause before a new series of attempts |
+| Recovery attempts | Default 0 — unlimited. Otherwise the number of series in a row (1…1000) after which the service becomes `failed`. The counter is reset when the connection works again |
+
+Recovery covers everything that can pass by itself: an unreachable server, a timeout, a
+failed monitoring check, time that is not synchronized yet, a busy port of an inbound.
+Errors of a tunnel or inbound that need your action are not retried and end as `failed`
+at once: `authentication failed` without an OTP key, `… is required by server`, `invalid
+private key password`, `server certificate is rejected`, an overlapping tunnel network, a
+broken configuration. A HOST or proxy outbound stays `failed` between the checks and
+returns to `good` by itself; for it *Restore after* is the interval of these checks.
+
+Tunnels (OpenVPN, AmneziaWG) also have the checks of a working connection below. A failed
+check is one of the signals that the connection is lost: it starts reconnection without
+waiting for the tunnel itself to notice.
 
 ![Monitoring tab](images/outbound-monitoring.png)
 
@@ -388,7 +406,7 @@ keeps its state after a container restart.
 | ID | Unique among inbounds; empty → `SOCKS5 <N>` / `OpenVPN <N>` |
 | Enabled | Off: the port is closed |
 | Start automatically when the router starts | On by default: the inbound starts with the router (unless it was stopped or failed) |
-| Connection attempts | Default 3. Failed starts in a row before the inbound is `failed`; it then stays stopped until **Start** / **Restart** |
+| Connection attempts | Default 3. Failed starts in a row before the inbound is considered lost; what happens next is set by *Restore lost connections* on the **Monitoring** tab (see [Monitoring](#monitoring)) |
 | Reconnection timeout, seconds | Default 10. Pause between attempts |
 | Statistics | Count upload and download traffic of the inbound |
 | Verbose | Off by default. The inbound log gets `debug:` lines: settings, attempts, state changes, clients that connect and disconnect (OpenVPN), and every connection of its clients with its duration and traffic. The OpenVPN server runs with at least `verb 6`, and the log keeps more lines (3000 by default) |

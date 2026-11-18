@@ -562,5 +562,9 @@ func (outbound Outbound) Clone() Outbound {
 		monitoring := *outbound.Monitoring
 		outbound.Monitoring = &monitoring
 	}
+	if outbound.Recovery != nil {
+		recovery := *outbound.Recovery
+		outbound.Recovery = &recovery
+	}
 	return outbound
 }

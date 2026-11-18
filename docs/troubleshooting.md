@@ -56,8 +56,12 @@ they are used only when there are no users.
 | `failed to run 'awg setconf …'` (AmneziaWG) | Check the configuration: keys and the Amnezia parameters (`Jc`, `S1`, `H1`…) must match the server |
 | HOST outbound `failed` | *Probe target* (Settings, default `1.1.1.1:443`) is not reachable through this uplink. Change it to a host your network allows |
 
-A `failed` HOST outbound keeps being checked and returns to `good` by itself. A `failed`
-tunnel waits for **Start**, **Restart** or a configuration change — also after a container
+With *Restore lost connections* (the **Monitoring** tab, on by default) a tunnel that
+lost its server stays `reconnecting` with the message `recovery attempt N: …` and comes
+back by itself; a `failed` HOST outbound keeps being checked and returns to `good`. A
+tunnel is `failed` when recovery is off, when *Recovery attempts* are used up (the log
+says `recovery is stopped after N attempts`) or when the error needs your action. It then
+waits for **Start**, **Restart** or a configuration change — also after a container
 restart; its log keeps the lines of the failed attempt.
 
 ## Traffic goes through the wrong outbound

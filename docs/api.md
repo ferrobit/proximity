@@ -91,6 +91,7 @@ Outbound object (fields depend on `type`):
   "autostart": true,
   "attempts": 3,
   "reconnect_timeout": 10,
+  "recovery": {"enabled": true, "delay": 60, "attempts": 0},
   "statistics": true,
   "verbose": false,
   "socks5": {"server": "proxy.ams.example.net", "port": 1080,
@@ -112,8 +113,13 @@ Tunnels also take `monitoring: {enabled, interval, timeout, retries, target}`.
 Common fields of outbounds and inbounds: `autostart` (default `true` when omitted) — start
 when the router starts; `attempts` (1…100, default 3) — failed attempts in a row before
 the state becomes `failed`; `reconnect_timeout` (1…3600 s, default 10) — pause between
-attempts. A failed tunnel or inbound waits for **Start** / **Restart**; a failed HOST or
-proxy outbound keeps being checked every *Check interval* and recovers by itself.
+attempts; `recovery: {enabled, delay, attempts}` (default `{true, 60, 0}` when omitted) —
+after the attempts are exhausted wait `delay` seconds (1…86400) and start a new series,
+at most `attempts` series in a row (0…1000, 0 — unlimited). While a tunnel or an inbound
+is being restored its state is `reconnecting` and the message starts with `recovery
+attempt N`; with `enabled: false`, after the last series or after an error that needs a
+user action it is `failed` and waits for **Start** / **Restart**. A failed HOST or proxy
+outbound stays `failed` and is checked again every `delay` seconds.
 Configurations before version 7 move `host.attempts` / `host.reconnect_timeout` and
 `monitoring.reconnect_attempts + 1` / `monitoring.reconnect_delay` here.
 
@@ -141,8 +147,8 @@ stopped by a user, by the router stop, or not started because `autostart` is off
 | `GET /api/inbounds/{id}/config?user=&embed=&host=` | 2 | OpenVPN client configuration → `{config, file}`; `file` is `<ID>-<username>.conf`. Empty `user` = anonymous, `embed=true` writes the credentials into the file, `host` is used when the inbound has no public address |
 | `POST /api/inbounds/generate` | 2 | `{kind, ca_certificate, ca_key}` → new key material. `kind`: `all`, `pki` (CA + server + client), `server`, `client` (both signed by the given CA), `tls_crypt`, `otp_key`, `tls` (self-signed certificate for SOCKS5) |
 
-Inbound object: `{id, type, enabled, autostart, attempts, reconnect_timeout, statistics,
-verbose, port, outbound, anonymous,
+Inbound object: `{id, type, enabled, autostart, attempts, reconnect_timeout, recovery,
+statistics, verbose, port, outbound, anonymous,
 users: [{enabled, name, password}]}` plus one block by `type`. `outbound` is `@router`
 (routes decide), `@host` (host network connection) or an outbound ID.
 

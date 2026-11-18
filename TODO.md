@@ -90,11 +90,12 @@ document `proximity-openvpn-test-report.md`.
   - `ping` to a destination routed to a tunnel or proxy leaves through
     the default route in clear text and gets no reply.
 
-- [ ] **No self-recovery of a `failed` service**
-  - An outbound that used all attempts stays `failed` until a manual
-    Restart (server down for about 3 minutes with defaults).
-  - The same after an NTP outage at start: OpenVPN services fail and
-    do not start when time becomes available.
+- [x] **No self-recovery of a `failed` service**
+  - Done: *Restore lost connections* on the Monitoring tab of every
+    outbound and inbound (on by default, 60 s, unlimited). Covers an
+    unreachable server, a failed monitoring check, an NTP outage at
+    start and a busy inbound port; errors that need a user action
+    still end as `failed`.
 
 - [ ] **Default inbound networks collide between instances**
   - Every instance uses `10.77.<N>.0/24`, so two default instances cannot
@@ -130,6 +131,7 @@ document `proximity-openvpn-test-report.md`.
 ## Performance
 
 - [ ] **Investigate high latency when routing traffic through Proximity**
+  - Found and fixed: OpenVPN over TCP lacked `TCP_NODELAY` — 168 ms → 2 ms per HTTP request.
   - Measure baseline vs. Proximity: same request directly from the host
     and through each inbound / route / outbound (`curl -w` timings,
     `ping`, `mtr`, `dig`).

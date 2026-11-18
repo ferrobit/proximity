@@ -310,14 +310,14 @@ func (manager *Manager) listen(inbound config.Inbound, signature string,
 func (runner *inboundRunner) run(ctx context.Context) {
 	defer close(runner.done)
 	defer runner.acceptor.dispose()
-	failures := 0
+	policy := runner.policy()
+	failures, recoveries := 0, 0
 	for ctx.Err() == nil {
-		runner.debugf("starting the inbound, attempt %v of %v", failures+1,
-			max(1, runner.inbound.Attempts))
+		runner.debugf("starting the inbound, attempt %v of %v", failures+1, policy.limit)
 		err := runner.acceptor.start(ctx)
 		if err == nil {
 			runner.debugf("the inbound is started")
-			failures = 0
+			failures, recoveries = 0, 0
 			runner.update(func(status *InboundStatus) {
 				runner.acceptor.describe(status)
 				status.State, status.Message = StateUp, ""
@@ -329,20 +329,32 @@ func (runner *inboundRunner) run(ctx context.Context) {
 			break
 		}
 		runner.logf("inbound failed: %v", err)
-		state, fatal := StateReconnecting, &fatalError{}
-		if failures++; errors.As(err, &fatal) || failures >= max(1, runner.inbound.Attempts) {
-			state = StateFailed
+		state, message, pause, fatal := StateReconnecting, err.Error(), policy.delay, &fatalError{}
+		if failures++; errors.As(err, &fatal) || failures >= policy.limit {
+			runner.logf("all %v connection attempts failed", failures)
+			if recoveries++; policy.recovers(err, recoveries) {
+				failures, pause = 0, policy.pause
+				message = fmt.Sprintf("%v: %v", policy.describe(recoveries), err)
+				runner.logf("%v in %v", policy.describe(recoveries), policy.pause)
+			} else if state = StateFailed; policy.recovery && recoveries > 1 {
+				runner.logf("recovery is stopped after %v attempts", recoveries-1)
+			}
 		}
 		runner.update(func(status *InboundStatus) {
-			status.State, status.Message, status.Clients = state, err.Error(), []InboundClient{}
+			status.State, status.Message, status.Clients = state, message, []InboundClient{}
 		})
 		if state == StateFailed {
-			runner.logf("all %v connection attempts failed", failures)
 			<-ctx.Done()
 		} else {
-			sleep(ctx, time.Duration(runner.inbound.ReconnectTimeout)*time.Second)
+			sleep(ctx, pause)
 		}
 	}
+}
+
+func (runner *inboundRunner) policy() policy {
+	result := policy{limit: max(1, runner.inbound.Attempts), exhausted: StateFailed, terminal: true,
+		delay: time.Duration(runner.inbound.ReconnectTimeout) * time.Second}
+	return result.restore(runner.inbound.Recovery)
 }
 
 func (runner *inboundRunner) watch(ctx context.Context) error {
@@ -441,6 +453,10 @@ func (runner *inboundRunner) debugSettings() {
 		len(inbound.ActiveUsers()), len(inbound.Users))
 	runner.debugf("attempts %v, reconnect timeout %v s, statistics %v", inbound.Attempts,
 		inbound.ReconnectTimeout, inbound.Statistics)
+	if recovery := inbound.Recovery; recovery != nil {
+		runner.debugf("recovery %v, delay %v s, attempts %v", recovery.Enabled, recovery.Delay,
+			recovery.Attempts)
+	}
 	if server := inbound.OpenVPN; server != nil {
 		runner.debugf("protocol %v, listen '%v', network '%v', verbosity %v", server.Protocol,
 			server.Listen, server.Network, max(server.Verbosity, openvpnDebugVerbosity))

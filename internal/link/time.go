@@ -32,7 +32,7 @@ func (manager *Manager) synchronize(ctx context.Context,
 	if err != nil && ctx.Err() != nil {
 		return nil, err
 	} else if err != nil {
-		return nil, &fatalError{err}
+		return nil, &fatalError{&clockError{err}}
 	}
 	if offset := timeClock.Offset(); offset == 0 {
 		logf("time: %v", status.Message)

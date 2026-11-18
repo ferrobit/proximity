@@ -77,14 +77,21 @@ type runner struct {
 }
 
 type policy struct {
-	limit     int
-	delay     time.Duration
-	exhausted string
-	terminal  bool
-	verify    bool
+	limit      int
+	delay      time.Duration
+	exhausted  string
+	terminal   bool
+	verify     bool
+	recovery   bool
+	pause      time.Duration
+	recoveries int
 }
 
 type fatalError struct {
+	cause error
+}
+
+type clockError struct {
 	cause error
 }
 
@@ -135,6 +142,38 @@ func (failure *fatalError) Error() string {
 
 func (failure *fatalError) Unwrap() error {
 	return failure.cause
+}
+
+func (failure *clockError) Error() string {
+	return failure.cause.Error()
+}
+
+func (failure *clockError) Unwrap() error {
+	return failure.cause
+}
+
+func (policy policy) restore(recovery *config.Recovery) policy {
+	if recovery != nil {
+		policy.recovery, policy.recoveries = recovery.Enabled, recovery.Attempts
+		policy.pause = time.Duration(recovery.Delay) * time.Second
+	}
+	return policy
+}
+
+func (policy policy) recovers(err error, count int) bool {
+	fatal, clock := &fatalError{}, &clockError{}
+	if !policy.recovery || (policy.recoveries != 0 && count > policy.recoveries) {
+		return false
+	}
+	// NOTE: An error of configuration or credentials does not go away by itself.
+	return !policy.terminal || !errors.As(err, &fatal) || errors.As(err, &clock)
+}
+
+func (policy policy) describe(count int) string {
+	if policy.recoveries == 0 {
+		return fmt.Sprintf("recovery attempt %v", count)
+	}
+	return fmt.Sprintf("recovery attempt %v of %v", count, policy.recoveries)
 }
 
 func (manager *Manager) SetActive(active bool, snapshot config.Config) {
@@ -438,9 +477,10 @@ func (runner *runner) policy() policy {
 	result := policy{limit: max(1, runner.outbound.Attempts), exhausted: StateFailed,
 		delay: time.Duration(runner.outbound.ReconnectTimeout) * time.Second}
 	if result.terminal = runner.outbound.IsTunnel(); !result.terminal {
-		result.verify = runner.settings.ConnectivityChecks
+		result.verify, result.recovery = runner.settings.ConnectivityChecks, true
+		result.pause = time.Duration(runner.settings.CheckInterval) * time.Second
 	}
-	return result
+	return result.restore(runner.outbound.Recovery)
 }
 
 func (runner *runner) run(ctx context.Context) {
@@ -448,7 +488,7 @@ func (runner *runner) run(ctx context.Context) {
 	driver := makeDriver(runner)
 	defer driver.dispose()
 	policy := runner.policy()
-	failures, state, message := 0, StateConnecting, ""
+	failures, recoveries, state, message := 0, 0, StateConnecting, ""
 	for ctx.Err() == nil {
 		runner.update(func(status *Status) {
 			status.State, status.Message = state, message
@@ -469,7 +509,7 @@ func (runner *runner) run(ctx context.Context) {
 				}
 			})
 			err = runner.watch(ctx, driver, policy.verify, func() {
-				failures = 0
+				failures, recoveries = 0, 0
 			})
 		}
 		driver.stop()
@@ -483,10 +523,20 @@ func (runner *runner) run(ctx context.Context) {
 				runner.logf("connection failed after %v of %v attempts", failures, policy.limit)
 			}
 			state, message = policy.exhausted, err.Error()
-			if runner.fail(state, message); policy.terminal {
+			if recoveries++; !policy.recovers(err, recoveries) {
+				if runner.fail(state, message); policy.recovery && recoveries > 1 {
+					runner.logf("recovery is stopped after %v attempts", recoveries-1)
+				}
 				<-ctx.Done()
+			} else if policy.terminal {
+				failures, state = 0, StateReconnecting
+				message = fmt.Sprintf("%v: %v", policy.describe(recoveries), err)
+				runner.fail(state, message)
+				runner.logf("%v in %v", policy.describe(recoveries), policy.pause)
+				sleep(ctx, policy.pause)
 			} else {
-				sleep(ctx, time.Duration(runner.settings.CheckInterval)*time.Second)
+				runner.fail(state, message)
+				sleep(ctx, policy.pause)
 			}
 		} else {
 			state = StateReconnecting
@@ -626,6 +676,10 @@ func (runner *runner) debugSettings() {
 	outbound, settings := runner.outbound, runner.settings
 	runner.debugf("type %v, attempts %v, reconnect timeout %v s, statistics %v", outbound.Type,
 		outbound.Attempts, outbound.ReconnectTimeout, outbound.Statistics)
+	if recovery := outbound.Recovery; recovery != nil {
+		runner.debugf("recovery %v, delay %v s, attempts %v", recovery.Enabled, recovery.Delay,
+			recovery.Attempts)
+	}
 	if monitoring := outbound.Monitoring; outbound.IsTunnel() && monitoring != nil &&
 		monitoring.Enabled {
 		runner.debugf("monitoring every %v s, timeout %v s, retries %v, target '%v'",

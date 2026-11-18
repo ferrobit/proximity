@@ -104,6 +104,7 @@ func TestAddInbound_Defaults(t *testing.T) {
 	require.Empty(t, socks.Target())
 	require.False(t, socks.Direct())
 	require.Equal(t, &Socks5Server{Listen: ListenAny, UDP: true}, socks.Socks5)
+	require.Equal(t, &Recovery{Enabled: true, Delay: 60}, socks.Recovery)
 	require.Nil(t, socks.OpenVPN)
 	require.Equal(t, []InboundUser{{Enabled: true, Name: "alice", Password: "secret"}},
 		socks.ActiveUsers())
@@ -151,9 +152,11 @@ func TestAddInbound_Defaults(t *testing.T) {
 	{
 		clone := config.Clone()
 		clone.Inbounds[0].Users[0].Name, clone.Inbounds[0].Socks5.Listen = "x", "10.0.0.9"
+		clone.Inbounds[0].Recovery.Attempts = 9
 		clone.Inbounds[1].OpenVPN.Routes[0], clone.Inbounds[1].OpenVPN.DNS[0] = "x", "x"
 		require.Equal(t, "alice", config.Inbounds[0].Users[0].Name)
 		require.Equal(t, ListenAny, config.Inbounds[0].Socks5.Listen)
+		require.Equal(t, 0, config.Inbounds[0].Recovery.Attempts)
 		require.Equal(t, "192.168.10.0/24", config.Inbounds[1].OpenVPN.Routes[0])
 		require.Equal(t, "10.0.0.53", config.Inbounds[1].OpenVPN.DNS[0])
 	}
@@ -184,6 +187,10 @@ func TestAddInbound_Invalid(t *testing.T) {
 		{Inbound{Type: TypeSocks5, ID: "bad/id"}, "invalid ID 'bad/id'"},
 		{Inbound{Type: TypeSocks5, Port: 7800}, "port (7800) is used by inbound 'OpenVPN 1'"},
 		{Inbound{Type: TypeSocks5, Port: 7899}, "invalid port (7899), expected 7800..7898"},
+		{Inbound{Type: TypeSocks5, Recovery: &Recovery{Delay: 86401}},
+			"invalid recovery delay (86401), expected 1..86400"},
+		{Inbound{Type: TypeSocks5, Recovery: &Recovery{Enabled: true, Attempts: 1001}},
+			"invalid recovery attempts (1001), expected 0..1000"},
 		{Inbound{Type: TypeSocks5, Outbound: "missing"}, "outbound 'missing' does not exist"},
 		{Inbound{Type: TypeSocks5, Users: make([]InboundUser, 257)}, "invalid number of users (257)"},
 		{Inbound{Type: TypeSocks5, Users: []InboundUser{{Name: "a b", Password: "x"}}},
@@ -288,6 +295,9 @@ func TestAddOutbound_Defaults(t *testing.T) {
 		*config.Outbounds[3].Monitoring)
 	require.Equal(t, [2]int{3, 10}, [2]int{config.Outbounds[3].Attempts,
 		config.Outbounds[3].ReconnectTimeout})
+	for _, outbound := range config.Outbounds {
+		require.Equal(t, &Recovery{Enabled: true, Delay: 60}, outbound.Recovery)
+	}
 	require.Equal(t, OTPChallenge, config.Outbounds[3].OpenVPN.OTPMode)
 	require.True(t, config.Outbounds[2].IsSplit())
 	require.False(t, config.Outbounds[1].IsSplit())
@@ -301,6 +311,11 @@ func TestAddOutbound_Defaults(t *testing.T) {
 		require.True(t, outbound.Autostart)
 		require.Equal(t, 2, outbound.Slot)
 		require.Nil(t, outbound.Socks5)
+		outbound, err = config.AddOutbound(Outbound{Type: TypeHost,
+			Recovery: &Recovery{Attempts: 5}})
+		require.NoError(t, err)
+		require.Equal(t, &Recovery{Delay: 60, Attempts: 5}, outbound.Recovery)
+		require.NoError(t, config.RemoveOutbound(outbound.ID))
 		require.Equal(t, "HOST 2", config.NextID(TypeLabel(TypeHost)))
 	}
 }
@@ -344,6 +359,13 @@ func TestAddOutbound_Invalid(t *testing.T) {
 			Monitoring: &Monitoring{Interval: 5, Timeout: 1}}, "invalid monitoring retries (0)"},
 		{Outbound{Type: TypeHost, Attempts: 101}, "invalid connection attempts (101)"},
 		{Outbound{Type: TypeHost, ReconnectTimeout: 3601}, "invalid reconnection timeout (3601)"},
+		{Outbound{Type: TypeHost, Recovery: &Recovery{Enabled: true, Delay: 86401}},
+			"invalid recovery delay (86401), expected 1..86400"},
+		{Outbound{Type: TypeHost, Recovery: &Recovery{Delay: -1}}, "invalid recovery delay (-1)"},
+		{Outbound{Type: TypeHost, Recovery: &Recovery{Attempts: 1001}},
+			"invalid recovery attempts (1001), expected 0..1000"},
+		{Outbound{Type: TypeHost, Recovery: &Recovery{Attempts: -1}},
+			"invalid recovery attempts (-1)"},
 		{Outbound{Type: TypeAmneziaWG, AmneziaWG: &AmneziaWGOptions{Config: sampleTunnel},
 			Monitoring: &Monitoring{Interval: 5, Timeout: 1, Retries: 1, Target: "nohost"}},
 			"failed to check monitoring target"},
@@ -474,6 +496,7 @@ func TestClone_Independent(t *testing.T) {
 	clone.Outbounds[1].Socks5.Port, clone.Outbounds[2].HTTP.Port = 1, 1
 	clone.Outbounds[0].Host.Mode, clone.Outbounds[3].OpenVPN.Config = "x", "x"
 	clone.Outbounds[4].AmneziaWG.Config, clone.Outbounds[4].Monitoring.Interval = "x", 1
+	clone.Outbounds[4].Recovery.Delay = 1
 	clone.Fallbacks[0].Outbounds[0], clone.Routes[0].Params[0] = "x", "x"
 	require.Equal(t, 1080, config.Outbounds[1].Socks5.Port)
 	require.Equal(t, 3128, config.Outbounds[2].HTTP.Port)
@@ -481,6 +504,7 @@ func TestClone_Independent(t *testing.T) {
 	require.Equal(t, sampleOpenVPN, config.Outbounds[3].OpenVPN.Config)
 	require.Equal(t, sampleTunnel, config.Outbounds[4].AmneziaWG.Config)
 	require.Equal(t, 30, config.Outbounds[4].Monitoring.Interval)
+	require.Equal(t, 60, config.Outbounds[4].Recovery.Delay)
 	require.Equal(t, "HOST 1", config.Fallbacks[0].Outbounds[0])
 	require.Equal(t, "a.test", config.Routes[0].Params[0])
 }
@@ -791,6 +815,7 @@ func TestOpen_Migrates(t *testing.T) {
 	require.Equal(t, []string{"HOST 1"}, snapshot.Fallbacks[0].Outbounds)
 	require.Equal(t, &HostOptions{Mode: HostDefault}, snapshot.Outbounds[0].Host)
 	require.Equal(t, 3, snapshot.Outbounds[0].Attempts)
+	require.Equal(t, &Recovery{Enabled: true, Delay: 60}, snapshot.Outbounds[0].Recovery)
 	require.Equal(t, "Route 1", snapshot.Routes[0].ID)
 	require.Equal(t, "same", snapshot.Routes[1].ID)
 	require.Equal(t, "Route 2", snapshot.Routes[2].ID)
@@ -817,6 +842,7 @@ func TestOpen_Migrates(t *testing.T) {
 			snapshot.Outbounds[1].ReconnectTimeout})
 		require.Equal(t, [2]int{3, 10}, [2]int{snapshot.Inbounds[0].Attempts,
 			snapshot.Inbounds[0].ReconnectTimeout})
+		require.Equal(t, &Recovery{Enabled: true, Delay: 60}, snapshot.Inbounds[0].Recovery)
 		require.NoError(t, store.Update(func(*Config) error {
 			return nil
 		}))
@@ -975,7 +1001,7 @@ func TestUpdateOutbound_Identity(t *testing.T) {
 	outbound, found := config.FindOutbound("SOCKS5 1")
 	require.True(t, found)
 	require.Equal(t, Outbound{ID: "SOCKS5 1", Type: TypeSocks5, Slot: 2, Autostart: true,
-		Attempts: 3, ReconnectTimeout: 10,
+		Attempts: 3, ReconnectTimeout: 10, Recovery: &Recovery{Enabled: true, Delay: 60},
 		Socks5: &Socks5Options{Server: "10.0.0.9", Port: 1081}}, outbound)
 	require.ErrorContains(t, config.UpdateOutbound("SOCKS5 1", Outbound{}), "invalid server address")
 	require.ErrorContains(t, config.UpdateOutbound("missing", Outbound{}), "does not exist")

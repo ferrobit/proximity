@@ -58,6 +58,10 @@ while [ $# -gt 0 ]; do
 	shift
 done
 if [ -f "$(dirname "$0")/stubborn" ]; then trap '' TERM; fi
+if [ -f "$(dirname "$0")/down" ]; then
+	echo "2026-01-01 00:00:00 TCP: connect to [AF_INET]192.0.2.1:1194 failed: Connection refused"
+	exit 1
+fi
 exec 3<>/dev/tty
 printf 'Enter Auth Username:' >&3
 read -r user <&3
@@ -501,7 +505,8 @@ func TestManager_Inbounds(t *testing.T) {
 	defer manager.Close()
 	snapshot := config.Default()
 	_, err = snapshot.AddInbound(config.Inbound{Type: config.TypeSocks5, ID: "Socks", Port: port,
-		Enabled: true, Statistics: true, Anonymous: true, Attempts: 1}, time.Now())
+		Enabled: true, Statistics: true, Anonymous: true, Attempts: 1,
+		Recovery: &config.Recovery{Delay: 60}}, time.Now())
 	require.NoError(t, err)
 	_, err = snapshot.AddInbound(config.Inbound{Type: config.TypeOpenVPN, ID: "VPN", Port: port - 1,
 		Enabled: true, Statistics: true, Verbose: true, Users: []config.InboundUser{
@@ -1043,6 +1048,112 @@ func TestManager_Proxies(t *testing.T) {
 	}
 }
 
+func TestManager_Recovery(t *testing.T) {
+	tools, directory := makeTools(t)
+	manager, err := NewManager(Options{Directory: filepath.Join(directory, "run"),
+		Executable: "/usr/local/bin/proximity", Tools: tools})
+	require.NoError(t, err)
+	manager.SetActive(true, config.Config{})
+	defer manager.Close()
+	settings := config.Settings{CheckInterval: 5}
+	outbound := config.Outbound{ID: "VPN", Type: config.TypeOpenVPN, Enabled: true, Slot: 7,
+		Attempts: 1, ReconnectTimeout: 1, Verbose: true, OpenVPN: &config.OpenVPNOptions{
+			Config: sampleOpenVPN, Username: "alice", Password: "wonderland",
+			OTPKey: "GEZDGNBVGY3TQOJQ", OTPMode: config.OTPAppend},
+		Recovery: &config.Recovery{Enabled: true, Delay: 1}}
+	down := writeScript(t, directory, "down", "x")
+	manager.Apply([]config.Outbound{outbound}, settings)
+	status := waitState(t, manager, "VPN", StateReconnecting)
+	require.True(t, strings.HasPrefix(status.Message, "recovery attempt 1: "))
+	require.Eventually(t, func() bool {
+		return strings.Contains(strings.Join(manager.Log("VPN"), "\n"), "recovery attempt 3 in 1s")
+	}, 15*time.Second, 20*time.Millisecond)
+	require.Contains(t, strings.Join(manager.Log("VPN"), "\n"),
+		"debug: recovery true, delay 1 s, attempts 0")
+	require.NoError(t, os.Remove(down))
+	status = waitState(t, manager, "VPN", StateUp)
+	require.Empty(t, status.Message)
+	denied := &config.OpenVPNOptions{Config: sampleOpenVPN, Username: "denied", Password: "x",
+		OTPKey: "GEZDGNBVGY3TQOJQ", OTPMode: config.OTPChallenge}
+	{
+		outbound.OpenVPN, outbound.Recovery = denied, &config.Recovery{Enabled: true, Delay: 1,
+			Attempts: 2}
+		manager.Apply([]config.Outbound{outbound}, settings)
+		status := waitState(t, manager, "VPN", StateReconnecting)
+		require.Equal(t, "recovery attempt 1 of 2: authentication failed", status.Message)
+		status = waitState(t, manager, "VPN", StateFailed)
+		require.Equal(t, "authentication failed", status.Message)
+		log := strings.Join(manager.Log("VPN"), "\n")
+		require.Contains(t, log, "recovery attempt 2 of 2 in 1s")
+		require.Contains(t, log, "recovery is stopped after 2 attempts")
+	}
+	{
+		count := strings.Count(strings.Join(manager.Log("VPN"), "\n"), "recovery attempt")
+		outbound.ID, outbound.Recovery = "Off", &config.Recovery{Delay: 1}
+		manager.Apply([]config.Outbound{outbound}, settings)
+		status := waitState(t, manager, "Off", StateFailed)
+		require.Equal(t, "authentication failed", status.Message)
+		fatal := *denied
+		fatal.OTPKey = ""
+		outbound.ID, outbound.OpenVPN = "Fatal", &fatal
+		outbound.Recovery = &config.Recovery{Enabled: true, Delay: 1}
+		manager.Apply([]config.Outbound{outbound}, settings)
+		status = waitState(t, manager, "Fatal", StateFailed)
+		require.Equal(t, "authentication failed", status.Message)
+		log := strings.Join(manager.Log("Fatal"), "\n")
+		require.Equal(t, count, strings.Count(log, "recovery attempt"))
+		require.Contains(t, log, "debug: recovery false, delay 1 s, attempts 0")
+	}
+	{
+		host := config.Outbound{ID: "H", Type: config.TypeHost, Enabled: true, Slot: 5, Attempts: 1,
+			ReconnectTimeout: 1, Recovery: &config.Recovery{Enabled: true, Delay: 1, Attempts: 2},
+			Host: &config.HostOptions{Mode: config.HostInterface, Interface: "missing0"}}
+		manager.Apply([]config.Outbound{host}, config.Settings{ProbeTarget: "127.0.0.1:1",
+			CheckInterval: 30, ConnectivityChecks: true})
+		status := waitState(t, manager, "H", StateFailed)
+		require.Equal(t, "interface 'missing0' does not exist", status.Message)
+		require.Eventually(t, func() bool {
+			return strings.Contains(strings.Join(manager.Log("H"), "\n"),
+				"recovery is stopped after 2 attempts")
+		}, 10*time.Second, 20*time.Millisecond)
+		require.Equal(t, StateFailed, manager.Status()["H"].State)
+	}
+	{
+		tools.OpenVPN = writeScript(t, directory, "openvpn-server", fakeServer)
+		tools.Iptables = writeScript(t, directory, "iptables", fakeFirewall)
+		tools.Forwarding = writeScript(t, directory, "ip_forward", "0\n")
+		port, _ := makeInboundPort(t)
+		server, err := NewManager(Options{Directory: filepath.Join(directory, "server"),
+			Executable: "/usr/local/bin/proximity", Tools: tools, HostNetwork: true})
+		require.NoError(t, err)
+		server.SetActive(true, config.Config{})
+		defer server.Close()
+		snapshot := config.Default()
+		_, err = snapshot.AddInbound(config.Inbound{Type: config.TypeOpenVPN, ID: "Server",
+			Port: port, Enabled: true, Attempts: 1, ReconnectTimeout: 1, Anonymous: true,
+			Verbose: true, Recovery: &config.Recovery{Enabled: true, Delay: 1}}, time.Now())
+		require.NoError(t, err)
+		fail := writeScript(t, directory, "fail", "x")
+		server.ApplyInbounds(snapshot)
+		status := waitInbound(t, server, "Server", StateReconnecting)
+		require.True(t, strings.HasPrefix(status.Message,
+			"recovery attempt 1: Options error: boom"))
+		require.Contains(t, strings.Join(server.InboundLog("Server"), "\n"),
+			"debug: recovery true, delay 1 s, attempts 0")
+		require.NoError(t, os.Remove(fail))
+		status = waitInbound(t, server, "Server", StateUp)
+		require.Empty(t, status.Message)
+		writeScript(t, directory, "fail", "x")
+		snapshot.Inbounds[0].Recovery = &config.Recovery{Enabled: true, Delay: 1, Attempts: 1}
+		server.ApplyInbounds(snapshot)
+		status = waitInbound(t, server, "Server", StateFailed)
+		require.True(t, strings.HasPrefix(status.Message, "Options error: boom"))
+		log := strings.Join(server.InboundLog("Server"), "\n")
+		require.Contains(t, log, "recovery attempt 1 of 1 in 1s")
+		require.Contains(t, log, "recovery is stopped after 1 attempts")
+	}
+}
+
 func TestManager_Services(t *testing.T) {
 	tools, directory := makeTools(t)
 	state := filepath.Join(directory, "state")
@@ -1244,9 +1355,14 @@ func TestManager_Time(t *testing.T) {
 			Port: port, Enabled: true, Attempts: 3, Anonymous: true}, time.Now())
 		require.NoError(t, err)
 		manager.ApplyInbounds(snapshot)
-		status := waitInbound(t, manager, "Server", StateFailed)
-		require.Contains(t, status.Message, "time is not synchronized after 300ms")
+		status := waitInbound(t, manager, "Server", StateReconnecting)
+		require.Contains(t, status.Message,
+			"recovery attempt 1: time is not synchronized after 300ms")
 		require.NotContains(t, strings.Join(manager.InboundLog("Server"), "\n"), "attempt 2")
+		snapshot.Inbounds[0].Recovery = &config.Recovery{Delay: 60}
+		manager.ApplyInbounds(snapshot)
+		status = waitInbound(t, manager, "Server", StateFailed)
+		require.True(t, strings.HasPrefix(status.Message, "time is not synchronized after 300ms"))
 	}
 }
 

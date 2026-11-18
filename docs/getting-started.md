@@ -105,8 +105,9 @@ Go to **Outbounds → Add outbound** and choose a type.
 | An AmneziaWG `.conf`, `vpn://` key or QR code | **AmneziaWG** | upload/paste config, convert `vpn://`, or *Scan QR code from image* |
 
 Every outbound also has a **General** tab (ID, enabled, statistics, verbose log, *Start
-automatically when the router starts*, connection attempts and reconnection timeout),
-and tunnels have a **Monitoring** tab. Changes are applied immediately: there is no
+automatically when the router starts*, connection attempts and reconnection timeout)
+and a **Monitoring** tab (restoring of lost connections; for tunnels also the checks of
+a working connection). Changes are applied immediately: there is no
 separate "apply" step.
 
 ![OpenVPN outbound dialog](images/outbound-openvpn.png)

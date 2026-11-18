@@ -218,8 +218,10 @@ How each outbound type is connected to mihomo:
 - OpenVPN runs in a pseudo-terminal; Proximity answers the user name, password and
   one-time code prompts itself (TOTP, same as `oathtool --totp -b`).
 - Every outbound and inbound: after *Connection attempts* failures in a row (pause —
-  *Reconnection timeout*) it goes to `failed`. HOST and proxy outbounds keep being checked
-  and return to `good` on their own; tunnels and inbounds wait for **Start** / **Restart**.
+  *Reconnection timeout*) the connection is restored: Proximity waits *Restore after*
+  (1 minute) and starts a new series of attempts, without a limit by default
+  (**Monitoring** tab). With recovery off, or after an error that needs your action, it
+  goes to `failed` and waits for **Start** / **Restart**.
 
 ## Concepts: outbounds, fallbacks, routes
 

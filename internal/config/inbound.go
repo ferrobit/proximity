@@ -62,6 +62,7 @@ type Inbound struct {
 	Autostart        bool           `json:"autostart"`
 	Attempts         int            `json:"attempts"`
 	ReconnectTimeout int            `json:"reconnect_timeout"`
+	Recovery         *Recovery      `json:"recovery,omitempty"`
 	Statistics       bool           `json:"statistics"`
 	Verbose          bool           `json:"verbose"`
 	Port             int            `json:"port"`
@@ -267,6 +268,10 @@ func (inbound Inbound) Clone() Inbound {
 		server.Routes, server.DNS = slices.Clone(server.Routes), slices.Clone(server.DNS)
 		inbound.OpenVPN = &server
 	}
+	if inbound.Recovery != nil {
+		recovery := *inbound.Recovery
+		inbound.Recovery = &recovery
+	}
 	return inbound
 }
 
@@ -317,6 +322,7 @@ func (inbound *Inbound) normalize() {
 	if inbound.ReconnectTimeout == 0 {
 		inbound.ReconnectTimeout = defaultReconnectTimeout
 	}
+	inbound.Recovery = normalizeRecovery(inbound.Recovery)
 	if inbound.Outbound = strings.TrimSpace(inbound.Outbound); inbound.Outbound == "" {
 		inbound.Outbound = ViaRouter
 	}
@@ -363,6 +369,8 @@ func (inbound *Inbound) validate() error {
 	if err := validateIdentifier(inbound.ID); err != nil {
 		return err
 	} else if err = validateAttempts(inbound.Attempts, inbound.ReconnectTimeout); err != nil {
+		return err
+	} else if err = inbound.Recovery.validate(); err != nil {
 		return err
 	} else if err = validateRange("port", inbound.Port, InboundPortFirst,
 		InboundPortLast); err != nil {

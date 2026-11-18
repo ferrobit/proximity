@@ -218,6 +218,24 @@
           </a-table>
           <p class="muted" style="margin-top: 12px">User name: letters, digits, _ . @ - (up to 64). Password: up to 64 printable characters without spaces.</p>
         </a-tab-pane>
+        <a-tab-pane key="monitoring" force-render>
+          <template #tab><HeartOutlined /> Monitoring</template>
+          <a-form-item :extra="recoveryHint">
+            <a-checkbox v-model:checked="form.recovery.enabled">Restore lost connections</a-checkbox>
+          </a-form-item>
+          <a-row :gutter="16">
+            <a-col :span="12">
+              <a-form-item label="Restore after, seconds" :name="['recovery', 'delay']" :rules="range(1, 86400)" extra="Pause before a new series of connection attempts">
+                <a-input-number v-model:value="form.recovery.delay" :disabled="!form.recovery.enabled" style="width: 100%" />
+              </a-form-item>
+            </a-col>
+            <a-col :span="12">
+              <a-form-item label="Recovery attempts" :name="['recovery', 'attempts']" :rules="range(0, 1000)" extra="0: unlimited">
+                <a-input-number v-model:value="form.recovery.attempts" :disabled="!form.recovery.enabled" style="width: 100%" />
+              </a-form-item>
+            </a-col>
+          </a-row>
+        </a-tab-pane>
       </a-tabs>
     </a-form>
     <a-modal v-model:open="exportVisible" :title="`Client configuration: ${exported.file}`" width="760px" destroy-on-close>
@@ -237,7 +255,7 @@
 import { computed, reactive, ref, watch } from 'vue'
 import { message } from 'ant-design-vue'
 import {
-  CloudServerOutlined, ControlOutlined, CopyOutlined, DeleteOutlined, DownloadOutlined, ExportOutlined, FileProtectOutlined, LaptopOutlined, ProfileOutlined,
+  CloudServerOutlined, ControlOutlined, CopyOutlined, DeleteOutlined, DownloadOutlined, ExportOutlined, FileProtectOutlined, HeartOutlined, LaptopOutlined, ProfileOutlined,
   ReloadOutlined, SafetyOutlined, TeamOutlined, ThunderboltOutlined, UserAddOutlined
 } from '@ant-design/icons-vue'
 import { api, id } from '../api'
@@ -270,7 +288,8 @@ const userColumns = [
   { title: '', key: 'actions', width: 90 }
 ]
 const autostartHint = 'Off: after the router starts the inbound stays stopped until Start. An inbound that was stopped or failed is not started again.'
-const attemptsHint = 'When all attempts in a row fail, the inbound fails and stays stopped until Start or Restart'
+const attemptsHint = 'When all attempts in a row fail, the inbound is restored as set on the Monitoring tab; without recovery it fails and stays stopped until Start or Restart'
+const recoveryHint = 'When all start attempts fail, the inbound waits and starts a new series of attempts. Off: the inbound fails and stays stopped until Start or Restart'
 const fieldTabs = {
   routes_text: 'clients', dns_text: 'clients', ciphers: 'security', renegotiation: 'security', keepalive_interval: 'security',
   keepalive_timeout: 'security', otp_key: 'security', ca_certificate: 'keys', ca_key: 'keys', certificate: 'keys', key: 'keys',
@@ -296,7 +315,10 @@ const outboundOptions = computed(() => [
 const otpLink = computed(() => `otpauth://totp/Proximity:${encodeURIComponent(form.id || saved.value || 'OpenVPN')}?secret=${String(form.openvpn.otp_key).replace(/[\s=-]/g, '')}&issuer=Proximity`)
 
 function defaults(kind) {
-  const result = { id: '', enabled: true, autostart: true, attempts: 3, reconnect_timeout: 10, statistics: true, verbose: false, port: null, outbound: '@router', anonymous: false, users: [] }
+  const result = {
+    id: '', enabled: true, autostart: true, attempts: 3, reconnect_timeout: 10, statistics: true, verbose: false, port: null, outbound: '@router', anonymous: false, users: [],
+    recovery: { enabled: true, delay: 60, attempts: 0 }
+  }
   if (kind === 'socks5') {
     result.socks5 = { listen: '*', udp: true, tls: false, certificate: '', key: '' }
   } else {
@@ -404,7 +426,8 @@ function makeBody() {
   const body = {
     id: form.id, type: props.kind, enabled: form.enabled, autostart: form.autostart, attempts: form.attempts,
     reconnect_timeout: form.reconnect_timeout, statistics: form.statistics, verbose: form.verbose, port: form.port || 0,
-    outbound: form.outbound, anonymous: form.anonymous, users: form.users.map((user) => ({ ...user, name: user.name.trim() }))
+    outbound: form.outbound, anonymous: form.anonymous, users: form.users.map((user) => ({ ...user, name: user.name.trim() })),
+    recovery: { ...form.recovery }
   }
   if (props.kind === 'socks5') {
     body.socks5 = { ...form.socks5 }
@@ -422,7 +445,7 @@ function tabOf(name) {
   if (name[0] === 'openvpn') {
     return fieldTabs[name[1]] || 'type'
   }
-  return name[0] === 'socks5' ? 'type' : 'general'
+  return name[0] === 'socks5' ? 'type' : name[0] === 'recovery' ? 'monitoring' : 'general'
 }
 
 async function save(keep) {

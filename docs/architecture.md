@@ -203,13 +203,13 @@ by the system resolver for DIRECT/HOST.
 | `disabled` | Outbound is switched off |
 | `connecting` | Starting (tunnel process launched, waiting for it) |
 | `up` (*good* in the UI) | Working; checks pass |
-| `reconnecting` | Checks failed; restarting after the configured delay |
-| `failed` | *Connection attempts* exhausted; see the message and the connection log. Tunnels and inbounds wait for **Start** / **Restart**; HOST and proxies keep being checked and return to `up` |
+| `reconnecting` | Checks failed; restarting after the configured delay. Also a tunnel or inbound that used all *Connection attempts* and waits for the next series (`recovery attempt N: …`) |
+| `failed` | *Connection attempts* exhausted and recovery is off, used up or not possible; see the message and the connection log. Tunnels and inbounds wait for **Start** / **Restart**; HOST and proxies keep being checked and return to `up` |
 | `stopped` | Stopped by a user, by the router stop, or not started because *Start automatically* is off |
 
 | Outbound | How it is checked |
 |---|---|
-| HOST | TCP connection to *Probe target* (Settings, default `1.1.1.1:443`) through the same path mihomo uses; after *Connection attempts* failures → `failed`, but checks continue and it returns to `up` |
+| HOST | TCP connection to *Probe target* (Settings, default `1.1.1.1:443`) through the same path mihomo uses; after *Connection attempts* failures → `failed`, but checks continue every *Restore after* seconds and it returns to `up` |
 | SOCKS5 / HTTP | TCP connection to the proxy server; same *Connection attempts* rule as HOST |
 | OpenVPN | `ping` of the VPN gateway through the tunnel interface |
 | AmneziaWG | TCP connection to the monitoring *Check target* through the tunnel |
@@ -218,6 +218,16 @@ Proxy and HOST checks run every *Check interval* when **Enable connectivity chec
 Tunnel monitoring (interval, timeout, retries) is set per outbound on its **Monitoring**
 tab; *Connection attempts* and *Reconnection timeout* of every outbound and inbound are on
 its **General** tab.
+
+Recovery (`link.policy`, settings `recovery` of an outbound or inbound) decides what
+happens when the attempts are exhausted. Enabled (default): wait *Restore after* (60 s),
+reset the attempt counter and start again, at most *Recovery attempts* series in a row
+(0 — unlimited); the series counter is reset by a working connection. A tunnel or inbound
+is `reconnecting` meanwhile, so the service journal keeps `running` and the service
+starts again after a container restart. A fatal error (credentials, certificate,
+configuration) is not restored; a time synchronization error (`link.clockError`) is. A
+failed monitoring check ends the link in the same way as an exited process, so it is one
+of the signals that start reconnection.
 
 ## OpenVPN driver
 
@@ -278,8 +288,9 @@ Proximity never does it and keeps its own time instead: the host clock plus an o
   normal interval.
 - The applied offset is written to `/run/proximity/clock.json`.
 - Every OpenVPN client and server waits in `start` until the state is `host` or
-  `corrected`, at most *Wait for synchronization*; otherwise the start fails with a fatal
-  error and the service becomes `failed` without further attempts.
+  `corrected`, at most *Wait for synchronization*; otherwise the start fails without
+  further attempts of this series and the service waits for recovery (`failed` when
+  recovery is off).
 - With an offset OpenVPN runs with `LD_PRELOAD=libfaketime.so.1`,
   `FAKETIME=±seconds` and `FAKETIME_DONT_FAKE_MONOTONIC=1`: certificate validity is
   checked with the corrected time, timers keep the real monotonic clock. Without

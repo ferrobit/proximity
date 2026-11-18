@@ -103,6 +103,12 @@ type Monitoring struct {
 	Target         string `json:"target"`
 }
 
+type Recovery struct {
+	Enabled  bool `json:"enabled"`
+	Delay    int  `json:"delay"`
+	Attempts int  `json:"attempts"`
+}
+
 type Outbound struct {
 	ID               string            `json:"id"`
 	Type             string            `json:"type"`
@@ -119,6 +125,7 @@ type Outbound struct {
 	OpenVPN          *OpenVPNOptions   `json:"openvpn,omitempty"`
 	AmneziaWG        *AmneziaWGOptions `json:"amneziawg,omitempty"`
 	Monitoring       *Monitoring       `json:"monitoring,omitempty"`
+	Recovery         *Recovery         `json:"recovery,omitempty"`
 }
 
 type Fallback struct {
@@ -198,6 +205,9 @@ const defaultAttempts = 3
 const defaultReconnectTimeout = 10
 const maxAttempts = 100
 const maxTimeout = 3600
+const defaultRecoveryDelay = 60
+const maxRecoveryDelay = 24 * 60 * 60
+const maxRecoveries = 1000
 const providedPrefix = "Routes of "
 const defaultHealthURL = "https://www.gstatic.com/generate_204"
 const defaultProbeTarget = "1.1.1.1:443"
@@ -282,6 +292,15 @@ func validateAttempts(attempts int, timeout int) error {
 		return err
 	}
 	return nil
+}
+
+func normalizeRecovery(recovery *Recovery) *Recovery {
+	if recovery == nil {
+		return &Recovery{Enabled: true, Delay: defaultRecoveryDelay}
+	} else if recovery.Delay == 0 {
+		recovery.Delay = defaultRecoveryDelay
+	}
+	return recovery
 }
 
 func validateHostPort(target string) error {
@@ -417,6 +436,7 @@ func (outbound *Outbound) normalize() {
 	if outbound.Host != nil {
 		outbound.Host.LegacyAttempts, outbound.Host.LegacyTimeout = 0, 0
 	}
+	outbound.Recovery = normalizeRecovery(outbound.Recovery)
 	if outbound.Type != TypeSocks5 {
 		outbound.Socks5 = nil
 	} else if outbound.Socks5 == nil {
@@ -472,6 +492,8 @@ func (outbound *Outbound) validate() error {
 	} else if err = validateRange("slot", outbound.Slot, 1, maxSlot); err != nil {
 		return err
 	} else if err = validateAttempts(outbound.Attempts, outbound.ReconnectTimeout); err != nil {
+		return err
+	} else if err = outbound.Recovery.validate(); err != nil {
 		return err
 	}
 	switch outbound.Type {
@@ -545,6 +567,13 @@ func (options *OpenVPNOptions) validate() error {
 		return fmt.Errorf("failed to decode OTP key: %w", err)
 	}
 	return nil
+}
+
+func (recovery *Recovery) validate() error {
+	if err := validateRange("recovery delay", recovery.Delay, 1, maxRecoveryDelay); err != nil {
+		return err
+	}
+	return validateRange("recovery attempts", recovery.Attempts, 0, maxRecoveries)
 }
 
 func (monitoring *Monitoring) validate() error {
