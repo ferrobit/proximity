@@ -34,6 +34,10 @@ save time. Add a line when a new command fails; keep it short.
 | A check counts log lines of a successful login: OpenVPN writes the same line for a password and for a token | Look at the side effect: `codes.json` is filled only by a login with a one-time code |
 | `make test`, `make cover`, `make coverage-docs` in a sandbox: *rsync is required* | Run `go test -coverprofile=… ./...` in the working tree and give its output to `bash scripts/coverage.sh <report>` |
 | A test expects the exact text of an `encoding/json` error: Go 1.25+ with `jsonv2` (default in the user's Go 1.27) prints other type names | Build the expected text with `unmarshalError` (the same `json.Unmarshal` call) or give the code its own message |
+| A test of transparent capture needs the host network | Stand `capture`: a container plays the host, Proximity joins its namespace (`--network container:<host>`), the host's default route goes through a counting "Internet" container; a specific route in the main table would bypass the capture (rule 5160) |
+| mihomo `tun.disable-icmp-forwarding: true` as the fix of the ICMP leak | No leak, but the gVisor stack answers every ping itself: an unreachable or absent address answers too |
+| `make screenshots` in a sandbox: OpenVPN of the stand stays `reconnecting` (no NTP) | `STAND_OFFLINE=1` + `stand_network_up` from `scripts/stands/lib.sh`, then `SCREENSHOT_NETWORK=proximity-stand`; one picture: `scripts/screenshots.sh settings` |
+| `ip rule add priority P ipproto 1 lookup T` (no `to`): *File exists* | The kernel takes it for a copy of a rule with the same priority, table and `to`; give it another priority (5166) |
 | Go versions drift apart (`go.mod`, `GO_IMAGE`, the user's machine) | One version: `toolchain` in `go.mod` and `GO_IMAGE` in `Dockerfile` and `docs/development.md` change together; an older local `go` downloads the toolchain itself |
 
 ## Rules
@@ -60,6 +64,7 @@ make a stand for it in `scripts/stands/<stand>/` and add its line here.
 | pair: security | `make stand-security` (1 minute, 16 checks) | OpenVPN inbound with TOTP and two users against two outbounds: single use of one-time codes, rejection of an old client certificate, ping of clients |
 | pair: tunnel | `make stand-tunnel` (20 seconds, 24 checks) | OpenVPN inbound with pushed routes and an outbound with *Receive routes*: defaults of a new inbound (network, MTU), the provided route (first, follows the connection, moved, kept after a restart), the token after a restart of the inbound, a disabled user, the instance mark |
 | reload | `make stand-reload` (25 seconds, 10 checks, needs a browser) | One instance on the fixed port `127.0.0.1:18899` and a headless browser: after `docker restart` the open page warns that unsaved changes are lost and reloads itself in 5 seconds, also with an open dialog |
+| capture | `make stand-capture` (30 seconds, 19 checks, its own time server) | A "host" network namespace (`rp_filter=1`) with Proximity in it (`PROXIMITY_NETWORK=host`, capture on), an exit with SOCKS5 and OpenVPN inbounds and the "Internet" `proximity-stand-wan` with `1.1.1.1` (route to SOCKS5), `1.1.1.2` (no route) and `1.1.1.3` (route to OpenVPN) that counts packets by source: where TCP and ping of the host leave, ping through the tunnel, the default target SOCKS5 / tunnel, the setting off |
 | broken-config | `make stand-config` (5 seconds, 17 checks) | One instance started with the damaged `config.json`: what is dropped and kept, the copy of the file, the report in the API |
 
 Common parts: `scripts/stands/lib.sh` (image, network, instance, removal) and `lib.mjs`

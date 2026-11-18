@@ -216,7 +216,7 @@ Settings object:
   "mixed_port": 7899, "bind_address": "*", "default_target": "DIRECT",
   "log_level": "warning", "ipv6": false, "anonymous_dashboard": true,
   "connectivity_checks": true, "probe_target": "1.1.1.1:443",
-  "check_interval": 30, "capture": true,
+  "check_interval": 30, "capture": true, "ping_filter": true,
   "unreachable_limit": 100, "unreachable_lifetime": 86400, "autostart": true,
   "log_lines": 300, "verbose_log_lines": 3000,
   "time_manual": false,

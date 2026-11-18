@@ -67,8 +67,8 @@ The `Dockerfile` is a multi-stage build:
 |---|---|---|
 | `mihomo` | `metacubex/mihomo:v1.19.34` | `mihomo` binary, `geoip.metadb`, `geosite.dat` |
 | `web` | `node:22-bookworm-slim` | `web/dist` |
-| `amnezia` | `golang:1.25-bookworm` | `amneziawg-go` (`v3.1.20260828`), `awg` (`v3.1.20260812`) |
-| `build` | `golang:1.25-bookworm` | `proximity` with the UI embedded |
+| `amnezia` | `golang:1.27.4-bookworm` | `amneziawg-go` (`v3.1.20260828`), `awg` (`v3.1.20260812`) |
+| `build` | `golang:1.27.4-bookworm` | `proximity` with the UI embedded |
 | final | `debian:bookworm-slim` | + `iproute2`, `iptables`, `iputils-ping`, `openvpn`, `oathtool`, `libfaketime`, `ca-certificates`, `tzdata` |
 
 Exposed ports: `8899` (UI/API), `7899` (mixed HTTP/SOCKS5 proxy) and `7800-7898` TCP + UDP
@@ -180,7 +180,25 @@ Consequences:
 - when the container stops, the rules are deleted; if the process is killed, the TUN
   device disappears with its route and rule 5170 has nothing to send traffic to, so the
   host falls back to normal routing;
-- IPv6 rules are installed only when **IPv6** is on in Settings.
+- IPv6 rules are installed only when **IPv6** is on in Settings;
+- ICMP is not routed: mihomo answers an echo request that came into the TUN by sending its
+  own echo request directly (marked with `fwmark 51000`), past the routes. With **Settings →
+  Keep ping of the host on its routes** (on by default) the chain `PROXIMITY-PING` of
+  `iptables` / `ip6tables`, jumped to from `OUTPUT` for marked echo requests, lets them out
+  only to addresses whose route is DIRECT or a HOST outbound. It repeats the IP routes in
+  their order (`-d <network> -j RETURN` or `-j DROP`) and ends with the default target; a
+  GEOIP, IP-ASN, source or process route with a target that is not direct ends it with
+  `DROP`, because such a route cannot be checked by address;
+- ping of an IP route (or of the default target) with an OpenVPN or AmneziaWG outbound does
+  not enter the TUN at all: `ip rule` priority 5165, `ipproto icmp to <network> lookup
+  <table of the outbound>`, in the order of the routes (earlier routes to other targets
+  get `lookup 51000`), the default target at priority 5166 after
+  `to 198.18.0.0/16 lookup 51000`. Ping takes its source address from the TUN
+  (`198.18.0.1`), so `nat POSTROUTING -s 198.18.0.0/30 -o proximity_o+ / proximity_a+ -p
+  icmp -j MASQUERADE` gives it the address of the tunnel. The reverse path filter passes
+  the answers: once a rule has `ipproto`, the kernel checks the source with the protocol of
+  the packet and finds the same rule. Rule 5160 still keeps ping of LAN addresses on the
+  LAN. Both are checked by the stand `capture` (with `rp_filter=1`).
 
 mihomo's sniffer recovers domain names from TLS SNI (ports 443, 8443), HTTP `Host`
 (80, 8080–8880) and QUIC (443, 8443), so DOMAIN rules work even for connections made to IP

@@ -519,7 +519,7 @@ func TestManager_AmneziaFailure(t *testing.T) {
 		Attempts: 2, ReconnectTimeout: 1, AmneziaWG: &config.AmneziaWGOptions{Config: sampleTunnel},
 		Monitoring: &config.Monitoring{Interval: 5, Timeout: 1, Retries: 1, Target: "127.0.0.1:1"}}
 	manager.Apply([]config.Outbound{outbound}, config.Settings{CheckInterval: 5})
-	require.False(t, manager.Capture(true, false))
+	require.False(t, manager.Capture(true, false, nil))
 	status := waitState(t, manager, "AWG", StateReconnecting)
 	require.Contains(t, status.Message, "reconnect attempt 1 of 1")
 	status = waitState(t, manager, "AWG", StateFailed)
@@ -920,7 +920,7 @@ func TestManager_Capture(t *testing.T) {
 	manager.SetActive(true, config.Config{})
 	defer manager.Close()
 	manager.capture.device = "proximity_missing"
-	require.False(t, manager.Capture(true, true))
+	require.False(t, manager.Capture(true, true, nil))
 	calls, err := os.ReadFile(filepath.Join(directory, "ip.log"))
 	require.NoError(t, err)
 	for _, line := range []string{"-4 rule add priority 5150 fwmark 51000 lookup main",
@@ -938,19 +938,83 @@ func TestManager_Capture(t *testing.T) {
 	require.NotContains(t, string(calls), "route replace default dev")
 	{
 		manager.capture.device = "lo"
-		require.True(t, manager.Capture(true, true))
-		require.True(t, manager.Capture(true, true))
+		require.True(t, manager.Capture(true, true, nil))
+		require.True(t, manager.Capture(true, true, nil))
 		calls, err := os.ReadFile(filepath.Join(directory, "ip.log"))
 		require.NoError(t, err)
 		require.Equal(t, 1, strings.Count(string(calls),
 			"-4 route replace default dev lo table 51000\n"))
 		require.Equal(t, 1, strings.Count(string(calls),
 			"-6 route replace default dev lo table 51000\n"))
-		require.True(t, manager.Capture(true, false))
+		require.True(t, manager.Capture(true, false, nil))
 		calls, err = os.ReadFile(filepath.Join(directory, "ip.log"))
 		require.NoError(t, err)
 		require.Equal(t, 2, strings.Count(string(calls),
 			"-4 route replace default dev lo table 51000\n"))
+	}
+	{
+		tools.Iptables = writeScript(t, directory, "iptables", fakeFirewall)
+		tools.Ip6tables = writeScript(t, directory, "ip6tables",
+			"#!/bin/bash\necho \"$*\" >> \"$(dirname \"$0\")/ip6tables.log\"\n")
+		manager.options.Tools = tools
+		ping := []PingRule{{Prefix: netip.MustParsePrefix("1.1.1.0/24")},
+			{Prefix: netip.MustParsePrefix("2001:db8::/32"), Allow: true}, {Allow: true}}
+		require.True(t, manager.Capture(true, true, ping))
+		require.True(t, manager.Capture(true, true, ping))
+		calls, err := os.ReadFile(filepath.Join(directory, "iptables.log"))
+		require.NoError(t, err)
+		require.Equal(t, 1, strings.Count(string(calls), "-w 5 -N PROXIMITY-PING\n"))
+		require.Contains(t, string(calls), "-w 5 -A PROXIMITY-PING -d 1.1.1.0/24 -j DROP\n"+
+			"-w 5 -A PROXIMITY-PING -j RETURN\n-w 5 -I OUTPUT 1 -m mark --mark 51000 -p icmp "+
+			"--icmp-type echo-request -j PROXIMITY-PING\n")
+		require.NotContains(t, string(calls), "2001:db8")
+		calls, err = os.ReadFile(filepath.Join(directory, "ip6tables.log"))
+		require.NoError(t, err)
+		require.Contains(t, string(calls), "-w 5 -A PROXIMITY-PING -d 2001:db8::/32 -j RETURN\n"+
+			"-w 5 -A PROXIMITY-PING -j RETURN\n-w 5 -I OUTPUT 1 -m mark --mark 51000 -p "+
+			"ipv6-icmp --icmpv6-type echo-request -j PROXIMITY-PING\n")
+		require.NotContains(t, string(calls), "1.1.1.0")
+		require.True(t, manager.Capture(true, false, ping))
+		require.True(t, manager.Capture(true, false, nil))
+		calls, err = os.ReadFile(filepath.Join(directory, "iptables.log"))
+		require.NoError(t, err)
+		require.Equal(t, 2, strings.Count(string(calls), "-w 5 -N PROXIMITY-PING\n"))
+		require.Equal(t, 3, strings.Count(string(calls), "-w 5 -X PROXIMITY-PING\n"))
+	}
+	{
+		ping := []PingRule{{Prefix: netip.MustParsePrefix("10.1.0.0/16"), Allow: true},
+			{Prefix: netip.MustParsePrefix("10.0.0.0/8"), Table: 51007},
+			{Prefix: netip.MustParsePrefix("2001:db8::/32"), Table: 51007},
+			{Prefix: netip.MustParsePrefix("192.0.2.0/24")}, {Table: 51008}}
+		require.True(t, manager.Capture(true, true, ping))
+		calls, err := os.ReadFile(filepath.Join(directory, "ip.log"))
+		require.NoError(t, err)
+		require.Contains(t, string(calls), "-4 rule add priority 5165 ipproto 1 to 10.1.0.0/16 "+
+			"lookup 51000\n-4 rule add priority 5165 ipproto 1 to 10.0.0.0/8 lookup 51007\n"+
+			"-4 rule add priority 5165 ipproto 1 to 192.0.2.0/24 lookup 51000\n"+
+			"-4 rule add priority 5165 ipproto 1 to 198.18.0.0/16 lookup 51000\n"+
+			"-4 rule add priority 5166 ipproto 1 lookup 51008\n")
+		require.Contains(t, string(calls), "-6 rule add priority 5165 ipproto 58 to 2001:db8::/32 "+
+			"lookup 51007\n-6 rule add priority 5166 ipproto 58 lookup 51008\n")
+		require.NotContains(t, string(calls), "ipproto 58 to 10.")
+		firewall, err := os.ReadFile(filepath.Join(directory, "iptables.log"))
+		require.NoError(t, err)
+		require.Contains(t, string(firewall), "-w 5 -A PROXIMITY-PING -d 10.0.0.0/8 -j DROP\n")
+		require.Contains(t, string(firewall), "-w 5 -A POSTROUTING -t nat -s 198.18.0.0/30 -o "+
+			"proximity_o+ -p icmp -j MASQUERADE\n-w 5 -A POSTROUTING -t nat -s 198.18.0.0/30 -o "+
+			"proximity_a+ -p icmp -j MASQUERADE\n")
+		firewall, err = os.ReadFile(filepath.Join(directory, "ip6tables.log"))
+		require.NoError(t, err)
+		require.Contains(t, string(firewall), "-w 5 -A POSTROUTING -t nat -s "+
+			"fdfe:dcba:9876::/126 -o proximity_a+ -p ipv6-icmp -j MASQUERADE\n")
+		require.False(t, manager.Capture(false, false, ping))
+		calls, err = os.ReadFile(filepath.Join(directory, "ip.log"))
+		require.NoError(t, err)
+		require.Contains(t, string(calls), "-6 rule del priority 5165\n-6 rule del priority 5166\n")
+		firewall, err = os.ReadFile(filepath.Join(directory, "iptables.log"))
+		require.NoError(t, err)
+		require.Contains(t, string(firewall), "-w 5 -D POSTROUTING -t nat -s 198.18.0.0/30 -o "+
+			"proximity_a+ -p icmp -j MASQUERADE\n")
 	}
 	{
 		outbound := config.Outbound{ID: "VPN", Type: config.TypeOpenVPN, Enabled: true, Slot: 7,
@@ -981,7 +1045,7 @@ func TestManager_Capture(t *testing.T) {
 		require.NotContains(t, string(arguments), "--mark")
 	}
 	{
-		require.False(t, manager.Capture(false, false))
+		require.False(t, manager.Capture(false, false, nil))
 		calls, err := os.ReadFile(filepath.Join(directory, "ip.log"))
 		require.NoError(t, err)
 		require.Contains(t, string(calls), "-4 rule del priority 5155\n")
@@ -993,7 +1057,7 @@ func TestManager_Capture(t *testing.T) {
 		require.NoError(t, err)
 		defer plain.Close()
 		plain.capture.device = "lo"
-		require.False(t, plain.Capture(true, false))
+		require.False(t, plain.Capture(true, false, nil))
 	}
 }
 

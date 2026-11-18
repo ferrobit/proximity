@@ -18,7 +18,7 @@ SYNC = rsync -a --delete --exclude /.git --exclude /bin --exclude /docs \
 	--exclude /web/node_modules --exclude /web/dist ./ $(SOURCE)/
 
 .PHONY: all sync deps web build vet test cover coverage-docs dev image up down restart logs screenshots screenshot clean
-.PHONY: stand-security stand-tunnel stand-reload stand-config
+.PHONY: stand-security stand-tunnel stand-reload stand-config stand-capture
 
 all: web build
 
@@ -109,6 +109,10 @@ stand-reload:
 stand-config:
 	@mkdir -p $(ROOT)/tmp
 	bash scripts/stands/broken-config/check.sh
+
+stand-capture:
+	@mkdir -p $(ROOT)/tmp
+	bash scripts/stands/capture/check.sh
 
 clean:
 	rm -rf $(ROOT)

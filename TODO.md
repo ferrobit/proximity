@@ -94,44 +94,51 @@ document `proximity-openvpn-test-report.md`.
     host connection; an inbound that goes straight to the host is not
     limited.
 
-- [ ] **ICMP of the host in transparent mode**
-  - Not checked: `ping` from the host itself when all host traffic is
-    captured (Linux, host network). It probably leaves directly, past
-    the routes, like the ping of inbound clients did. Check it on a
-    stand with the host network and decide: reject, or route ICMP of
-    IP routes into tunnels.
+- [x] **ICMP of the host in transparent mode**
+  - Done: **Settings → Keep ping of the host on its routes** (on by default,
+    `ping_filter`, configuration version 9). The chain `PROXIMITY-PING`
+    (`iptables` and `ip6tables`) lets the echo requests of mihomo
+    (`fwmark 51000`) out only to addresses whose route or the default
+    target is DIRECT or HOST; others are dropped, so ping shows no answer
+    instead of leaving directly. Checked with the stand `capture`
+    (`make stand-capture`, 12 checks).
+  - Found on 2026-11-18: `ping` of an address routed to a proxy left
+    directly from the address of the host: mihomo answers an echo request
+    that came into `proximity_tun` with its own request sent directly,
+    without the rules. `tun.disable-icmp-forwarding: true` was not taken:
+    the gVisor stack then answers every ping itself, even for an absent
+    address.
 
-- [x] **No self-recovery of a `failed` service**
-  - Done: *Restore lost connections* on the Monitoring tab of every
-    outbound and inbound (on by default, 60 s, unlimited). Covers an
-    unreachable server, a failed monitoring check, an NTP outage at
-    start and a busy inbound port; errors that need a user action
-    and `authentication failed` still end as `failed`.
+- [x] **ICMP through VPN outbounds**
+  - Done: ping of an IP route or of the default target with an OpenVPN or
+    AmneziaWG outbound goes through the tunnel: `ip rule` 5165 / 5166
+    (`ipproto icmp … lookup <table>`) in the order of the routes, and
+    `MASQUERADE` of the TUN source `198.18.0.0/30` on `proximity_o+` and
+    `proximity_a+`. Checked with OpenVPN on the stand `capture`
+    (19 checks, `rp_filter=1`); AmneziaWG only by unit tests (see *Stand
+    with AmneziaWG*).
+  - Found on the way: the kernel refuses `ip rule add … ipproto 1 lookup T`
+    without `to` (*File exists*) when a rule with the same priority, table
+    and `to` exists, so the default target has its own priority 5166.
+  - Left: ping of a fallback whose members are tunnels is dropped (the
+    member in use is chosen by mihomo).
 
-- [x] **Default inbound networks collide between instances**
-  - Done: a new inbound gets `10.<X>.<N>.0/24`, where `<X>` (64–191) comes
-    from the secret of the installation, so two installations get
-    different networks in 127 cases of 128. Existing inbounds keep
-    `10.77.<N>.0/24`.
+- [ ] **Ping filter: GEOIP and IP-ASN routes**
+  - A GEOIP, IP-ASN, source or process route with a target that is not
+    direct ends the filter with DROP: such a route cannot be checked by
+    address, so ping of every later address is dropped. An `ipset` built
+    from the GeoIP database would check GEOIP exactly.
 
-- [x] **Fragmentation with `tun-mtu 1500`**
-  - Done: the default MTU of a new inbound is 1420 (1420 + 52 bytes of
-    UDP and OpenVPN headers = 1472, below 1500). Existing inbounds keep
-    their value.
-  - Not measured on the wire, only calculated; see *Hint for inbounds
-    with the old defaults* below.
+- [ ] **Ping of a name with fake-IP**
+  - Not checked: `ping <name>` when the host resolves through the DNS of
+    the capture (fake-IP `198.18.x.x`). Which address does mihomo ping,
+    and does the filter see the route of the domain? The stand has no DNS
+    server for this yet.
 
-- [x] **Killed session is not announced to the client**
-  - Done: `client-kill <CID> HALT`; on the stand the client of a disabled
-    user stops after 2 seconds instead of 60.
-
-- [x] **Auth token does not survive an inbound restart**
-  - Done: the key of the tokens is derived from the server key and the
-    TOTP key, so a client comes back without a new code after a restart
-    of the inbound or of the container.
-  - Found and fixed on the way: a disabled user who kept a token could
-    connect again without a password. A login with a token now checks
-    that the user is still enabled (`auth-gen-token 0 external-auth`).
+- [ ] **`TestManager_OpenVPN` failed once**
+  - Failed once in a full `go test -cover ./...` run on 2026-11-18 (0.98 s),
+    passed alone and in four later full runs. The message was not saved;
+    watch for it.
 
 - [ ] **Hint for inbounds with the old defaults**
   - Inbounds created earlier keep the network `10.77.<N>.0/24` and the

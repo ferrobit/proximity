@@ -4,6 +4,8 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
+	"net/netip"
+	"slices"
 	"strings"
 
 	"proximity/internal/config"
@@ -172,6 +174,43 @@ func Used(snapshot config.Config) map[string]bool {
 		}
 	}
 	return result
+}
+
+// NOTE: An echo request has no domain, port or transport, so only IP rules decide by its
+// address; a rule that may match an address but cannot be checked here (GEOIP, IP-ASN, a
+// source or a process) with a target that is not direct closes the list with a drop. A
+// tunnel target (OpenVPN, AmneziaWG) carries ping in the routing table of its outbound.
+func Ping(snapshot config.Config, links map[string]link.Status) []link.PingRule {
+	state := &buildState{config: snapshot, links: links, variants: map[string][]rules.Variant{},
+		active: map[string]bool{config.TargetDirect: true, config.TargetReject: true}}
+	state.buildProxies()
+	state.buildGroups()
+	result := []link.PingRule{}
+	for _, route := range snapshot.Routes {
+		parsed, err := rules.Parse(route.Directive, route.Params)
+		if !route.Enabled || !state.active[route.Target] || err != nil {
+			continue
+		}
+		allow, table := state.direct(route.Target), state.table(route.Target)
+		for _, rule := range parsed {
+			switch rule.Directive {
+			case rules.IPCIDR, rules.IPCIDR6:
+				if prefix, err := netip.ParsePrefix(rule.Value); err == nil && rule.Port == 0 {
+					result = append(result, link.PingRule{Prefix: prefix.Masked(), Allow: allow,
+						Table: table})
+				}
+			case rules.GeoIP, rules.IPASN, rules.SourceIPCIDR, rules.ProcessName, rules.ProcessPath:
+				if !allow && rule.Port == 0 {
+					return append(result, link.PingRule{})
+				}
+			}
+		}
+	}
+	target := snapshot.Settings.DefaultTarget
+	if !state.active[target] {
+		target = config.TargetDirect
+	}
+	return append(result, link.PingRule{Allow: state.direct(target), Table: state.table(target)})
 }
 
 func setCredentials(proxy map[string]any, username string, password string, secure bool,
@@ -372,6 +411,34 @@ func (state *buildState) alive(members []string) []string {
 		return members
 	}
 	return result
+}
+
+func (state *buildState) direct(target string) bool {
+	if target == config.TargetDirect {
+		return true
+	}
+	for _, outbound := range state.config.Outbounds {
+		if outbound.ID == target {
+			return outbound.Type == config.TypeHost
+		}
+	}
+	for _, group := range state.document.Groups {
+		if group.Name == target {
+			return !slices.ContainsFunc(group.Proxies, func(member string) bool {
+				return !state.direct(member)
+			})
+		}
+	}
+	return false
+}
+
+func (state *buildState) table(target string) int {
+	for _, outbound := range state.config.Outbounds {
+		if outbound.ID == target && outbound.IsTunnel() {
+			return link.Table(outbound.Slot)
+		}
+	}
+	return 0
 }
 
 func (state *buildState) buildRules() {

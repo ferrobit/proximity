@@ -540,6 +540,7 @@ The router state is saved to `router.json` in the settings folder.
 | Bind address | `*` = all addresses. In host mode `PROXIMITY_PROXY_BIND` overrides it |
 | Router log level | mihomo log level: `silent`, `error`, `warning`, `info`, `debug` |
 | Route all outgoing connections of the host through Proximity | Transparent capture. Available only in host network mode (Linux, `docker-compose.yml`) |
+| Keep ping of the host on its routes | On by default. Ping cannot pass a proxy: with this option a ping goes out directly only to addresses whose route (or the default target) is **DIRECT** or a **HOST** outbound, goes through the tunnel when the route is an OpenVPN or AmneziaWG outbound, and other addresses (proxies, fallbacks, REJECT) do not answer. Off: every ping of the host leaves directly, past the routes |
 | IPv6 | Enable when the host has IPv6; otherwise IPv6 traffic bypasses the routes |
 | Enable connectivity checks | Periodically check HOST outbounds and proxy servers |
 | Probe target (host:port) | Target for HOST checks, default `1.1.1.1:443` |

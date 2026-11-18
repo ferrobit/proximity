@@ -386,8 +386,12 @@ func (server *Server) complete(sequence int64) {
 }
 
 func (server *Server) capture() {
-	settings := server.store.Snapshot().Settings
-	captured := server.manager.Capture(settings.Capture && server.active(), settings.IPv6)
+	snapshot := server.store.Snapshot()
+	settings, ping := snapshot.Settings, []link.PingRule(nil)
+	if settings.PingFilter {
+		ping = router.Ping(snapshot, server.manager.Status())
+	}
+	captured := server.manager.Capture(settings.Capture && server.active(), settings.IPv6, ping)
 	server.mutex.Lock()
 	defer server.mutex.Unlock()
 	if server.captured != captured {

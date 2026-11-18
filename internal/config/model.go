@@ -27,6 +27,7 @@ type Settings struct {
 	ProbeTarget         string   `json:"probe_target"`
 	CheckInterval       int      `json:"check_interval"`
 	Capture             bool     `json:"capture"`
+	PingFilter          bool     `json:"ping_filter"`
 	UnreachableLimit    int      `json:"unreachable_limit"`
 	UnreachableLifetime int      `json:"unreachable_lifetime"`
 	Autostart           bool     `json:"autostart"`
@@ -197,12 +198,13 @@ const (
 	OTPAppend    = "append"
 )
 
-const currentVersion = 8
+const currentVersion = 9
 const inboundVersion = 4
 const autostartVersion = 5
 const serviceVersion = 6
 const attemptsVersion = 7
 const routesVersion = 8
+const pingVersion = 9
 const maxSlot = 9999
 const defaultAttempts = 3
 const defaultReconnectTimeout = 10
@@ -243,7 +245,7 @@ func Default() Config {
 	return Config{Version: currentVersion, Settings: Settings{MixedPort: 7899, BindAddress: "*",
 		DefaultTarget: TargetDirect, LogLevel: "warning", AnonymousDashboard: true,
 		ConnectivityChecks: true, ProbeTarget: defaultProbeTarget, CheckInterval: 30,
-		Capture: true, UnreachableLimit: defaultUnreachableLimit,
+		Capture: true, PingFilter: true, UnreachableLimit: defaultUnreachableLimit,
 		UnreachableLifetime: defaultUnreachableLifetime, Autostart: true,
 		LogLines: DefaultLogLines, VerboseLogLines: DefaultVerboseLogLines,
 		TimeServers: slices.Clone(defaultTimeServers), TimeTolerance: defaultTimeTolerance,

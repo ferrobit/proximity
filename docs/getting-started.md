@@ -182,7 +182,8 @@ a `.env` file next to the compose file; the script remembers some of them in
 | `PROXIMITY_UI_BIND` | `0.0.0.0` | Address the web UI listens on (host side) |
 | `PROXIMITY_PROXY_BIND` | `127.0.0.1` | Address of the proxy port. In host mode it overrides *Bind address* from Settings |
 | `PROXIMITY_INBOUND_BIND` | `0.0.0.0` | Bridge mode: host address the inbound ports 7800–7898 (TCP and UDP) are published on |
-| `PROXIMITY_IPTABLES` | `iptables` | Host mode: tool used for forwarding rules and traffic counters of inbounds. Set `iptables-legacy` when the host firewall uses the legacy backend |
+| `PROXIMITY_IPTABLES` | `iptables` | Host mode: tool used for forwarding rules, traffic counters of inbounds and the ping filter. Set `iptables-legacy` when the host firewall uses the legacy backend |
+| `PROXIMITY_IP6TABLES` | `PROXIMITY_IPTABLES` with `ip6tables` in place of `iptables` | Host mode: tool used for the IPv6 ping filter |
 | `PROXIMITY_VERSION` | `1.2.0` | Version string compiled into the image |
 | `TZ` | `UTC` | Time zone for logs |
 

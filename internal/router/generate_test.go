@@ -2,6 +2,7 @@ package router
 
 import (
 	"encoding/json"
+	"net/netip"
 	"testing"
 	"time"
 
@@ -295,6 +296,50 @@ func TestOwner_Variants(t *testing.T) {
 	require.Equal(t, "HTTP 1", Owner("HTTP 1~https"))
 	require.Equal(t, "HTTP 1", Owner("HTTP 1~ftp"))
 	require.Equal(t, "", Owner(""))
+}
+
+func TestPing_Rules(t *testing.T) {
+	{
+		snapshot := makeSnapshot(t)
+		require.Equal(t, []link.PingRule{{Prefix: netip.MustParsePrefix("10.0.0.0/8")},
+			{Allow: true}}, Ping(snapshot, nil))
+	}
+	{
+		snapshot := makeSnapshot(t)
+		_, err := snapshot.AddFallback(config.Fallback{Enabled: true,
+			Outbounds: []string{"HOST 1", "HOST 2"}})
+		require.NoError(t, err)
+		for _, route := range []config.Route{
+			{Directive: "IP-CIDR", Target: "HOST 2", Enabled: true, Params: []string{"2001:db8::/32"}},
+			{Directive: "IP-CIDR", Target: "SOCKS5 1", Enabled: true, Params: []string{"1.1.1.1:443"}},
+			{Directive: "IP-CIDR", Target: "OpenVPN 1", Enabled: true, Params: []string{"10.8.0.0/16"}},
+			{Directive: "IP-CIDR", Target: "REJECT", Enabled: true, Params: []string{"192.0.2.1"}},
+			{Directive: "IP-CIDR", Target: "Fallback 4", Enabled: true, Params: []string{"192.0.2.2"}},
+			{Directive: "IP-CIDR", Target: "SOCKS5 1", Params: []string{"192.0.2.3"}},
+			{Directive: "GEOIP", Target: "DIRECT", Enabled: true, Params: []string{"RU"}},
+			{Directive: "GEOIP", Target: "SOCKS5 1", Enabled: true, Params: []string{"CN"}},
+			{Directive: "IP-CIDR", Target: "DIRECT", Enabled: true, Params: []string{"192.0.2.4"}}} {
+			_, err := snapshot.AddRoute(route)
+			require.NoError(t, err)
+		}
+		require.Equal(t, []link.PingRule{{Prefix: netip.MustParsePrefix("10.0.0.0/8")},
+			{Prefix: netip.MustParsePrefix("2001:db8::/32"), Allow: true},
+			{Prefix: netip.MustParsePrefix("10.8.0.0/16"), Table: link.Table(snapshot.Outbounds[5].Slot)},
+			{Prefix: netip.MustParsePrefix("192.0.2.1/32")},
+			{Prefix: netip.MustParsePrefix("192.0.2.2/32"), Allow: true}, {}}, Ping(snapshot, nil))
+	}
+	{
+		snapshot := makeSnapshot(t)
+		snapshot.Settings.DefaultTarget = "SOCKS5 1"
+		require.Equal(t, link.PingRule{}, Ping(snapshot, nil)[1])
+		snapshot.Settings.DefaultTarget = "HOST 3"
+		require.Equal(t, link.PingRule{Allow: true}, Ping(snapshot, nil)[1])
+		snapshot.Settings.DefaultTarget = "OpenVPN 1"
+		require.Equal(t, link.PingRule{Table: link.Table(snapshot.Outbounds[5].Slot)},
+			Ping(snapshot, nil)[1])
+		snapshot.Settings.DefaultTarget = "AmneziaWG 1"
+		require.Equal(t, link.PingRule{Allow: true}, Ping(snapshot, nil)[1])
+	}
 }
 
 func TestUsed_Targets(t *testing.T) {

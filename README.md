@@ -20,9 +20,9 @@
 </p>
 
 <p align="center">
-  <img alt="Tests" src="https://img.shields.io/badge/tests-127%20passing-brightgreen">
-  <img alt="Coverage" src="https://img.shields.io/badge/coverage-94.0%25-brightgreen"><br>
-  <sub><b>127</b> Go tests, <b>94.0%</b> statement coverage, 64 end-to-end checks on
+  <img alt="Tests" src="https://img.shields.io/badge/tests-128%20passing-brightgreen">
+  <img alt="Coverage" src="https://img.shields.io/badge/coverage-94.1%25-brightgreen"><br>
+  <sub><b>128</b> Go tests, <b>94.1%</b> statement coverage, 86 end-to-end checks on
   <a href="docs/development.md#test-stands">ready stands</a></sub>
 </p>
 
@@ -180,6 +180,10 @@ PROXIMITY_NETWORK=bridge scripts/proximity.sh up -d --build
 - Turn it off in **Settings → [Router] → Route all outgoing connections of the host
   through Proximity**.
 - IPv6 is captured only when **IPv6** is enabled in Settings.
+- Ping cannot pass a proxy. **Settings → Keep ping of the host on its routes** (on by
+  default) lets it out directly only where the route is DIRECT or HOST, sends it through
+  the tunnel for OpenVPN and AmneziaWG routes; other addresses do not answer, so a ping
+  never leaves past the routes.
 
 Details: [Architecture](docs/architecture.md#transparent-capture).
 
@@ -327,17 +331,17 @@ repository itself is not changed. Component versions are Docker build arguments 
 
 ## Project status
 
-Version **1.2.0**. 127 Go tests pass, total statement coverage 94.0% (81.4–99.1% per
+Version **1.2.0**. 128 Go tests pass, total statement coverage 94.1% (81.4–99.1% per
 package). Transparent capture has been verified in isolated network namespaces and in a
 real Docker image: DIRECT, REJECT, domain → OpenVPN / AmneziaWG, LAN and inbound
 connections untouched, `rp_filter=1`, container stop and kill. Inbounds have been verified
 with real mihomo 1.19.34 and OpenVPN 2.6 in network namespaces: SOCKS5 authentication and
 TLS, an OpenVPN client with password + TOTP (appended and `static-challenge`), anonymous
 clients, token renegotiation, session kill on user change, traffic through the router,
-DNS hijack, traffic counters. Four ready stands run 64 end-to-end checks with the real
-image (`make stand-security`, `stand-tunnel`, `stand-reload`, `stand-config`): one-time
-codes, certificates, tokens, received routes, a damaged configuration, the reload of an
-open page. The web UI, including the connection map, has been checked in
+DNS hijack, traffic counters. Five ready stands run 86 end-to-end checks with the real
+image (`make stand-security`, `stand-tunnel`, `stand-reload`, `stand-config`,
+`stand-capture`): one-time codes, certificates, tokens, received routes, a damaged
+configuration, the reload of an open page, TCP and ping of a host with transparent capture. The web UI, including the connection map, has been checked in
 Chrome in the light and dark themes with a live OpenVPN tunnel, SOCKS5 and HTTP proxies and
 both inbound types.
 

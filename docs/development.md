@@ -88,6 +88,7 @@ make screenshots   # retake the pictures in docs/images
 make screenshot <picture>   # retake one picture
 make stand-security   # end-to-end checks of the OpenVPN inbound security
 make stand-config     # end-to-end check of a start with a damaged configuration
+make stand-capture    # end-to-end checks of TCP and ping of a host with transparent capture
 make down     # stop
 ```
 
@@ -248,7 +249,7 @@ The header of `README.md` (two badges and a line), its *Project status* and the 
 below show the number of tests and the coverage. Run `make coverage-docs` after every
 change of the Go code: it replaces these numbers and changes nothing else.
 
-Current state (version 1.2.0): **127 tests, all passing, 94.0% total statement coverage.**
+Current state (version 1.2.0): **128 tests, all passing, 94.1% total statement coverage.**
 
 | Package | Coverage |
 |---|---|
@@ -256,16 +257,15 @@ Current state (version 1.2.0): **127 tests, all passing, 94.0% total statement c
 | `internal/auth` | 94.1% |
 | `internal/clock` | 97.0% |
 | `internal/config` | 96.0% |
-| `internal/link` | 90.3% |
-| `internal/router` | 96.6% |
+| `internal/link` | 90.6% |
+| `internal/router` | 96.8% |
 | `internal/rules` | 99.1% |
 | `internal/server` | 95.0% |
 | `internal/wgconf` | 97.9% |
 
 Tests use fake tools (`ip`, `openvpn`, `iptables`, `ping` …) and a fake mihomo, so they run
 without root and without network access. `TestManager_Inbounds` binds one free TCP port in
-7800…7898 on the loopback address. `TestManager_Capture` expects that the machine has no
-`proximity_tun` interface, so stop a locally running Proximity before `make test`. Assertions use `testify/require`.
+7800…7898 on the loopback address. Assertions use `testify/require`.
 
 ## Test stands
 
@@ -278,6 +278,7 @@ make stand-security                     # stand "pair": 16 checks, about 1 minut
 make stand-tunnel                       # stand "pair": 24 checks, about 20 seconds
 make stand-reload                       # stand "reload": 10 checks, about 25 seconds, needs a browser
 make stand-config                       # stand "broken-config": 17 checks, about 5 seconds
+make stand-capture                      # stand "capture": 19 checks, about 30 seconds
 bash scripts/stands/pair/stand.sh up    # only start the stand; "down" removes it
 ```
 
@@ -286,6 +287,7 @@ bash scripts/stands/pair/stand.sh up    # only start the stand; "down" removes i
 | `pair` | two linked instances: `proximity-stand-a` (client side) and `proximity-stand-b` (server side, also answers for `1.1.1.1:443`) | `make stand-security` (`security.sh`): single use of one-time codes, rejection of an old client certificate, ping of clients. `make stand-tunnel` (`tunnel.sh`): default network and MTU of a new inbound, the route of *Receive routes* (appears, follows the connection, can be moved, keeps its place after a restart), the token after a restart of the inbound, a disabled user, the instance mark |
 | `reload` | one instance on the fixed port `127.0.0.1:18899` (`STAND_PORT`) and a headless browser with its page open; uses the browser and the node modules of the screenshots | `make stand-reload` (`check.sh`): after a restart of the container the page warns that unsaved changes are lost and reloads itself in 5 seconds, also with an open dialog; "Reload now" reloads at once |
 | `broken-config` | one instance started with the damaged `config.json` of the stand | `make stand-config` (`check.sh`): what is dropped, what is kept, the copy of the file, the report and its dismissal |
+| `capture` | a "host" (a network namespace with `rp_filter=1` and its default route via `proximity-stand-wan`), Proximity in its network with capture on (`PROXIMITY_NETWORK=host`), an exit instance with SOCKS5 and OpenVPN inbounds, a local time server and the "Internet" `proximity-stand-wan` that owns `1.1.1.1` (route `IP-CIDR` to SOCKS5), `1.1.1.2` (no route) and `1.1.1.3` (route to OpenVPN) and counts the packets by source | `make stand-capture` (`check.sh`): TCP of each address leaves where its route says; ping of the SOCKS5 route does not leave and gets no false answer, ping without a route gets real answers, ping of the tunnel route goes through the tunnel; the default target SOCKS5 drops ping, the default tunnel carries it and LAN ping stays on the LAN; *Keep ping of the host on its routes* off removes everything |
 | screenshots | two linked instances with sample data and traffic, see [Screenshots](#screenshots) | — |
 
 `scripts/stands/lib.sh` holds the common parts (image, network, instance, removal),

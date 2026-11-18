@@ -101,6 +101,23 @@ ip route show table 51000              # default dev proximity_tun
 ip link show proximity_tun
 ```
 
+## Ping of the host does not answer (Linux)
+
+With capture on, ping cannot pass a proxy. **Settings → Keep ping of the host on its
+routes** (on by default) lets a ping out directly only to addresses whose route or the
+default target is **DIRECT** or a **HOST** outbound, sends it through the tunnel for an
+OpenVPN or AmneziaWG outbound (the tunnel must be up), and other addresses (proxies,
+fallbacks, REJECT) do not answer. Check such an address with TCP (`curl`) instead, or
+switch the option off: then every ping leaves directly, past the routes. A route that
+cannot be checked by address (GEOIP, IP-ASN, a source or a process) with a target that is
+not direct stops ping to every address that no earlier route allows.
+
+```bash
+sudo iptables -S PROXIMITY-PING           # RETURN: ping may go out directly, DROP: it may not
+ip rule show | grep -E '^516[56]'         # ping into tunnels: lookup <table of the outbound>
+sudo iptables -t nat -S POSTROUTING | grep 198.18   # source of ping into tunnels
+```
+
 ## No internet on the host after a crash
 
 When the container stops normally, Proximity removes its rules. If the process was killed,

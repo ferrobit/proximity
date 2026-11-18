@@ -48,6 +48,9 @@
             : 'Available only when the container uses the host network (Linux, docker-compose.yml)'">
             <a-checkbox v-model:checked="form.capture" :disabled="!isAdmin() || !session.host_network">Route all outgoing connections of the host through Proximity</a-checkbox>
           </a-form-item>
+          <a-form-item extra="Ping cannot pass a proxy: it goes out directly only where the route is DIRECT or HOST and through the tunnel for OpenVPN and AmneziaWG routes, other addresses do not answer. Off: every ping of the host leaves directly, past the routes">
+            <a-checkbox v-model:checked="form.ping_filter" :disabled="!isAdmin() || !session.host_network || !form.capture">Keep ping of the host on its routes</a-checkbox>
+          </a-form-item>
           <a-form-item extra="Enable when the host has IPv6 connectivity, otherwise IPv6 traffic bypasses the routes">
             <a-checkbox v-model:checked="form.ipv6">IPv6</a-checkbox>
           </a-form-item>
@@ -183,7 +186,7 @@ const service = computed(() => {
 const form = reactive({
   autostart: true,
   mixed_port: 7899, bind_address: '*', default_target: 'DIRECT', log_level: 'warning', ipv6: false, anonymous_dashboard: true,
-  connectivity_checks: true, probe_target: '1.1.1.1:443', check_interval: 30, capture: true, unreachable_limit: 100,
+  connectivity_checks: true, probe_target: '1.1.1.1:443', check_interval: 30, capture: true, ping_filter: true, unreachable_limit: 100,
   unreachable_lifetime: 86400, lifetime: 1, lifetime_unit: 86400
 })
 const miscFields = ['log_lines', 'verbose_log_lines', 'time_manual', 'time_servers', 'time_tolerance', 'time_interval', 'time_wait']

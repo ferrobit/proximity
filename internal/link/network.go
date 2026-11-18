@@ -28,6 +28,7 @@ type Tools struct {
 	Ping       string
 	Oathtool   string
 	Iptables   string
+	Ip6tables  string
 	Forwarding string
 	Faketime   string
 }
@@ -60,7 +61,9 @@ func DefaultTools() Tools {
 		AmneziaGo: lookup("PROXIMITY_AWG_GO", "amneziawg-go"),
 		AmneziaWG: lookup("PROXIMITY_AWG", "awg"), IP: lookup("PROXIMITY_IP", "ip"),
 		Ping: lookup("PROXIMITY_PING", "ping"), Oathtool: lookup("PROXIMITY_OATHTOOL", "oathtool"),
-		Iptables:   lookup("PROXIMITY_IPTABLES", "iptables"),
+		Iptables: lookup("PROXIMITY_IPTABLES", "iptables"),
+		Ip6tables: lookup("PROXIMITY_IP6TABLES",
+			strings.Replace(lookup("PROXIMITY_IPTABLES", "iptables"), "iptables", "ip6tables", 1)),
 		Forwarding: lookup("PROXIMITY_FORWARDING", forwardingPath),
 		Faketime:   lookup("PROXIMITY_FAKETIME", findFaketime())}
 }
@@ -313,9 +316,13 @@ func (tools Tools) enableForwarding() error {
 }
 
 func (tools Tools) firewall(arguments ...string) (string, error) {
+	return tools.firewallOf(tools.Iptables, arguments...)
+}
+
+func (tools Tools) firewallOf(binary string, arguments ...string) (string, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
-	return tools.run(ctx, tools.Iptables, append([]string{"-w", firewallWait}, arguments...)...)
+	return tools.run(ctx, binary, append([]string{"-w", firewallWait}, arguments...)...)
 }
 
 func (tools Tools) allowForward(device string) error {
@@ -435,6 +442,7 @@ func (tools Tools) cleanup() error {
 	}
 	capture, account := captureState{}, accountState{}
 	capture.remove(tools)
+	capture.removePing(tools)
 	account.remove(tools)
 	if output, err := tools.firewall("-S", forwardChain); err == nil {
 		for _, line := range strings.Split(output, "\n") {
