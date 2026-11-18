@@ -46,7 +46,10 @@ they are used only when there are no users.
 |---|---|
 | `authentication failed` (OpenVPN) | Check user name and password. Without an OTP key Proximity does not retry, to avoid locking the account |
 | `OTP key is required by server` | Fill in *OTP key* (base32 secret) and choose *OTP code usage*: answer the `CHALLENGE` prompt or append the code to the password |
-| `… is required by server` | The server asked for something not configured (user name, password, private key password) |
+| `… is required by server` | The server asked for something not configured (user name, password, private key password). The outbound fails at once and is not retried |
+| `invalid private key password` (OpenVPN) | The client key in the configuration is encrypted and *Private key password* does not open it |
+| `server certificate is rejected: …` (OpenVPN) | The certificate of the server does not pass the check against `<ca>` of the configuration (wrong or old CA, expired certificate, another server name); the text is the reason printed by OpenVPN. Not retried |
+| `tunnel address '…' overlaps network '…' of inbound device 'proximity_i<N>'` (OpenVPN) | The VPN server gave an address from the *VPN network* of one of your OpenVPN inbounds, so the kernel drops the tunnel packets. Typical for two Proximity instances connected to each other: both use `10.77.<N>.0/24` by default. Change *VPN network* of the inbound on one side. An outbound connected to an inbound of the same instance always fails this way |
 | `device 'proximity_a<N>' is not ready` (AmneziaWG) | `amneziawg-go` did not create its interface and control socket within 10 s; see the log for its own error |
 | `connection timed out` (OpenVPN) | The server is not reachable or the configuration is wrong; OpenVPN did not finish within 60 s |
 | `monitoring failed after N attempts: failed to ping gateway …` | The tunnel is up but the gateway does not answer ping. Some servers block ICMP — disable *Enable monitoring* for this outbound |
@@ -129,6 +132,8 @@ Hover the state or open the inbound log (📄).
 3. The client must reach the *Public address* and port (UDP by default) from outside:
    check port forwarding on your router for 7800–7898.
 4. IPv6 is not tunnelled: a dual-stack client keeps using its own IPv6 route.
+5. `ping` to an address that a route sends to a tunnel or a proxy does not work: the
+   router forwards ICMP directly, outside the outbound. Check with TCP (`curl`) instead.
 
 ## An OpenVPN client gets `AUTH_FAILED`
 

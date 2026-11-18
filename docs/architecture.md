@@ -237,6 +237,15 @@ its **General** tab.
 - `AUTH_FAILED` without an OTP key stops the outbound as `failed` at once, without
   retrying, to avoid locking the account. With an OTP key the next attempt uses a fresh
   code.
+- A prompt that cannot be answered, `bad decrypt` of the private key and `VERIFY ERROR`
+  of the server certificate also stop the outbound as `failed` at once. `openvpn` ignores
+  `SIGTERM` while it waits at a prompt, so it is killed after 1 s.
+- A configuration with `proto tcp…` (or `remote … tcp…`) gets `--socket-flags
+  TCP_NODELAY`: without it every small packet waits for the delayed ACK of the peer
+  (about 40 ms per direction).
+- After the tunnel is up its address and gateway are compared with the networks of the
+  `proximity_i<slot>` devices; an overlap stops the outbound as `failed` (the kernel drops
+  packets whose source address is local).
 
 ## AmneziaWG driver
 
@@ -298,7 +307,8 @@ on every change. Its port (7800…7898) is also its key: slot = port − 7799.
 
 - The configuration is rendered to `/run/proximity/inbound-<slot>/server.conf`: device
   `proximity_i<slot>`, `topology subnet`, `dh none` (ECDH), `tls-crypt`, `duplicate-cn`,
-  `username-as-common-name`, `auth-user-pass-optional`.
+  `username-as-common-name`, `auth-user-pass-optional`; a TCP server gets `tcp-nodelay`
+  (sets `TCP_NODELAY` and pushes it to clients).
 - Credentials are checked by `proximity verify <auth.json> <file>`
   (`auth-user-pass-verify … via-file`). `auth.json` holds enabled users, the anonymous
   flag and the TOTP key; it is replaced atomically when users change, so the server keeps
@@ -306,7 +316,8 @@ on every change. Its port (7800…7898) is also its key: slot = port − 7799.
   response (`SCRV1:…`), for the current and the neighbouring 30-second windows. With TOTP
   the server issues `auth-gen-token`, so renegotiation does not ask for a new code.
 - Sessions of changed, disabled or deleted users are closed through the management unix
-  socket (`kill <name>`); the same socket gives the list of connected clients (`status 2`).
+  socket (`kill <name>`); the same socket gives the list of connected clients (`status 2`,
+  entries without a virtual address are unfinished handshakes and are skipped).
 - Client traffic is forwarded by the kernel into the mihomo TUN device and terminated
   there, so no NAT is needed: table `61000 + slot` holds `<network> dev proximity_i<slot>`,
   `default dev proximity_tun` and a `blackhole` fallback; rule `5140: from <network>`.

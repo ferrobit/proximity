@@ -123,6 +123,10 @@ func ClientConfig(inbound config.Inbound, options ExportOptions) (string, error)
 	if options.User != "" && server.OTP {
 		lines = append(lines, "auth-nocache", `static-challenge "`+challengeText+`" 1`)
 	}
+	if server.RedirectGateway {
+		// NOTE: Only Windows clients know the pushed block-outside-dns option.
+		lines = append(lines, "ignore-unknown-option block-outside-dns")
+	}
 	lines = append(lines, "verb 3", block("ca", server.CACertificate),
 		block("cert", server.ClientCertificate), block("key", server.ClientKey),
 		block("tls-crypt", server.TLSCrypt))
@@ -199,7 +203,9 @@ func parseClients(lines []string) []InboundClient {
 	result := []InboundClient{}
 	for _, line := range lines {
 		fields := strings.Split(line, ",")
-		if !strings.HasPrefix(line, clientListPrefix) || len(fields) < clientListFields {
+		// NOTE: A client without virtual address has not finished the handshake.
+		if !strings.HasPrefix(line, clientListPrefix) || len(fields) < clientListFields ||
+			fields[3] == "" {
 			continue
 		}
 		client := InboundClient{Name: fields[9], Address: fields[2], Virtual: fields[3]}
@@ -443,6 +449,9 @@ func (acceptor *openvpnAcceptor) render() string {
 	}
 	if server.Protocol == config.ProtocolUDP {
 		lines = append(lines, "explicit-exit-notify 1")
+	} else {
+		// NOTE: Sets TCP_NODELAY on the server and pushes it to clients.
+		lines = append(lines, "tcp-nodelay")
 	}
 	if server.ClientToClient {
 		lines = append(lines, "client-to-client")

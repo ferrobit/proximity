@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"net"
 	"net/netip"
 	"os"
 	"os/exec"
@@ -34,12 +35,20 @@ type openvpnDriver struct {
 	values    map[string]string
 }
 
+type deviceNetwork struct {
+	device string
+	prefix netip.Prefix
+}
+
 const openvpnTimeout = 60 * time.Second
 const openvpnVerbosity = 3
 const openvpnDebugVerbosity = 6
 const openvpnReady = "Initialization Sequence Completed"
 const openvpnAuthFailed = "AUTH_FAILED"
 const openvpnChallenge = "AUTH_FAILED,CRV1"
+const openvpnBadKey = "bad decrypt"
+const openvpnRejected = "VERIFY ERROR: "
+const inboundDevicePrefix = devicePrefix + "i"
 
 var openvpnDropped = []string{"dev", "daemon", "log", "log-append", "status", "writepid",
 	"management", "management-hold", "management-query-passwords", "management-client", "up",
@@ -87,6 +96,59 @@ func sanitizeOpenVPN(text string, login bool) (string, string) {
 	return strings.Join(result, "\n") + "\n", kind
 }
 
+func usesTCP(text string) bool {
+	for _, line := range strings.Split(text, "\n") {
+		fields := strings.Fields(line)
+		if len(fields) < 2 {
+			continue
+		}
+		name := strings.TrimPrefix(fields[0], "--")
+		if name == "proto" && strings.HasPrefix(fields[1], config.ProtocolTCP) {
+			return true
+		} else if name == "remote" && len(fields) > 3 && strings.HasPrefix(fields[3],
+			config.ProtocolTCP) {
+			return true
+		}
+	}
+	return false
+}
+
+func inboundNetworks() []deviceNetwork {
+	result := []deviceNetwork{}
+	interfaces, err := net.Interfaces()
+	if err != nil {
+		return result
+	}
+	for _, item := range interfaces {
+		addresses, err := item.Addrs()
+		if err != nil || !strings.HasPrefix(item.Name, inboundDevicePrefix) {
+			continue
+		}
+		for _, address := range addresses {
+			if prefix, err := netip.ParsePrefix(address.String()); err == nil && prefix.Addr().Is4() {
+				result = append(result, deviceNetwork{item.Name, prefix.Masked()})
+			}
+		}
+	}
+	return result
+}
+
+func findOverlap(values map[string]string, networks []deviceNetwork) error {
+	for _, name := range []string{"ifconfig_local", "route_vpn_gateway"} {
+		address, err := netip.ParseAddr(values[name])
+		if err != nil {
+			continue
+		}
+		for _, network := range networks {
+			if network.prefix.Contains(address) {
+				return fmt.Errorf("tunnel address '%v' overlaps network '%v' of inbound device '%v'",
+					address, network.prefix, network.device)
+			}
+		}
+	}
+	return nil
+}
+
 func makeOpenVPNDriver(runner *runner) *openvpnDriver {
 	slot := runner.outbound.Slot
 	return &openvpnDriver{runner: runner, tools: runner.manager.options.Tools,
@@ -123,6 +185,10 @@ func (driver *openvpnDriver) start(ctx context.Context) error {
 		"--up", script, "--route-up", script, "--auth-retry", "interact", "--auth-nocache",
 		"--verb", strconv.Itoa(verbosity), "--ignore-unknown-option", "block-outside-dns",
 		"register-dns")
+	if usesTCP(text) {
+		// NOTE: Without TCP_NODELAY every small packet waits for the delayed ACK of the peer.
+		command.Args = append(command.Args, "--socket-flags", "TCP_NODELAY")
+	}
 	if driver.runner.bypass != 0 {
 		command.Args = append(command.Args, "--mark", strconv.Itoa(driver.runner.bypass))
 	}
@@ -156,6 +222,9 @@ func (driver *openvpnDriver) start(ctx context.Context) error {
 		return fmt.Errorf("failed to read file '%v': %w", hook, err)
 	} else if err = json.Unmarshal(data, &driver.values); err != nil {
 		return fmt.Errorf("failed to decode file '%v': %w", hook, err)
+	} else if err = findOverlap(driver.values, inboundNetworks()); err != nil {
+		// NOTE: Kernel drops tunnel packets when their addresses are local to an inbound.
+		return &fatalError{err}
 	}
 	return driver.install(kind)
 }
@@ -259,6 +328,13 @@ func (driver *openvpnDriver) output(line string) {
 		if driver.failure = errors.New("authentication failed"); driver.options.OTPKey == "" {
 			driver.failure = &fatalError{driver.failure}
 		}
+		driver.terminal.signal(syscall.SIGTERM)
+	} else if strings.Contains(line, openvpnBadKey) && driver.failure == nil {
+		driver.failure = &fatalError{errors.New("invalid private key password")}
+		driver.terminal.signal(syscall.SIGTERM)
+	} else if _, reason, found := strings.Cut(line, openvpnRejected); found &&
+		driver.failure == nil {
+		driver.failure = &fatalError{fmt.Errorf("server certificate is rejected: %v", reason)}
 		driver.terminal.signal(syscall.SIGTERM)
 	}
 }

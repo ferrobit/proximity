@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"net"
+	"net/netip"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -56,6 +57,7 @@ while [ $# -gt 0 ]; do
 	if [ "$1" = "--up" ]; then hook="${2##* }"; fi
 	shift
 done
+if [ -f "$(dirname "$0")/stubborn" ]; then trap '' TERM; fi
 exec 3<>/dev/tty
 printf 'Enter Auth Username:' >&3
 read -r user <&3
@@ -63,6 +65,14 @@ printf 'Enter Auth Password:' >&3
 read -r pass <&3
 if [ "$user" = "denied" ]; then
 	echo "2026-01-01 00:00:00 AUTH: Received control message: AUTH_FAILED"
+	exec sleep 30
+fi
+if [ "$user" = "locked" ]; then
+	echo "2026-01-01 00:00:00 OpenSSL: error:1C800064:Provider routines::bad decrypt:"
+	exec sleep 30
+fi
+if [ "$user" = "untrusted" ]; then
+	echo "2026-01-01 00:00:00 VERIFY ERROR: depth=1, error=self-signed certificate: CN=Evil CA"
 	exec sleep 30
 fi
 printf 'CHALLENGE: Enter OTP ' >&3
@@ -116,6 +126,7 @@ exit 0
 const sampleStatus = "TITLE,OpenVPN\nHEADER,CLIENT_LIST,Common Name,Real Address\n" +
 	"CLIENT_LIST,bob,192.0.2.5:5000,10.77.2.2,,100,200,2026-01-01 00:00:00,1700000000,bob,0,0,A\n" +
 	"CLIENT_LIST,UNDEF,192.0.2.6:5001,10.77.2.3,,1,2,2026-01-01 00:00:01,1700000001,UNDEF,1,1,A\n" +
+	"CLIENT_LIST,UNDEF,192.0.2.7:5002,,,0,0,2026-01-01 00:00:02,1700000002,UNDEF,2,2,A\n" +
 	"CLIENT_LIST,short\nROUTING_TABLE,10.77.2.2,bob\nEND\n"
 
 func writeScript(t *testing.T, directory string, name string, text string) string {
@@ -260,14 +271,16 @@ func TestClientConfig_Export(t *testing.T) {
 	require.NotContains(t, text, server.CAKey)
 	require.NotContains(t, text, "secret")
 	require.NotContains(t, text, "static-challenge")
+	require.NotContains(t, text, "ignore-unknown-option")
 	{
 		server.Server, server.PublicPort, server.Protocol = "", 1194, config.ProtocolTCP
-		server.OTP = true
+		server.OTP, server.RedirectGateway = true, true
 		text, err := ClientConfig(inbound, ExportOptions{User: "bob", Embed: true,
 			Host: "203.0.113.7"})
 		require.NoError(t, err)
 		require.Contains(t, text, "proto tcp-client\nremote 203.0.113.7 1194\n")
-		require.Contains(t, text, "auth-nocache\nstatic-challenge \"Enter one-time code\" 1\n")
+		require.Contains(t, text, "auth-nocache\nstatic-challenge \"Enter one-time code\" 1\n"+
+			"ignore-unknown-option block-outside-dns\nverb 3\n")
 		require.NotContains(t, text, "explicit-exit-notify")
 		require.NotContains(t, text, "\nauth-user-pass\n")
 		require.True(t, strings.HasSuffix(text, "<auth-user-pass>\nbob\nsecret\n"+
@@ -351,6 +364,26 @@ func TestDialProbe_Targets(t *testing.T) {
 	{
 		_, err := dialProbe(context.Background(), target, 0, "missing0", time.Second)
 		require.ErrorContains(t, err, "failed to connect to")
+	}
+}
+
+func TestFindOverlap_Networks(t *testing.T) {
+	networks := []deviceNetwork{{"proximity_i1", netip.MustParsePrefix("10.77.1.0/24")},
+		{"proximity_i2", netip.MustParsePrefix("10.77.2.0/24")}}
+	require.NoError(t, findOverlap(map[string]string{"ifconfig_local": "10.8.0.2",
+		"route_vpn_gateway": "10.8.0.1"}, networks))
+	require.NoError(t, findOverlap(map[string]string{"ifconfig_local": "10.77.1.2",
+		"route_vpn_gateway": "10.77.1.1"}, []deviceNetwork{}))
+	require.NoError(t, findOverlap(map[string]string{"ifconfig_local": "bad"}, networks))
+	require.NoError(t, findOverlap(map[string]string{}, networks))
+	require.EqualError(t, findOverlap(map[string]string{"ifconfig_local": "10.77.2.9",
+		"route_vpn_gateway": "10.77.2.1"}, networks),
+		"tunnel address '10.77.2.9' overlaps network '10.77.2.0/24' of inbound device 'proximity_i2'")
+	require.EqualError(t, findOverlap(map[string]string{"ifconfig_local": "10.8.0.2",
+		"route_vpn_gateway": "10.77.1.1"}, networks),
+		"tunnel address '10.77.1.1' overlaps network '10.77.1.0/24' of inbound device 'proximity_i1'")
+	for _, network := range inboundNetworks() {
+		require.True(t, strings.HasPrefix(network.device, "proximity_i"))
 	}
 }
 
@@ -602,6 +635,21 @@ func TestManager_Inbounds(t *testing.T) {
 		require.Empty(t, manager.Inbounds()["Office"].Clients)
 	}
 	{
+		streamed := snapshot.Clone()
+		streamed.Inbounds[1].ID, streamed.Inbounds[1].Users = "Office", streamed.Inbounds[1].Users[1:]
+		streamed.Inbounds[1].OpenVPN.Protocol = config.ProtocolTCP
+		manager.ApplyInbounds(streamed)
+		require.Eventually(t, func() bool {
+			text, err := os.ReadFile(filepath.Join(home, "server.conf"))
+			return err == nil && strings.Contains(string(text), "\nproto tcp4-server\n")
+		}, 10*time.Second, 20*time.Millisecond)
+		text, err := os.ReadFile(filepath.Join(home, "server.conf"))
+		require.NoError(t, err)
+		require.Contains(t, string(text), "auth-gen-token\ntcp-nodelay\nclient-to-client\n")
+		require.NotContains(t, string(text), "explicit-exit-notify")
+		waitInbound(t, manager, "Office", StateUp)
+	}
+	{
 		require.NoError(t, listener.Close())
 		status := waitInbound(t, manager, "Socks", StateFailed)
 		require.Equal(t, "router does not listen on port ("+strconv.Itoa(port)+")", status.Message)
@@ -681,6 +729,7 @@ func TestManager_OpenVPN(t *testing.T) {
 		require.Contains(t, string(arguments), "--dev proximity_o7 --dev-type tun --route-noexec")
 		require.Contains(t, string(arguments), "--verb 3 ")
 		require.NotContains(t, string(arguments), "--mark")
+		require.NotContains(t, string(arguments), "--socket-flags")
 		require.NotContains(t, log, "debug:")
 		require.Contains(t, string(calls), "-4 route replace default dev proximity_o7 table 51007")
 		require.Contains(t, string(calls),
@@ -716,6 +765,34 @@ func TestManager_OpenVPN(t *testing.T) {
 		require.Equal(t, "password is required by server", status.Message)
 	}
 	{
+		stubborn := writeScript(t, directory, "stubborn", "x")
+		outbound.OpenVPN = &config.OpenVPNOptions{Config: sampleOpenVPN, Password: "x",
+			OTPMode: config.OTPChallenge}
+		started := time.Now()
+		manager.Apply([]config.Outbound{outbound}, config.Settings{CheckInterval: 5})
+		status := waitState(t, manager, "VPN", StateFailed)
+		require.Equal(t, "user name is required by server", status.Message)
+		require.Less(t, time.Since(started), 10*time.Second)
+		require.NoError(t, os.Remove(stubborn))
+	}
+	{
+		outbound.OpenVPN = &config.OpenVPNOptions{Config: sampleOpenVPN, Username: "locked",
+			Password: "x", KeyPassword: "wrong", OTPMode: config.OTPChallenge}
+		manager.Apply([]config.Outbound{outbound}, config.Settings{CheckInterval: 5})
+		status := waitState(t, manager, "VPN", StateFailed)
+		require.Equal(t, "invalid private key password", status.Message)
+		outbound.OpenVPN = &config.OpenVPNOptions{Config: sampleOpenVPN, Username: "untrusted",
+			Password: "x", OTPMode: config.OTPChallenge}
+		manager.Apply([]config.Outbound{outbound}, config.Settings{CheckInterval: 5})
+		require.Eventually(t, func() bool {
+			return strings.HasPrefix(manager.Status()["VPN"].Message, "server certificate")
+		}, 15*time.Second, 20*time.Millisecond)
+		status = manager.Status()["VPN"]
+		require.Equal(t, StateFailed, status.State)
+		require.Equal(t, "server certificate is rejected: depth=1, error=self-signed certificate: "+
+			"CN=Evil CA", status.Message)
+	}
+	{
 		require.NoError(t, os.WriteFile(tools.Ping, []byte("#!/bin/bash\nexit 0\n"), 0o700))
 		outbound.Verbose = true
 		outbound.OpenVPN = &config.OpenVPNOptions{Config: sampleOpenVPN, Username: "alice",
@@ -725,6 +802,14 @@ func TestManager_OpenVPN(t *testing.T) {
 		arguments, err := os.ReadFile(filepath.Join(directory, "openvpn.log"))
 		require.NoError(t, err)
 		require.Contains(t, string(arguments), "--verb 6 ")
+		require.NotContains(t, string(arguments), "--socket-flags")
+		outbound.OpenVPN.Config = "client\nproto tcp-client\nremote vpn.example.com 443\n"
+		manager.Apply([]config.Outbound{outbound}, config.Settings{CheckInterval: 5})
+		require.Eventually(t, func() bool {
+			arguments, err := os.ReadFile(filepath.Join(directory, "openvpn.log"))
+			return err == nil && strings.Contains(string(arguments), " --socket-flags TCP_NODELAY")
+		}, 15*time.Second, 20*time.Millisecond)
+		waitState(t, manager, "VPN", StateUp)
 		log := strings.Join(manager.Log("VPN"), "\n")
 		require.Contains(t, log, "debug: type openvpn, attempts 1, reconnect timeout 1 s")
 		require.Contains(t, log, "debug: monitoring every 5 s, timeout 1 s, retries 1, "+
@@ -1430,4 +1515,15 @@ func TestSignature_Changes(t *testing.T) {
 		require.Equal(t, "file does not exist", failure.Error())
 		require.ErrorIs(t, failure, os.ErrNotExist)
 	}
+}
+
+func TestUsesTCP_Directives(t *testing.T) {
+	require.False(t, usesTCP(""))
+	require.False(t, usesTCP(sampleOpenVPN))
+	require.False(t, usesTCP("client\nproto udp\nremote vpn.example.com 1194\nproto\n"))
+	require.False(t, usesTCP("client\n# remote a 1 tcp\n;proto tcp\nremote a 1\n"))
+	require.True(t, usesTCP("client\nproto tcp-client\nremote vpn.example.com 443\n"))
+	require.True(t, usesTCP("client\n  --proto tcp4\n"))
+	require.True(t, usesTCP("client\nremote vpn.example.com 1194 udp\nremote b 443 tcp\n"))
+	require.True(t, usesTCP("<connection>\nremote vpn.example.com 443 tcp-client\n</connection>\n"))
 }

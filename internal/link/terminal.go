@@ -28,6 +28,7 @@ type terminal struct {
 const terminationTimeout = 5 * time.Second
 const answerDelay = 150 * time.Millisecond // NOTE: Terminal flushes input written too early.
 const drainDelay = 300 * time.Millisecond  // NOTE: Lets the reader drain output of exited process.
+const interruptTimeout = time.Second       // NOTE: OpenVPN ignores SIGTERM at a prompt.
 
 func startTerminal(command *exec.Cmd) (*terminal, error) {
 	master, err := os.OpenFile("/dev/ptmx", os.O_RDWR|syscall.O_NOCTTY, 0)
@@ -113,10 +114,7 @@ func (terminal *terminal) pump(prompts []prompt, output func(line string)) {
 			break
 		}
 	}
-	if failure != nil {
-		terminal.signal(syscall.SIGTERM)
-	}
-	if err := <-waited; failure != nil {
+	if err := terminal.finish(waited, failure != nil); failure != nil {
 		terminal.exited <- failure
 	} else if err != nil {
 		terminal.exited <- fmt.Errorf("process '%v' exited: %w", terminal.command.Path, err)
@@ -124,6 +122,20 @@ func (terminal *terminal) pump(prompts []prompt, output func(line string)) {
 		terminal.exited <- errors.New("process exited")
 	}
 	close(terminal.exited)
+}
+
+func (terminal *terminal) finish(waited <-chan error, interrupt bool) error {
+	if !interrupt {
+		return <-waited
+	}
+	terminal.signal(syscall.SIGTERM)
+	select {
+	case err := <-waited:
+		return err
+	case <-time.After(interruptTimeout):
+		terminal.signal(syscall.SIGKILL)
+		return <-waited
+	}
 }
 
 func (terminal *terminal) signal(signal syscall.Signal) {
