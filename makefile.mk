@@ -17,7 +17,7 @@ export npm_config_update_notifier := false
 SYNC = rsync -a --delete --exclude /.git --exclude /bin --exclude /docs \
 	--exclude /web/node_modules --exclude /web/dist ./ $(SOURCE)/
 
-.PHONY: all sync deps web build vet test cover dev image up down restart logs screenshots clean
+.PHONY: all sync deps web build vet test cover dev image up down restart logs screenshots screenshot clean
 
 all: web build
 
@@ -71,6 +71,18 @@ logs:
 screenshots:
 	@mkdir -p $(ROOT)/tmp
 	SCREENSHOT_TOOLS=$(ROOT)/screenshots bash scripts/screenshots.sh $(ONLY)
+
+# make screenshot <picture> [picture ...]: the words after the goal are picture names.
+ifeq (screenshot,$(firstword $(MAKECMDGOALS)))
+PICTURES := $(wordlist 2,$(words $(MAKECMDGOALS)),$(MAKECMDGOALS))
+.PHONY: $(PICTURES)
+$(eval $(PICTURES):;@:)
+endif
+
+screenshot:
+	@test -n "$(PICTURES)" || { echo "usage: make screenshot <picture> [picture ...]" >&2; exit 1; }
+	@mkdir -p $(ROOT)/tmp
+	SCREENSHOT_TOOLS=$(ROOT)/screenshots bash scripts/screenshots.sh $(PICTURES)
 
 clean:
 	rm -rf $(ROOT)

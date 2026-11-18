@@ -29,10 +29,11 @@ proximity/
 ├── scripts/
 │   ├── proximity.sh        compose wrapper for Linux and macOS
 │   ├── proximity.ps1       compose wrapper for Windows
-│   ├── screenshots.sh      retakes the dialog pictures of docs/images (make screenshots)
-│   ├── screenshots/        its headless browser script, sample data and npm packages list
+│   ├── screenshots.sh      retakes the pictures of docs/images (make screenshots)
+│   ├── screenshots/        its stand, sample data, headless browser script and npm packages list
 │   └── githooks/pre-commit make vet build before commit
 ├── docs/                   documentation and screenshots
+├── AGENTS.md               notes for AI agents: what failed and what to do instead
 ├── Dockerfile              multi-stage image build
 ├── docker-compose.yml          Linux, host network, transparent capture
 ├── docker-compose.bridge.yml   macOS / Windows / Linux without capture
@@ -49,6 +50,7 @@ proximity/
 | rsync | any, for `make` |
 | Docker | with Compose v2, for the image |
 | A Chromium-based browser | Chrome, Chromium, Brave, Thorium, Edge, Vivaldi or Yandex Browser, for `make screenshots` |
+| `/dev/net/tun` for Docker | for `make screenshots`: the stand runs a VPN tunnel |
 | For running tunnels locally | `ip` (iproute2), `ping`, `openvpn`, `amneziawg-go`, `awg`, `oathtool`, root or `CAP_NET_ADMIN` |
 
 ## Build
@@ -80,7 +82,8 @@ make clean    # remove ../proximity-build
 make image    # docker image only
 make up       # build image and start the container
 make logs     # follow container logs
-make screenshots   # retake the dialog pictures in docs/images
+make screenshots   # retake the pictures in docs/images
+make screenshot <picture>   # retake one picture
 make down     # stop
 ```
 
@@ -119,10 +122,10 @@ programs use the proxy port. Install `libfaketime` too (Debian/Ubuntu package
 `libfaketime`): OpenVPN needs it when the host clock is wrong.
 
 > [!NOTE]
-> The screenshots in this repository were taken from exactly such a local run: real
-> mihomo v1.19.34, real OpenVPN and AmneziaWG tunnels to servers in a separate network
-> namespace, local SOCKS5/HTTP proxies and generated traffic. Host names like
-> `corp.example` are placeholders.
+> The screenshots in this repository are taken by `make screenshots` from a stand of two
+> containers: real mihomo, a real OpenVPN tunnel, SOCKS5/HTTP proxies and generated
+> traffic, see [Screenshots](#screenshots). Host names like `corp.example` are
+> placeholders.
 
 ## UI development
 
@@ -158,45 +161,57 @@ repository every second, so edits in `web/src` reload the page. Run the Go binar
 ## Screenshots
 
 ```bash
-make screenshots                                           # all dialog pictures
-make screenshots ONLY="outbound-monitoring inbound-users"  # only these
+make screenshots                                    # all 30 pictures of the documentation
+make screenshots ONLY=static                        # dialogs only, no traffic wait
+make screenshot outbound-monitoring                 # one picture
+make screenshot outbound-monitoring inbound-users   # some pictures
 ```
 
-`make screenshots` runs `scripts/screenshots.sh` (it also works by itself, with the
-picture names as arguments). The script builds the image `proximity-screenshots` from the working tree,
-starts a throwaway container of the same name (no host network, no capabilities, no
-volume; the UI on a free port of `127.0.0.1`), adds the sample data of
-`scripts/screenshots/seed.json` through the API, opens every dialog in a headless browser and
-compares the picture with the file in `docs/images` pixel by pixel. A file is written only
-when the pixels changed (`updated`) or the file did not exist (`new`); the same picture in
-other bytes (another browser version, added metadata) is left as it is (`unchanged`), so
-Git sees only real changes. The container is removed at the end; a running Proximity and
-its settings are not touched. The pictures are 2x and the page behind the dialog is hidden,
-so the same UI gives the same pixels on the same machine. Fonts differ between machines,
-so the first run on another machine rewrites all pictures.
+`make screenshot <picture> ...` takes the pictures named after the goal; a picture is
+named as its file in `docs/images`, `.png` may be omitted, `static` and `live` name the
+two groups. `make screenshots` takes all pictures or those of `ONLY`. Both run
+`scripts/screenshots.sh` (it also works by itself, with the picture names as arguments).
 
-| Picture | Dialog of | Tab |
+The script builds the image `proximity-screenshots` from the working tree and starts a
+throwaway stand in its own Docker network (`10.213.77.0/24`):
+
+| Container | Role |
+|---|---|
+| `proximity-screenshots` | the instance in the pictures; the UI, the proxy port and the SOCKS5 inbound are published on free ports of `127.0.0.1` |
+| `proximity-screenshots-peer` | a second instance that plays the far side: its SOCKS5 inbound is `de.proxy.example:1080`, its proxy port is `us.proxy.example:3128`, its OpenVPN inbound is `vpn.corp.example:1194`, its web UI is every site that the traffic goes to, and it answers for `1.1.1.1:443`, the target of the connectivity checks |
+
+Both instances get the sample data of `scripts/screenshots/seed.json` through the API
+(outbounds, a fallback, routes, inbounds, users; the keys of the far-side VPN are fixed
+there, so the client configuration is the same in every run). `stand.mjs` sends traffic
+through the proxy port and the SOCKS5 inbound to names that the routes send to different
+outbounds; all names are aliases of the far side, so nothing leaves the stand. A headless
+browser then opens every page and dialog. The stand is removed at the end; a running
+Proximity and its settings are not touched.
+
+Every picture is compared with the file in `docs/images` pixel by pixel. A file is written
+only when the pixels changed (`updated`) or the file did not exist (`new`); the same
+picture in other bytes (another browser version, added metadata) is left as it is
+(`unchanged`), so Git sees only real changes. The pictures are 2x.
+
+| Group | Pictures | Behaviour |
 |---|---|---|
-| `outbound-general.png` | outbound 'Proxy DE' (SOCKS5) | General |
-| `outbound-socks5.png` | outbound 'Proxy DE' | SOCKS5 Proxy |
-| `outbound-http.png` | outbound 'Proxy US' | HTTP Proxy |
-| `outbound-host.png` | outbound 'Home ISP' | HOST Network |
-| `outbound-openvpn.png` | outbound 'Corp VPN' | OpenVPN |
-| `outbound-openvpn-auth.png` | outbound 'Corp VPN' | Authentication |
-| `outbound-monitoring.png` | outbound 'Corp VPN' | Monitoring |
-| `outbound-amneziawg.png` | outbound 'AWG NL' | AmneziaWG |
-| `inbound-openvpn.png` | inbound 'Office VPN' | Server |
-| `inbound-users.png` | inbound 'Office VPN' | Users |
+| `static` | `outbound-general`, `outbound-socks5`, `outbound-http`, `outbound-host`, `outbound-openvpn`, `outbound-openvpn-auth`, `outbound-monitoring`, `outbound-amneziawg`, `inbound-openvpn`, `inbound-users`, `inbound-export`, `route-dialog`, `route-editor-ip`, `fallback-dialog`, `router-config` | dialogs; the page behind is hidden, the same UI gives the same pixels on the same machine |
+| `live` | `setup`, `dashboard`, `dashboard-dark`, `throughput`, `connection-map`, `connection-map-dark`, `connection-map-popover`, `outbounds`, `outbounds-dark`, `outbound-add-menu`, `outbound-log`, `routes`, `fallbacks`, `inbounds`, `settings` | states, traffic, time and logs: differ in every run, so every run rewrites them |
+
+Live pictures wait until the stand has 5 minutes of traffic (the charts show 5 minutes),
+so a full run takes about 7 minutes; the static group takes about 1.5 minutes. Fonts
+differ between machines, so the first run on another machine rewrites all pictures.
+`logo.png`, `social-preview.png` and the `.svg` files are drawn by hand and are not taken
+by the script.
 
 A new picture is one line in the `shots` list of `scripts/screenshots/screenshots.mjs`
-(file, section, row, tab) and, when it needs other data, an entry in `seed.json`. The
-other pictures (dashboard, connection map, lists, logs, routes, settings) need live
-tunnels and traffic and are still taken by hand, see the note above.
+(its kind is one of the functions in `takers`) and, when it needs other data, an entry in
+`seed.json`.
 
 The browser is looked up by name in `PATH`, as `which` does: `google-chrome`, `chromium`,
 `chromium-browser`, `brave-browser`, `brave`, `thorium-browser`, `microsoft-edge`, `vivaldi`,
 `yandex-browser` and their `-stable` / `-beta` names, in this order (the full list is
-`browsers` in `screenshots.mjs`). When none is in `PATH`, the usual install paths are tried
+`browsers` in `browser.mjs`). When none is in `PATH`, the usual install paths are tried
 (`/opt/...`, `/snap/bin`, `/Applications` — the list `applications`). The script checks the
 browser before the image build. Any other browser on the Chromium engine works through
 `CHROME`.
@@ -205,6 +220,9 @@ browser before the image build. Any other browser on the Chromium engine works t
 |---|---|
 | `PROXIMITY_IMAGE` | use this ready image instead of building one |
 | `CHROME` | name or path of the browser to use instead of the one found |
+| `SCREENSHOT_TRAFFIC` | seconds of traffic before the live pictures (default 300) |
+| `SCREENSHOT_SUBNET` | subnet of the stand (default `10.213.77.0/24`) |
+| `SCREENSHOT_NETWORK` | use this existing Docker network instead of creating one |
 | `SCREENSHOT_OUTPUT` | folder for the pictures (default `docs/images`) |
 | `SCREENSHOT_TOOLS` | folder for `node_modules` (default `../proximity-build/screenshots`, `make` follows `BUILD`) |
 
@@ -278,7 +296,7 @@ new ones after an upgrade.
 3. Bump `VERSION` in `makefile.mk`, `Dockerfile` and the default `PROXIMITY_VERSION` in the
    compose files.
 4. Update the *Project status* section in `README.md` and screenshots if the UI changed
-   (`make screenshots` retakes the dialog pictures).
+   (`make screenshots` retakes them).
 5. `make up` on a clean settings folder: first-run dialog, one outbound of each type,
    transparent mode on Linux.
 6. Tag the release.

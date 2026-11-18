@@ -128,6 +128,28 @@ document `proximity-openvpn-test-report.md`.
   - Put the lab (helper containers, client driver, case matrices) into
     the repository as an automated test.
 
+## VPN routes
+
+- [ ] **Take the routes of a VPN connection automatically**
+  - Now: the routes pushed by an OpenVPN server appear as a read-only
+    *provided* route at the end of the list, switched off; the user
+    enables it by hand.
+  - Add the checkbox "Receive routes" to a VPN outbound, right beside
+    "Use DNS servers pushed by VPN". The routes are what the VPN server
+    announces: networks and single IP addresses.
+  - With the checkbox on, keep a route in the list of routes that cannot
+    be deleted and is filled automatically with the routes of this VPN
+    connection.
+  - Follow the state of the connection:
+    - the connection fails or stops: the route is switched off;
+    - the connection is up: wait until the server has given its routes,
+      update the route, then switch it on.
+  - A new route of this kind is added at the top of the list, but the
+    user can move it up and down like any other route.
+  - The position is saved: after a restart the route is where the user
+    left it.
+  - With the checkbox off there is no such route.
+
 ## Configuration
 
 - [ ] **Start with a partly invalid configuration**
@@ -159,6 +181,29 @@ document `proximity-openvpn-test-report.md`.
   - On a mismatch reload the page automatically. Decide what to do with
     an open dialog that has unsaved changes and with the time when the
     server does not answer (the container is still starting).
+
+## Test stands
+
+- [ ] **Prepare ready stands for the usual tests**
+  - A stand is a ready environment (containers, networks, sample data,
+    helper scripts) that a test or a task starts with one command, so
+    nobody has to work out again how it is built.
+  - Make several stands for different tests and tasks, for example:
+    - OpenVPN inbound with an external client (certificates, passwords,
+      TOTP);
+    - OpenVPN outbound to an external server;
+    - two linked Proximity instances (client and server);
+    - latency measurements through every inbound, route and outbound;
+    - recovery of lost connections (a server that goes away and comes
+      back);
+    - a network without Internet and without NTP.
+  - Keep them in `scripts/stands/<stand>/`, one folder per stand, with a
+    start script and a short description of what the stand does.
+  - Describe every stand briefly in `AGENTS.md`.
+  - Rule for the future, written in `AGENTS.md`: a new kind of test gets
+    its own ready stand in `scripts/stands/` and its line in `AGENTS.md`.
+  - The stand of the screenshots (`scripts/screenshots.sh`) already
+    exists; decide whether to move it under `scripts/stands/`.
 
 ## Performance
 

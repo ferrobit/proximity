@@ -89,12 +89,12 @@ port **8899**.
 
 | | |
 |---|---|
-| ![Dashboard](docs/images/dashboard.png) **Dashboard** — summary cards, live throughput and connections charts | ![Connection map popup](docs/images/connection-map-popover.png) **Connection map** — details, on/off and start/stop of any item; click to edit |
+| ![Dashboard](docs/images/dashboard.png) **Dashboard** — summary cards, live throughput and connections charts | ![Dark theme](docs/images/connection-map-dark.png) **Dark theme** |
 | ![Outbounds](docs/images/outbounds.png) **Outbounds** — every exit with its state, latency and connection details | ![Routes](docs/images/routes.png) **Routes** — ordered rules with comments, overlap warnings and VPN-provided routes |
-| ![OpenVPN outbound](docs/images/outbound-openvpn.png) **OpenVPN outbound** — upload or edit `.ovpn`, credentials, TOTP | ![Connection log](docs/images/outbound-log.png) **Connection log** — live, auto-scrolling log of a tunnel |
-| ![Route editor](docs/images/route-dialog.png) **Route editor** — syntax highlighting, load / save / sort, normalized preview | ![Fallbacks](docs/images/fallbacks.png) **Fallbacks** — proxy groups in priority order, at the bottom of the Routes page |
-| ![Inbounds](docs/images/inbounds.png) **Inbounds** — SOCKS5 and OpenVPN servers with users, state and traffic | ![Client configuration](docs/images/inbound-export.png) **Client configuration** — preview, copy or download per user |
-| ![Settings](docs/images/settings.png) **Settings** — router service, router, users, backup and restore | ![Dark theme](docs/images/connection-map-dark.png) **Dark theme** |
+| ![Connection map popup](docs/images/connection-map-popover.png) **Connection map** — details, on/off and start/stop of any item; click to edit | ![Connection log](docs/images/outbound-log.png) **Connection log** — live, auto-scrolling log of a tunnel |
+| ![OpenVPN outbound](docs/images/outbound-openvpn.png) **OpenVPN outbound** — upload or edit `.ovpn`, credentials, TOTP | ![Client configuration](docs/images/inbound-export.png) **Client configuration** — preview, copy or download per user |
+| ![Inbounds](docs/images/inbounds.png) **Inbounds** — SOCKS5 and OpenVPN servers with users, state and traffic | ![Fallbacks](docs/images/fallbacks.png) **Fallbacks** — proxy groups in priority order, at the bottom of the Routes page |
+| ![Route editor](docs/images/route-dialog.png) **Route editor** — syntax highlighting, load / save / sort, normalized preview | ![Settings](docs/images/settings.png) **Settings** — router service, router, users, backup and restore |
 
 More screenshots with explanations are in the [User guide](docs/user-guide.md).
 
