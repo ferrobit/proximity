@@ -20,9 +20,9 @@
 </p>
 
 <p align="center">
-  <img alt="Tests" src="https://img.shields.io/badge/tests-128%20passing-brightgreen">
-  <img alt="Coverage" src="https://img.shields.io/badge/coverage-94.1%25-brightgreen"><br>
-  <sub><b>128</b> Go tests, <b>94.1%</b> statement coverage, 96 end-to-end checks on
+  <img alt="Tests" src="https://img.shields.io/badge/tests-146%20passing-brightgreen">
+  <img alt="Coverage" src="https://img.shields.io/badge/coverage-94.5%25-brightgreen"><br>
+  <sub><b>146</b> Go tests, <b>94.5%</b> statement coverage, 121 end-to-end checks on
   <a href="docs/development.md#test-stands">ready stands</a></sub>
 </p>
 
@@ -82,6 +82,7 @@ port **8899**.
 | 🔀 **Fallbacks** | Proxy groups of outbounds in priority order (bottom of the Routes page): either "first outbound that Proximity sees as good" or a mihomo health check by URL |
 | 🧭 **Routes** | 15 mihomo directives, editor with syntax highlighting (domains, subdomains, IPs, masks, ports, comments), load/save/sort of the lists, automatic normalization (URLs → domains, IDN → punycode, `IP:port` → `AND` rule, masks), `#` comments, overlap and duplicate warnings, up/down ordering |
 | 📥 **Inbounds** | SOCKS5 proxy servers and OpenVPN servers on ports 7800–7898 with their own users, optional anonymous access, TLS / TOTP, generated keys and certificates, one-click client configuration export; traffic goes to the host connection, to the routes or to a chosen outbound |
+| 🧩 **DNS per outbound** | Every outbound has its own DNS servers (plain, TCP, DoT, DoH, DoQ) and a DNS exit: the domains of a route are asked where the traffic leaves, so the provider does not see them and the answer fits the exit; a proxy without UDP is asked over TCP; default servers and their exit in Settings; names in the settings (proxy server, VPN `remote`, `Endpoint`, time server) follow the same rules and are never asked through their own outbound |
 | 📡 **VPN routes** | With *Receive routes* the networks announced by a VPN become a *provided* route that is on only while the connection is up |
 | 🩺 **Monitoring** | Link state, latency, configurable checks, retries and reconnects; states `good` / `connecting` / `reconnecting` / `failed` / `stopped`; start, stop and restart of outbounds and inbounds with state and logs kept across restarts; per-outbound connection log with auto-scroll; a *Verbose* switch per connection for debug logs (settings, checks, traced connections, OpenVPN `--verb 6`, AmneziaWG `LOG_LEVEL=verbose`); log sizes for both modes are set in Settings |
 | 🕒 **Time** | OpenVPN clients and servers start only with synchronized time: the host clock is checked against NTP servers and never changed; when it is wrong, Proximity keeps its own time for OpenVPN certificates and one-time codes |
@@ -171,7 +172,8 @@ PROXIMITY_NETWORK=bridge scripts/proximity.sh up -d --build
   itself (TLS SNI, HTTP `Host` header, QUIC).
 - Host DNS queries are intercepted, and the name is resolved by the rule's target:
   remotely for SOCKS5/HTTP proxies, through the tunnel's DNS for VPNs (when enabled),
-  through the system DNS for DIRECT. Names that exist only inside a VPN or behind a proxy
+  through the DNS servers written on the **DNS** tab of the outbound, through the default
+  DNS servers for DIRECT. Names that exist only inside a VPN or behind a proxy
   therefore work without any proxy settings in programs.
 - Traffic of mihomo itself and of tunnel transports is marked with `fwmark 51000` and is
   never captured (no loops).
@@ -331,18 +333,19 @@ repository itself is not changed. Component versions are Docker build arguments 
 
 ## Project status
 
-Version **1.2.0**. 128 Go tests pass, total statement coverage 94.1% (81.4–99.1% per
+Version **1.2.0**. 146 Go tests pass, total statement coverage 94.5% (81.4–99.1% per
 package). Transparent capture has been verified in isolated network namespaces and in a
 real Docker image: DIRECT, REJECT, domain → OpenVPN / AmneziaWG, LAN and inbound
 connections untouched, `rp_filter=1`, container stop and kill. Inbounds have been verified
 with real mihomo 1.19.34 and OpenVPN 2.6 in network namespaces: SOCKS5 authentication and
 TLS, an OpenVPN client with password + TOTP (appended and `static-challenge`), anonymous
 clients, token renegotiation, session kill on user change, traffic through the router,
-DNS hijack, traffic counters. Five ready stands run 96 end-to-end checks with the real
+DNS hijack, traffic counters. Six ready stands run 121 end-to-end checks with the real
 image (`make stand-security`, `stand-tunnel`, `stand-reload`, `stand-config`,
-`stand-capture`): one-time codes, certificates, tokens, received routes, a damaged
+`stand-capture`, `stand-dns`): one-time codes, certificates, tokens, received routes, a damaged
 configuration, the reload of an open page, TCP and ping of a host with transparent capture,
-an AmneziaWG tunnel with obfuscation and received routes. The web UI, including the connection map, has been checked in
+an AmneziaWG tunnel with obfuscation and received routes, the DNS servers and DNS exits of
+outbounds (which server gets the query and from which address) and the names of the settings. The web UI, including the connection map, has been checked in
 Chrome in the light and dark themes with a live OpenVPN tunnel, SOCKS5 and HTTP proxies and
 both inbound types.
 

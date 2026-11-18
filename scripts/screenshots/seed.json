@@ -129,6 +129,13 @@
           "enabled": true,
           "delay": 60,
           "attempts": 0
+        },
+        "dns": {
+          "servers": [
+            "9.9.9.9",
+            "https://dns.quad9.net/dns-query"
+          ],
+          "exit": ""
         }
       },
       {

@@ -133,7 +133,8 @@ func internalNew(options Options) (*Server, error) {
 		started: time.Now(), warnings: []string{}, mux: http.NewServeMux(),
 		traced: map[string]tracedConnection{}, clock: options.Clock}
 	if server.clock == nil {
-		server.clock = clock.New(filepath.Join(options.RunPath, "clock.json"))
+		server.clock = clock.NewWith(filepath.Join(options.RunPath, "clock.json"),
+			server.queryTime, clock.KernelSynchronized)
 	}
 	// NOTE: An open page compares this value with the one it saw first and reloads itself
 	// after a restart or an update.
@@ -142,7 +143,8 @@ func internalNew(options Options) (*Server, error) {
 	server.tracker = router.NewTracker(filepath.Join(options.ConfigPath, "state.json"))
 	if server.manager, err = link.NewManager(link.Options{Directory: options.RunPath,
 		StateDir: options.ConfigPath, Executable: options.Executable, Tools: options.Tools,
-		HostNetwork: options.HostNetwork, Changed: server.notify, Clock: server.clock}); err != nil {
+		HostNetwork: options.HostNetwork, Changed: server.notify, Clock: server.clock,
+		Resolve: server.resolve}); err != nil {
 		return nil, err
 	} else if server.mihomo, err = router.NewMihomo(options.MihomoBinary, home,
 		filepath.Join(options.RunPath, "mihomo.sock"), server.print); err != nil {
@@ -251,6 +253,32 @@ func (server *Server) Run(ctx context.Context) error {
 		return fmt.Errorf("failed to serve '%v': %w", server.options.Listen, failure)
 	}
 	return nil
+}
+
+// NOTE: A name from the configuration (a proxy server, a VPN remote, a check target, a time
+// server) is asked from the resolver of the router, so it follows the DNS servers of the
+// routes; the resolver of the system answers only while the router does not run.
+func (server *Server) resolve(ctx context.Context, host string) ([]string, error) {
+	if server.mihomo != nil && server.mihomo.State().Running {
+		return server.mihomo.Resolve(ctx, host)
+	}
+	return link.SystemResolve(ctx, host)
+}
+
+func (server *Server) queryTime(ctx context.Context, address string, mark int) (time.Duration,
+	error) {
+	if server.manager == nil {
+		return clock.Query(ctx, address, mark)
+	}
+	target, err := server.manager.ResolveTarget(ctx, address)
+	if err != nil {
+		return 0, fmt.Errorf("failed to resolve NTP server '%v': %w", address, err)
+	}
+	offset, err := clock.Query(ctx, target, mark)
+	if err != nil && target != address {
+		return 0, fmt.Errorf("failed to query NTP server '%v': %w", address, err)
+	}
+	return offset, err
 }
 
 func (server *Server) print(line string) {

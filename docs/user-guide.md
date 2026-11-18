@@ -273,6 +273,53 @@ the server appear in Routes as **Routes of OpenVPN N**.
 - **Use DNS servers from configuration** — use the `DNS =` servers for the domains routed
   to this outbound.
 
+### DNS
+
+Every outbound has a **DNS** tab: the DNS servers for the domains of the routes that lead
+to this outbound. The query then leaves where the traffic leaves, so the provider of the
+host does not see the names, and the answer fits the exit (the nearest servers of a site,
+names that exist only behind a VPN).
+
+![DNS tab](images/outbound-dns.png)
+
+| Field | Meaning |
+|---|---|
+| DNS servers | Up to 8, one per line. `8.8.8.8` or `8.8.8.8:5353` — plain DNS; `tcp://8.8.8.8` — DNS over TCP; `tls://1.1.1.1` — DNS over TLS; `https://dns.google/dns-query` — DNS over HTTPS; `quic://dns.adguard-dns.com` — DNS over QUIC. Empty: the default servers of [Settings](#router) |
+| Send the queries through | **This outbound** (default); **Host** — directly; **Router** — the routes decide by the address of the server; another outbound or a fallback. Choose another exit for an outbound that cannot carry DNS |
+
+What an outbound can carry:
+
+| Outbound | DNS through it |
+|---|---|
+| HOST, OpenVPN, AmneziaWG, SOCKS5 with *UDP relay* | Everything: UDP and TCP |
+| SOCKS5 without *UDP relay*, HTTP proxy | No UDP. A server given by address is asked over TCP (`8.8.8.8` works as `tcp://8.8.8.8`); `udp://` and `quic://` servers are skipped with a warning. Many HTTP proxies open only port 443: use DNS over HTTPS then |
+
+- A VPN outbound asks the servers of the VPN (the switch on its *OpenVPN* / *AmneziaWG*
+  tab) together with the servers of this tab. All servers of an outbound are asked at
+  once, the first answer wins.
+- The domains of a route to a **fallback** are asked where its first working outbound asks.
+- A domain is bound by `DOMAIN`, `DOMAIN-SUFFIX` and `GEOSITE` routes, the first route that
+  matches wins, as for the traffic. Domains of `DOMAIN-KEYWORD`, `DOMAIN-WILDCARD` and
+  `DOMAIN-REGEX` routes use the DNS of everything else.
+- The servers in effect are shown in the outbounds table (`DNS …`) and in
+  **Dashboard → Router configuration** (`nameserver-policy`).
+
+**Names in the settings.** A proxy server, a `remote` of an OpenVPN configuration, an
+`Endpoint` of AmneziaWG, a check target and a time server may be given by name. Proximity
+resolves such a name itself, by the same rules: through the DNS servers of the route that
+takes its domain, otherwise through the default servers. Two things are guaranteed:
+
+- the address is real: in transparent mode applications get placeholder addresses
+  (fake-IP), a tunnel cannot connect to one;
+- an outbound never asks for its own server name through itself (or through an outbound
+  that waits for it): the name of a VPN server would otherwise wait for the VPN to come up.
+  Such a name is asked from the remaining servers, in the worst case from the resolver of
+  the system.
+
+A name in the address of a DNS server itself (`https://dns.google/…`) is resolved by the
+default servers that are given by address, or by the resolver of the system; a proxy
+resolves it by itself. Use an address for a DNS server that is known only inside a VPN.
+
 ### Monitoring
 
 Every outbound and inbound has a **Monitoring** tab. It starts with the recovery settings:
@@ -542,6 +589,8 @@ The router state is saved to `router.json` in the settings folder.
 | Route all outgoing connections of the host through Proximity | Transparent capture. Available only in host network mode (Linux, `docker-compose.yml`) |
 | Keep ping of the host on its routes | On by default. Ping cannot pass a proxy: with this option a ping goes out directly only to addresses whose route (or the default target) is **DIRECT** or a **HOST** outbound, goes through the tunnel when the route is an OpenVPN or AmneziaWG outbound, and other addresses (proxies, fallbacks, REJECT) do not answer. Off: every ping of the host leaves directly, past the routes |
 | IPv6 | Enable when the host has IPv6; otherwise IPv6 traffic bypasses the routes |
+| Default DNS servers | For the domains that no outbound with its own [DNS servers](#dns) takes: routes to `DIRECT` and to outbounds without servers, and everything else unless the default target has its own servers. The same forms as on the DNS tab. Empty: the resolver of the system (`/etc/resolv.conf` of the container) |
+| Send the queries through | **Host** — directly (default); **Router** — the routes decide by the address of the server; an outbound or a fallback — through it |
 | Enable connectivity checks | Periodically check HOST outbounds and proxy servers |
 | Probe target (host:port) | Target for HOST checks, default `1.1.1.1:443` |
 | Check interval, seconds | How often |

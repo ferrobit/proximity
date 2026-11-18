@@ -39,6 +39,12 @@ save time. Add a line when a new command fails; keep it short.
 | `make screenshots` in a sandbox: OpenVPN of the stand stays `reconnecting` (no NTP) | `STAND_OFFLINE=1` + `stand_network_up` from `scripts/stands/lib.sh`, then `SCREENSHOT_NETWORK=proximity-stand`; one picture: `scripts/screenshots.sh settings` |
 | `ip rule add priority P ipproto 1 lookup T` (no `to`): *File exists* | The kernel takes it for a copy of a rule with the same priority, table and `to`; give it another priority (5166) |
 | An AmneziaWG server for a test | The Proximity image has `amneziawg-go` and `awg`: `docker exec -d <c> amneziawg-go --foreground awg0`, wait for `/var/run/amneziawg/awg0.sock`, `awg genkey` / `pubkey`, `awg setconf`; both sides need the same Jc/Jmin/Jmax/S1/S2/H1-H4 (stand `capture`) |
+| A DNS server for a test on an address added to `lo` (`0.0.0.0:53`): the client gets no answer | A UDP server on all addresses answers from the address of the route, not from the one that was asked: bind every address (`scripts/stands/dns/server.py`) |
+| mihomo cannot resolve with `nameserver: system` on a host with `rp_filter=1` and capture on: `read udp …:53: i/o timeout`, the counter `IPReversePathFilter` of `/proc/net/netstat` grows | The reverse path check of the answer finds an `ip rule` with `ipproto … dport 53` and no source: such a rule needs `from` (rule 5155 has it) |
+| `docker pull` / `docker build` in a sandbox: *429 Too Many Requests* from Docker Hub | Pull from a mirror and tag: `docker pull mirror.gcr.io/library/<image>` (also `public.ecr.aws/docker/library/<image>`), `docker tag … <image>` |
+| A check expects one DNS query for a domain routed to a SOCKS5 proxy: there are two | The proxy gets the domain and resolves it itself too; tell the queries apart by the server they go to (stand `dns`: `1.1.1.53` for the router, `1.1.1.1` for the far side) |
+| A unit test starts an outbound with a server name: it asks real DNS | Give the manager `Options.Resolve` (`sampleResolve` in `link_test.go`) |
+| mihomo `proxy-server-nameserver-policy` without `proxy-server-nameserver`: *Parse config error* | Not used: without both, the names of proxy servers follow `nameserver-policy`, where the generator pins them |
 | Go versions drift apart (`go.mod`, `GO_IMAGE`, the user's machine) | One version: `toolchain` in `go.mod` and `GO_IMAGE` in `Dockerfile` and `docs/development.md` change together; an older local `go` downloads the toolchain itself |
 
 ## Rules
@@ -66,6 +72,7 @@ make a stand for it in `scripts/stands/<stand>/` and add its line here.
 | pair: tunnel | `make stand-tunnel` (20 seconds, 24 checks) | OpenVPN inbound with pushed routes and an outbound with *Receive routes*: defaults of a new inbound (network, MTU), the provided route (first, follows the connection, moved, kept after a restart), the token after a restart of the inbound, a disabled user, the instance mark |
 | reload | `make stand-reload` (25 seconds, 10 checks, needs a browser) | One instance on the fixed port `127.0.0.1:18899` and a headless browser: after `docker restart` the open page warns that unsaved changes are lost and reloads itself in 5 seconds, also with an open dialog |
 | capture | `make stand-capture` (45 seconds, 29 checks, its own time server) | A "host" network namespace (`rp_filter=1`) with Proximity in it (`PROXIMITY_NETWORK=host`, capture on), an exit with SOCKS5 and OpenVPN inbounds, an AmneziaWG server `proximity-stand-awg` and the "Internet" `proximity-stand-wan` with `1.1.1.1` (route to SOCKS5), `1.1.1.2` (no route), `1.1.1.3` (route to OpenVPN) and `1.1.1.4` (route from the `AllowedIPs` of AmneziaWG) that counts packets by source: where TCP and ping of the host leave, ping through the tunnels, *Receive routes* of AmneziaWG, the default target SOCKS5 / tunnel, the setting off |
+| dns | `make stand-dns` (1 minute, 25 checks, its own time server) | The "host" of `capture` (`rp_filter=1`, `nameserver 1.1.1.1`), an exit with SOCKS5 inbounds (with and without UDP) and an OpenVPN inbound, the "Internet" with `1.1.1.1` (system resolver) and `1.1.1.53` (server of the outbounds) and a DNS server that prints every query with its source (`server.py`): names of the configuration (`exit.stand.test`, `vpn.stand.test`, time servers), the loop pin, fake-IP for applications, the DNS servers and exits of outbounds (UDP, TCP, tunnel, *Host*), the default servers, the DNS of the default target |
 | broken-config | `make stand-config` (5 seconds, 17 checks) | One instance started with the damaged `config.json`: what is dropped and kept, the copy of the file, the report in the API |
 
 Common parts: `scripts/stands/lib.sh` (image, network, instance, removal) and `lib.mjs`
@@ -85,6 +92,9 @@ all passed. More stands are planned, see *Test stands* in `TODO.md`.
 - Go: run one package or one test (`go test ./internal/link -run TestManager_Recovery`),
   the whole `make test` and `make cover` once before delivery.
 - UI only: `make dev` (Vite reloads the page), no image build.
+- DNS: what the router will ask is in `GET /api/router/config` (`dns.nameserver-policy`,
+  in the order of the routes) and in `resolvers` of `GET /api/outbounds`; mihomo answers a
+  real query on its socket: `GET /dns/query?name=<name>&type=A` (`Mihomo.Resolve`).
 - API first: seed data and read states through the API (`docs/api.md`), use the browser
   only for pictures.
 - Deliver all changed files in one write call, then check sizes with one listing.

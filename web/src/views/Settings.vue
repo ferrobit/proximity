@@ -54,6 +54,14 @@
           <a-form-item extra="Enable when the host has IPv6 connectivity, otherwise IPv6 traffic bypasses the routes">
             <a-checkbox v-model:checked="form.ipv6">IPv6</a-checkbox>
           </a-form-item>
+          <a-divider orientation="left"><GlobalOutlined /> DNS</a-divider>
+          <a-row :gutter="16">
+            <a-col :span="14"><a-form-item label="Default DNS servers" name="dns_text" :rules="[{ validator: checkServers }]"
+              :extra="`For the domains that no outbound with its own DNS servers takes, and for the names in the settings. ${serversHint}`">
+              <a-textarea v-model:value="form.dns_text" :auto-size="{ minRows: 2, maxRows: 8 }" placeholder="Empty: the resolver of the system" spellcheck="false" /></a-form-item></a-col>
+            <a-col :span="10"><a-form-item label="Send the queries through" extra="Host: directly. Router: the routes decide by the address of the server. An outbound or a fallback: through it">
+              <a-select v-model:value="form.dns_exit" :options="exitOptions(targets)" :disabled="!isAdmin() || !form.dns_text.trim()" /></a-form-item></a-col>
+          </a-row>
           <a-divider orientation="left"><HeartOutlined /> Connectivity checks</a-divider>
           <a-form-item extra="Periodically opens a TCP connection through HOST outbounds and to proxy servers to detect their state">
             <a-checkbox v-model:checked="form.connectivity_checks">Enable connectivity checks</a-checkbox>
@@ -149,11 +157,12 @@
 import { computed, onMounted, reactive, ref } from 'vue'
 import { message, Modal } from 'ant-design-vue'
 import {
-  ApiOutlined, AppstoreOutlined, ClockCircleOutlined, DatabaseOutlined, DeploymentUnitOutlined, DownloadOutlined, FileTextOutlined, HeartOutlined, PauseCircleOutlined, PlayCircleOutlined,
+  ApiOutlined, AppstoreOutlined, ClockCircleOutlined, DatabaseOutlined, DeploymentUnitOutlined, DownloadOutlined, FileTextOutlined, GlobalOutlined, HeartOutlined, PauseCircleOutlined, PlayCircleOutlined,
   PoweroffOutlined, ReloadOutlined, SaveOutlined, SettingOutlined, StopOutlined, SyncOutlined, UploadOutlined
 } from '@ant-design/icons-vue'
 import { api, canEdit, isAdmin, loadSession, session } from '../api'
 import { ago } from '../format'
+import { checkServers, exitOptions, serversHint, splitServers } from '../dns'
 import Users from './Users.vue'
 
 const props = defineProps({ overview: { type: Object, default: null } })
@@ -187,8 +196,9 @@ const form = reactive({
   autostart: true,
   mixed_port: 7899, bind_address: '*', default_target: 'DIRECT', log_level: 'warning', ipv6: false, anonymous_dashboard: true,
   connectivity_checks: true, probe_target: '1.1.1.1:443', check_interval: 30, capture: true, ping_filter: true, unreachable_limit: 100,
-  unreachable_lifetime: 86400, lifetime: 1, lifetime_unit: 86400
+  unreachable_lifetime: 86400, lifetime: 1, lifetime_unit: 86400, dns_text: '', dns_exit: '@host'
 })
+const targets = ref([])
 const miscFields = ['log_lines', 'verbose_log_lines', 'time_manual', 'time_servers', 'time_tolerance', 'time_interval', 'time_wait']
 const defaultTimeServers = ['time.cloudflare.com', 'time.google.com', 'pool.ntp.org']
 const misc = reactive({
@@ -225,6 +235,9 @@ async function load() {
   try {
     const settings = await api.get('/api/settings')
     Object.assign(form, settings)
+    form.dns_text = ((settings.dns || {}).servers || []).join('\n')
+    form.dns_exit = (settings.dns || {}).exit || '@host'
+    targets.value = await api.get('/api/targets', true)
     Object.assign(misc, Object.fromEntries(miscFields.map((key) => [key, Array.isArray(settings[key]) ? [...settings[key]] : settings[key]])))
     await loadTime()
     splitLifetime(form.unreachable_lifetime)
@@ -243,9 +256,10 @@ async function save() {
   busy.value = true
   try {
     const current = await api.get('/api/settings', true)
-    const { lifetime, lifetime_unit: unit, ...settings } = form
+    const { lifetime, lifetime_unit: unit, dns_text: servers, dns_exit: exit, ...settings } = form
     await api.put('/api/settings', {
-      ...settings, default_target: current.default_target, anonymous_dashboard: current.anonymous_dashboard,
+      ...settings, dns: { servers: splitServers(servers), exit: servers.trim() ? exit : '@host' },
+      default_target: current.default_target, anonymous_dashboard: current.anonymous_dashboard,
       autostart: current.autostart, unreachable_lifetime: lifetime * unit,
       ...Object.fromEntries(miscFields.map((key) => [key, current[key]]))
     })

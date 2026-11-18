@@ -115,11 +115,12 @@ func (driver *hostDriver) check(ctx context.Context, timeout time.Duration) (tim
 	target := driver.runner.settings.ProbeTarget
 	driver.runner.debugf("checking TCP connection to '%v'", target)
 	if driver.marked() {
-		return dialProbe(ctx, target, driver.table, "", timeout)
+		return driver.runner.dial(ctx, target, driver.table, "", timeout)
 	} else if driver.options.Mode == config.HostInterface {
-		return dialProbe(ctx, target, driver.runner.bypass, driver.options.Interface, timeout)
+		return driver.runner.dial(ctx, target, driver.runner.bypass, driver.options.Interface,
+			timeout)
 	}
-	return dialProbe(ctx, target, driver.runner.bypass, "", timeout)
+	return driver.runner.dial(ctx, target, driver.runner.bypass, "", timeout)
 }
 
 func (driver *hostDriver) exited() <-chan error {
@@ -149,7 +150,7 @@ func (driver *proxyDriver) start(_ context.Context) error {
 func (driver *proxyDriver) check(ctx context.Context, timeout time.Duration) (time.Duration,
 	error) {
 	driver.runner.debugf("checking TCP connection to proxy server '%v'", driver.target)
-	return dialProbe(ctx, driver.target, driver.bypass, "", timeout)
+	return driver.runner.dial(ctx, driver.target, driver.bypass, "", timeout)
 }
 
 func (driver *proxyDriver) exited() <-chan error {
@@ -171,9 +172,20 @@ func (driver *amneziaDriver) start(ctx context.Context) error {
 	parsed, err := wgconf.Parse(driver.options.Config)
 	if err != nil {
 		return &fatalError{err}
+	}
+	resolved, err := parsed.Resolve(func(host string) (string, error) {
+		addresses, err := driver.runner.manager.Lookup(ctx, host)
+		if err != nil {
+			return "", err
+		}
+		driver.runner.logf("'%v' is resolved to %v", host, addresses[0])
+		return addresses[0], nil
+	})
+	if err != nil {
+		return err
 	} else if err = os.MkdirAll(driver.directory, 0o700); err != nil {
 		return fmt.Errorf("failed to create directory '%v': %w", driver.directory, err)
-	} else if err = os.WriteFile(path, []byte(parsed.Strip()), 0o600); err != nil {
+	} else if err = os.WriteFile(path, []byte(resolved.Strip()), 0o600); err != nil {
 		return fmt.Errorf("failed to write file '%v': %w", path, err)
 	} else if err = driver.tools.setupTable(driver.table); err != nil {
 		return fmt.Errorf("failed to setup routing table (%v): %w", driver.table, err)
@@ -295,7 +307,7 @@ func (driver *amneziaDriver) install(ctx context.Context, path string) error {
 
 func (driver *amneziaDriver) check(ctx context.Context, timeout time.Duration) (time.Duration,
 	error) {
-	latency, err := dialProbe(ctx, driver.target, driver.table, "", timeout)
+	latency, err := driver.runner.dial(ctx, driver.target, driver.table, "", timeout)
 	if err == nil {
 		driver.runner.logf("check '%v' through the tunnel: %v ms", driver.target,
 			latency.Milliseconds())

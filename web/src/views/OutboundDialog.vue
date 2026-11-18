@@ -131,6 +131,23 @@
             <a-col :span="12"><a-form-item label="Private key password (optional)"><a-input-password v-model:value="form.openvpn.key_password" autocomplete="new-password" /></a-form-item></a-col>
           </a-row>
         </a-tab-pane>
+        <a-tab-pane key="dns" force-render>
+          <template #tab><GlobalOutlined /> DNS</template>
+          <a-alert type="info" show-icon style="margin-bottom: 16px">
+            <template #message>
+              A domain of a route to this outbound is asked from the servers of this tab<span v-if="tunnel"> and from the DNS servers of the VPN
+              (the switch on the {{ typeLabels[kind] }} tab)</span>, so the answer comes from where the traffic leaves.
+              Without servers the default ones of Settings are asked. {{ carrierHints[carrierOf(kind, form)] }}
+            </template>
+          </a-alert>
+          <a-form-item label="DNS servers" :name="['dns', 'text']" :rules="[{ validator: checkServers }]" :extra="serversHint">
+            <a-textarea v-model:value="form.dns.text" :auto-size="{ minRows: 3, maxRows: 8 }" placeholder="Empty: the default DNS servers" spellcheck="false" />
+          </a-form-item>
+          <a-form-item label="Send the queries through"
+            extra="Another exit is for an outbound that cannot carry DNS. The server address of this outbound itself is never asked through it.">
+            <a-select v-model:value="form.dns.exit" :options="exitOptions(targets, outbound ? outbound.id : null)" :disabled="!form.dns.text.trim()" />
+          </a-form-item>
+        </a-tab-pane>
         <a-tab-pane key="monitoring" force-render>
           <template #tab><HeartOutlined /> Monitoring</template>
           <a-form-item :extra="recoveryHint">
@@ -174,10 +191,11 @@
 <script setup>
 import { computed, reactive, ref, watch } from 'vue'
 import { message, Modal } from 'ant-design-vue'
-import { ControlOutlined, HeartOutlined, IdcardOutlined, ImportOutlined, ProfileOutlined, QrcodeOutlined, UploadOutlined } from '@ant-design/icons-vue'
+import { ControlOutlined, GlobalOutlined, HeartOutlined, IdcardOutlined, ImportOutlined, ProfileOutlined, QrcodeOutlined, UploadOutlined } from '@ant-design/icons-vue'
 import jsQR from 'jsqr'
 import { api, id } from '../api'
 import { typeLabels } from '../format'
+import { carrierHints, carrierOf, checkServers, exitOptions, serversHint, splitServers } from '../dns'
 import CodeEditor from '../components/CodeEditor.vue'
 
 const props = defineProps({
@@ -204,6 +222,7 @@ const formRef = ref()
 const tab = ref('general')
 const busy = ref(false)
 const interfaces = ref([])
+const targets = ref([])
 const form = reactive({})
 
 const tunnel = computed(() => props.kind === 'openvpn' || props.kind === 'amneziawg')
@@ -231,7 +250,8 @@ function defaults(kind) {
     openvpn: { config: '', username: '', password: '', otp_key: '', otp_mode: 'challenge', key_password: '', use_dns: true, use_routes: false },
     amneziawg: { config: '', use_dns: true, use_routes: false },
     monitoring: { enabled: true, interval: 30, timeout: 5, retries: 3, target: '1.1.1.1:443' },
-    recovery: { enabled: true, delay: 60, attempts: 0 }
+    recovery: { enabled: true, delay: 60, attempts: 0 },
+    dns: { servers: [], exit: '' }
   }
 }
 
@@ -243,6 +263,12 @@ watch(() => props.open, async (opened) => {
   for (const key of Object.keys(initial)) {
     const value = source[key]
     form[key] = value && typeof value === 'object' ? { ...initial[key], ...value } : value !== undefined ? value : initial[key]
+  }
+  form.dns = { text: (form.dns.servers || []).join('\n'), exit: form.dns.exit || '' }
+  try {
+    targets.value = await api.get('/api/targets', true)
+  } catch (error) {
+    targets.value = []
   }
   if (props.kind === 'host') {
     try {
@@ -312,7 +338,7 @@ async function save() {
     const first = failure.errorFields && failure.errorFields[0]
     if (first) {
       const group = String(first.name[0])
-      tab.value = group === 'monitoring' || group === 'recovery' ? 'monitoring' : ['id', 'attempts', 'reconnect_timeout'].includes(group) ? 'general'
+      tab.value = group === 'dns' ? 'dns' : group === 'monitoring' || group === 'recovery' ? 'monitoring' : ['id', 'attempts', 'reconnect_timeout'].includes(group) ? 'general'
         : group === 'openvpn' && authFields.includes(String(first.name[1])) ? 'authentication' : 'type'
     }
     return
@@ -320,7 +346,7 @@ async function save() {
   const body = {
     id: form.id, type: props.kind, enabled: form.enabled, autostart: form.autostart, attempts: form.attempts,
     reconnect_timeout: form.reconnect_timeout, statistics: form.statistics, verbose: form.verbose,
-    recovery: { ...form.recovery }
+    recovery: { ...form.recovery }, dns: { servers: splitServers(form.dns.text), exit: form.dns.text.trim() ? form.dns.exit : '' }
   }
   body[props.kind] = { ...form[props.kind] }
   if (props.kind === 'host' && body.host.mode !== 'interface') {

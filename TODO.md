@@ -2,7 +2,29 @@
 
 ## DNS
 
-- [ ] **DNS routing per outbound**
+- [x] **DNS routing per outbound**
+  - Done: every outbound has the tab **DNS**: its DNS servers (plain, `tcp://`, `tls://`,
+    `https://`, `quic://`) and the exit of the queries (this outbound, Host, Router, another
+    outbound or fallback). The domains of the `DOMAIN`, `DOMAIN-SUFFIX` and `GEOSITE` routes
+    to an outbound are asked from its servers through it (`nameserver-policy`, `server#exit`),
+    in the order of the routes. Default servers and their exit: **Settings → Router → DNS**;
+    names without a route follow the DNS of the default target. Configuration version 10.
+  - Classes: HOST, tunnels and SOCKS5 with UDP carry everything; SOCKS5 without UDP and HTTP
+    carry no UDP (a server given by address is asked over TCP, `udp://` and `quic://` are
+    skipped with a warning); an outbound that cannot carry DNS at all gets another exit.
+  - mihomo mechanisms (checked with 1.19.34): `nameserver-policy` + the `#<proxy>` suffix are
+    used, `#RULES` for the exit Router, `default-nameserver` for the names of DNS servers.
+    `respect-rules`, `proxy-server-nameserver` and `direct-nameserver` are not needed: without
+    them the names of proxy servers follow the policy, where the generator pins them.
+  - Names of the configuration (a proxy server, an OpenVPN `remote`, an AmneziaWG `Endpoint`,
+    a check target, a time server) are resolved by Proximity through the resolver of the
+    router: they follow the same DNS routing, get a real address (an application gets
+    fake-IP in transparent mode, before this a tunnel with a remote name could not connect
+    there) and are never asked through their own outbound (the loop is cut by a pin).
+  - Found on the way: with `rp_filter=1` the answers of DNS servers to the router were
+    dropped (rule 5155 had no source); fixed.
+  - Checked: unit tests and the stand `dns` (`make stand-dns`, 25 checks).
+  - Original task:
   - Classify every outbound by DNS capability:
     - can carry UDP DNS (UDP-capable tunnels: WireGuard, OpenVPN, SOCKS5 with UDP ASSOCIATE, etc.);
     - TCP only (HTTP proxy, SOCKS5 without UDP) — needs DoH/DoT/DNS-over-TCP;
@@ -19,6 +41,35 @@
     - `direct-nameserver`.
   - Decide how it fits with the existing fake-IP / DNS-hijack logic.
   - Expose it in the UI (Outbounds and/or Routes pages).
+
+
+- [ ] **Names of DNS servers follow the DNS routing**
+  - `https://dns.corp.example/dns-query` on the DNS tab of a VPN outbound: the name of the
+    server is resolved by the default servers (`default-nameserver`) or by the resolver of
+    the system, not by the DNS of the VPN. Now: write the address. An idea: resolve such a
+    name through the servers of the same outbound that are given by address and put it into
+    `hosts` of the router.
+
+- [ ] **A check target reached through a tunnel is resolved by the DNS of the tunnel**
+  - The check target of AmneziaWG (and the health check URL of a fallback) given by name is
+    resolved by the DNS of the route that takes its domain; without such a route by the
+    default servers, though the connection goes through the tunnel.
+
+- [ ] **Placeholder answers of a Proximity OpenVPN inbound**
+  - An OpenVPN inbound answers the DNS queries of its clients with fake-IP. A name of the
+    configuration asked through a tunnel to another Proximity gets such an address and is
+    refused (`has no usable address`). Decide: real answers for the names of the settings,
+    or an option of the inbound.
+
+- [ ] **DNS binding of keyword, wildcard and regex routes**
+  - `DOMAIN-KEYWORD`, `DOMAIN-WILDCARD` and `DOMAIN-REGEX` routes do not bind their domains to
+    the DNS of the outbound (a `nameserver-policy` key cannot express them): such names use
+    the DNS of everything else.
+
+- [ ] **DNS: check through a real DoH / DoT server and an HTTP proxy**
+  - The stand `dns` checks plain DNS over UDP and TCP. `tls://`, `https://`, `quic://` and
+    the exit through an HTTP proxy (port 443 through `ID~https`) are covered by unit tests
+    and by `mihomo -t` only.
 
 ## OpenVPN
 

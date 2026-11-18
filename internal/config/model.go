@@ -17,27 +17,28 @@ import (
 )
 
 type Settings struct {
-	MixedPort           int      `json:"mixed_port"`
-	BindAddress         string   `json:"bind_address"`
-	DefaultTarget       string   `json:"default_target"`
-	LogLevel            string   `json:"log_level"`
-	IPv6                bool     `json:"ipv6"`
-	AnonymousDashboard  bool     `json:"anonymous_dashboard"`
-	ConnectivityChecks  bool     `json:"connectivity_checks"`
-	ProbeTarget         string   `json:"probe_target"`
-	CheckInterval       int      `json:"check_interval"`
-	Capture             bool     `json:"capture"`
-	PingFilter          bool     `json:"ping_filter"`
-	UnreachableLimit    int      `json:"unreachable_limit"`
-	UnreachableLifetime int      `json:"unreachable_lifetime"`
-	Autostart           bool     `json:"autostart"`
-	LogLines            int      `json:"log_lines"`
-	VerboseLogLines     int      `json:"verbose_log_lines"`
-	TimeManual          bool     `json:"time_manual"`
-	TimeServers         []string `json:"time_servers"`
-	TimeTolerance       int      `json:"time_tolerance"`
-	TimeInterval        int      `json:"time_interval"`
-	TimeWait            int      `json:"time_wait"`
+	MixedPort           int        `json:"mixed_port"`
+	BindAddress         string     `json:"bind_address"`
+	DefaultTarget       string     `json:"default_target"`
+	LogLevel            string     `json:"log_level"`
+	IPv6                bool       `json:"ipv6"`
+	AnonymousDashboard  bool       `json:"anonymous_dashboard"`
+	ConnectivityChecks  bool       `json:"connectivity_checks"`
+	ProbeTarget         string     `json:"probe_target"`
+	CheckInterval       int        `json:"check_interval"`
+	Capture             bool       `json:"capture"`
+	PingFilter          bool       `json:"ping_filter"`
+	UnreachableLimit    int        `json:"unreachable_limit"`
+	UnreachableLifetime int        `json:"unreachable_lifetime"`
+	Autostart           bool       `json:"autostart"`
+	LogLines            int        `json:"log_lines"`
+	VerboseLogLines     int        `json:"verbose_log_lines"`
+	TimeManual          bool       `json:"time_manual"`
+	TimeServers         []string   `json:"time_servers"`
+	TimeTolerance       int        `json:"time_tolerance"`
+	TimeInterval        int        `json:"time_interval"`
+	TimeWait            int        `json:"time_wait"`
+	DNS                 DNSOptions `json:"dns"`
 }
 
 type User struct {
@@ -129,6 +130,7 @@ type Outbound struct {
 	AmneziaWG        *AmneziaWGOptions `json:"amneziawg,omitempty"`
 	Monitoring       *Monitoring       `json:"monitoring,omitempty"`
 	Recovery         *Recovery         `json:"recovery,omitempty"`
+	DNS              DNSOptions        `json:"dns"`
 }
 
 type Fallback struct {
@@ -198,7 +200,7 @@ const (
 	OTPAppend    = "append"
 )
 
-const currentVersion = 9
+const currentVersion = 10
 const inboundVersion = 4
 const autostartVersion = 5
 const serviceVersion = 6
@@ -249,7 +251,8 @@ func Default() Config {
 		UnreachableLifetime: defaultUnreachableLifetime, Autostart: true,
 		LogLines: DefaultLogLines, VerboseLogLines: DefaultVerboseLogLines,
 		TimeServers: slices.Clone(defaultTimeServers), TimeTolerance: defaultTimeTolerance,
-		TimeInterval: defaultTimeInterval, TimeWait: defaultTimeWait}, Users: []User{},
+		TimeInterval: defaultTimeInterval, TimeWait: defaultTimeWait,
+		DNS: DNSOptions{Servers: []string{}, Exit: ViaHost}}, Users: []User{},
 		Outbounds: []Outbound{}, Fallbacks: []Fallback{}, Routes: []Route{},
 		Inbounds: []Inbound{}}
 }
@@ -342,6 +345,9 @@ func (settings *Settings) normalize() {
 	if settings.TimeWait == 0 {
 		settings.TimeWait = defaultTimeWait
 	}
+	if settings.DNS.normalize(); settings.DNS.Exit == "" {
+		settings.DNS.Exit = ViaHost
+	}
 }
 
 func (settings Settings) TimeSync() ([]string, int, int) {
@@ -411,7 +417,7 @@ func (settings *Settings) validate(config *Config) error {
 			return err
 		}
 	}
-	return nil
+	return settings.DNS.validate()
 }
 
 func (user *User) validate() error {
@@ -427,6 +433,9 @@ func (user *User) validate() error {
 
 func (outbound *Outbound) normalize() {
 	outbound.ID = strings.TrimSpace(outbound.ID)
+	if outbound.DNS.normalize(); outbound.DNS.Exit == outbound.ID {
+		outbound.DNS.Exit = ""
+	}
 	if outbound.Type != TypeHost {
 		outbound.Host = nil
 	} else if outbound.Host == nil {
@@ -504,6 +513,8 @@ func (outbound *Outbound) validate() error {
 	} else if err = validateAttempts(outbound.Attempts, outbound.ReconnectTimeout); err != nil {
 		return err
 	} else if err = outbound.Recovery.validate(); err != nil {
+		return err
+	} else if err = outbound.DNS.validate(); err != nil {
 		return err
 	}
 	switch outbound.Type {

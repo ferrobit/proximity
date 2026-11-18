@@ -328,7 +328,7 @@ func TestServer_Backup(t *testing.T) {
 	code, exported, _ := call(t, server, admin, http.MethodGet, "/api/backup", nil)
 	require.Equal(t, http.StatusOK, code)
 	require.Equal(t, config.BackupFormat, exported["format"])
-	require.Equal(t, 9.0, exported["version"])
+	require.Equal(t, 10.0, exported["version"])
 	require.Len(t, exported["inbounds"], 1)
 	require.Len(t, exported["outbounds"], 1)
 	require.Len(t, exported["routes"], 1)
@@ -385,6 +385,79 @@ func TestServer_Backup(t *testing.T) {
 		code, _, _ = call(t, server, admin, http.MethodPost, "/api/backup", 5)
 		require.Equal(t, http.StatusBadRequest, code)
 		require.Equal(t, "SOCKS5 1", server.store.Snapshot().Routes[0].Target)
+	}
+}
+
+func TestServer_DNS(t *testing.T) {
+	server := makeServer(t)
+	admin := login(t, server, "admin", "secret123")
+	for _, outbound := range []config.Outbound{
+		{Type: config.TypeSocks5, Enabled: true, Autostart: true, Socks5: &config.Socks5Options{
+			Server: "127.0.0.1", Port: 1}, DNS: config.DNSOptions{Servers: []string{"8.8.8.8",
+			"tls://1.1.1.1"}}},
+		{Type: config.TypeHost, Enabled: true, Autostart: true, DNS: config.DNSOptions{
+			Servers: []string{"9.9.9.9"}, Exit: "SOCKS5 1"}},
+		{Type: config.TypeHost, Enabled: true, Autostart: true}} {
+		code, body, _ := call(t, server, admin, http.MethodPost, "/api/outbounds", outbound)
+		require.Equal(t, http.StatusOK, code, body)
+	}
+	{
+		code, body, _ := call(t, server, admin, http.MethodPost, "/api/outbounds", config.Outbound{
+			Type: config.TypeHost, DNS: config.DNSOptions{Exit: "missing"}})
+		require.Equal(t, http.StatusBadRequest, code)
+		require.Equal(t, "DNS exit 'missing' does not exist", body["error"])
+		code, body, _ = call(t, server, admin, http.MethodPost, "/api/outbounds", config.Outbound{
+			Type: config.TypeHost, DNS: config.DNSOptions{Servers: []string{"dns.example.com"}}})
+		require.Equal(t, http.StatusBadRequest, code)
+		require.Contains(t, body["error"], "invalid DNS server 'dns.example.com'")
+	}
+	{
+		code, body, _ := call(t, server, admin, http.MethodGet, "/api/outbounds", nil)
+		require.Equal(t, http.StatusOK, code)
+		views := body["outbounds"].([]any)
+		require.Equal(t, []any{"tcp://8.8.8.8#SOCKS5 1", "tls://1.1.1.1#SOCKS5 1"},
+			views[0].(map[string]any)["resolvers"])
+		require.Equal(t, []any{"tcp://9.9.9.9#SOCKS5 1"}, views[1].(map[string]any)["resolvers"])
+		require.Equal(t, []any{}, views[2].(map[string]any)["resolvers"])
+		require.Equal(t, map[string]any{"servers": []any{"9.9.9.9"}, "exit": "SOCKS5 1"},
+			views[1].(map[string]any)["dns"])
+		code, body, _ = call(t, server, nil, http.MethodGet, "/api/dashboard", nil)
+		require.Equal(t, http.StatusOK, code)
+		require.Equal(t, []any{}, body["outbounds"].([]any)[0].(map[string]any)["resolvers"])
+	}
+	{
+		code, settings, _ := call(t, server, admin, http.MethodGet, "/api/settings", nil)
+		require.Equal(t, http.StatusOK, code)
+		require.Equal(t, map[string]any{"servers": []any{}, "exit": config.ViaHost}, settings["dns"])
+		settings["dns"] = config.DNSOptions{Servers: []string{"1.1.1.1"}, Exit: "missing"}
+		code, body, _ := call(t, server, admin, http.MethodPut, "/api/settings", settings)
+		require.Equal(t, http.StatusBadRequest, code)
+		require.Equal(t, "DNS exit 'missing' does not exist", body["error"])
+		settings["dns"] = config.DNSOptions{Servers: []string{"1.1.1.1"}, Exit: "HOST 2"}
+		code, body, _ = call(t, server, admin, http.MethodPut, "/api/settings", settings)
+		require.Equal(t, http.StatusOK, code, body)
+		code, body, _ = call(t, server, admin, http.MethodDelete, "/api/outbounds/HOST%202", nil)
+		require.Equal(t, http.StatusOK, code, body)
+		require.Equal(t, config.DNSOptions{Servers: []string{"1.1.1.1"}, Exit: config.ViaHost},
+			server.store.Snapshot().Settings.DNS)
+	}
+	{
+		addresses, err := server.resolve(context.Background(), "localhost")
+		require.NoError(t, err)
+		require.Contains(t, addresses, "127.0.0.1")
+		offset, err := server.queryTime(context.Background(), "127.0.0.1:1", 0)
+		require.ErrorContains(t, err, "NTP server '127.0.0.1:1'")
+		require.Zero(t, offset)
+		limited, stop := context.WithTimeout(context.Background(), 2*time.Second)
+		defer stop()
+		_, err = server.queryTime(limited, "localhost:1", 0)
+		require.ErrorContains(t, err, "failed to query NTP server 'localhost:1'")
+		ctx, cancel := context.WithCancel(context.Background())
+		cancel()
+		_, err = server.queryTime(ctx, "name.invalid", 0)
+		require.ErrorContains(t, err, "failed to resolve NTP server 'name.invalid'")
+		_, err = (&Server{}).queryTime(ctx, "127.0.0.1:1", 0)
+		require.Error(t, err)
 	}
 }
 

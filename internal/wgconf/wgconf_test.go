@@ -6,6 +6,7 @@ import (
 	"encoding/base64"
 	"encoding/binary"
 	"encoding/json"
+	"errors"
 	"strings"
 	"testing"
 
@@ -135,6 +136,39 @@ func TestParse_Valid(t *testing.T) {
 		parsed, err := Parse(strings.Replace(sampleConfig, "MTU = 1300\n", "", 1))
 		require.NoError(t, err)
 		require.Equal(t, 0, parsed.MTU())
+	}
+}
+
+func TestResolve_Endpoints(t *testing.T) {
+	config, err := Parse(sampleConfig + "[Peer]\nPublicKey = " + sampleKey +
+		"\nEndpoint = 198.51.100.7:51821\n[Peer]\nPublicKey = " + sampleKey +
+		"\nEndpoint = [2001:db8::7]:51822\n[Peer]\nPublicKey = " + sampleKey +
+		"\nendpoint = second.example.com:51823\n")
+	require.NoError(t, err)
+	require.Equal(t, []string{"vpn.example.com", "second.example.com"}, config.EndpointHosts())
+	asked := []string{}
+	resolved, err := config.Resolve(func(host string) (string, error) {
+		asked = append(asked, host)
+		if host == "second.example.com" {
+			return "2001:db8::1", nil
+		}
+		return "203.0.113.9", nil
+	})
+	require.NoError(t, err)
+	require.Equal(t, []string{"vpn.example.com", "second.example.com"}, asked)
+	text := resolved.Strip()
+	require.Contains(t, text, "Endpoint = 203.0.113.9:51820\n")
+	require.Contains(t, text, "Endpoint = 198.51.100.7:51821\n")
+	require.Contains(t, text, "Endpoint = [2001:db8::7]:51822\n")
+	require.Contains(t, text, "endpoint = [2001:db8::1]:51823\n")
+	require.Empty(t, resolved.EndpointHosts())
+	require.Contains(t, config.Strip(), "Endpoint = vpn.example.com:51820\n")
+	require.Equal(t, config.AllowedIPs(), resolved.AllowedIPs())
+	{
+		_, err := config.Resolve(func(host string) (string, error) {
+			return "", errors.New("no such name")
+		})
+		require.EqualError(t, err, "failed to resolve Endpoint 'vpn.example.com': no such name")
 	}
 }
 

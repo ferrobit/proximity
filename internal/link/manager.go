@@ -41,6 +41,7 @@ type Options struct {
 	HostNetwork bool
 	Changed     func()
 	Clock       *clock.Clock
+	Resolve     ResolveFunc
 }
 
 type Manager struct {

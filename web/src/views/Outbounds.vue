@@ -46,6 +46,7 @@
         <template v-else-if="column.key === 'details'">
           <span class="mono">{{ summary(record) }}</span>
           <div class="muted mono" v-if="record.status.address">{{ record.status.device }} · {{ record.status.address }}</div>
+          <div class="muted mono" v-if="record.resolvers && record.resolvers.length">DNS {{ describeResolvers(record.resolvers, record.id) }}</div>
         </template>
         <template v-else-if="column.key === 'actions'">
           <a-space v-if="canEdit()">
@@ -83,6 +84,7 @@ import {
 import { api, canEdit, id } from '../api'
 import { activeStates, typeColors, typeLabels } from '../format'
 import { linkTone, rowTone } from '../states'
+import { describeResolvers } from '../dns'
 import StateTag from '../components/StateTag.vue'
 import LogView from '../components/LogView.vue'
 import OutboundDialog from './OutboundDialog.vue'

@@ -749,6 +749,16 @@ func TestMoveOutbound_Order(t *testing.T) {
 	require.ErrorContains(t, config.MoveOutbound("missing", 1), "item does not exist")
 }
 
+func TestOpenVPNHosts_Blocks(t *testing.T) {
+	text := "client\r\nremote vpn.example.com 1194 udp\n--remote 203.0.113.7 443\n" +
+		"remote VPN.example.com. 1195\nhttp-proxy gate.example.com 3128\nsocks-proxy 10.0.0.1\n" +
+		"<ca>\nremote inside.example.com 1\n</ca>\n<connection>\nremote second.example.com 1196\n" +
+		"</connection>\n# remote comment.example.com\nremote\nremote bad_name! 1\n"
+	require.Equal(t, []string{"vpn.example.com", "gate.example.com", "second.example.com"},
+		OpenVPNHosts(text))
+	require.Empty(t, OpenVPNHosts(""))
+}
+
 func TestOpen_CreatesAndReloads(t *testing.T) {
 	directory := filepath.Join(t.TempDir(), "nested")
 	store, err := Open(directory)
@@ -1105,6 +1115,113 @@ func TestOpen_RoutesMigration(t *testing.T) {
 	}
 }
 
+func TestOutbound_Carrier(t *testing.T) {
+	config := makeConfig(t)
+	carriers := map[string]string{}
+	for _, outbound := range config.Outbounds {
+		carriers[outbound.ID] = outbound.Carrier()
+	}
+	require.Equal(t, map[string]string{"HOST 1": CarrierUDP, "SOCKS5 1": CarrierTCP,
+		"HTTP 1": CarrierTCP, "OpenVPN 1": CarrierUDP, "AmneziaWG 1": CarrierUDP}, carriers)
+	{
+		config.Outbounds[1].Socks5.UDP = true
+		require.Equal(t, CarrierUDP, config.Outbounds[1].Carrier())
+		require.False(t, config.Outbounds[1].UsesDNS())
+		require.False(t, config.Outbounds[3].UsesDNS())
+		config.Outbounds[3].OpenVPN.UseDNS, config.Outbounds[4].AmneziaWG.UseDNS = true, true
+		require.True(t, config.Outbounds[3].UsesDNS())
+		require.True(t, config.Outbounds[4].UsesDNS())
+	}
+}
+
+func TestOutbound_Hosts(t *testing.T) {
+	config := makeConfig(t)
+	hosts := map[string][]string{}
+	for _, outbound := range config.Outbounds {
+		hosts[outbound.ID] = outbound.Hosts()
+	}
+	require.Equal(t, map[string][]string{"HOST 1": {}, "SOCKS5 1": {},
+		"HTTP 1": {"proxy.example.com", "secure.example.com"}, "OpenVPN 1": {"vpn.example.com"},
+		"AmneziaWG 1": {"vpn.example.com"}}, hosts)
+	{
+		config.Outbounds[1].Socks5.Server = "Proxy.Example.com"
+		require.Equal(t, []string{"proxy.example.com"}, config.Outbounds[1].Hosts())
+		config.Outbounds[2].HTTP.Single = true
+		require.Equal(t, []string{"proxy.example.com"}, config.Outbounds[2].Hosts())
+		config.Outbounds[2].HTTP.Single, config.Outbounds[2].HTTP.HTTPSServer = false, "proxy.example.com"
+		require.Equal(t, []string{"proxy.example.com"}, config.Outbounds[2].Hosts())
+		config.Outbounds[4].AmneziaWG.Config = "broken"
+		require.Empty(t, config.Outbounds[4].Hosts())
+	}
+}
+
+func TestParseDNSServer_Forms(t *testing.T) {
+	for text, expected := range map[string]DNSServer{
+		"8.8.8.8":               {Scheme: DNSUDP, Host: "8.8.8.8", Port: 53, Plain: true},
+		" 8.8.8.8:5353 ":        {Scheme: DNSUDP, Host: "8.8.8.8", Port: 5353, Plain: true},
+		"2001:db8::1":           {Scheme: DNSUDP, Host: "2001:db8::1", Port: 53, Plain: true},
+		"[2001:db8::1]:54":      {Scheme: DNSUDP, Host: "2001:db8::1", Port: 54, Plain: true},
+		"udp://9.9.9.9":         {Scheme: DNSUDP, Host: "9.9.9.9", Port: 53},
+		"TCP://9.9.9.9:5353":    {Scheme: DNSTCP, Host: "9.9.9.9", Port: 5353},
+		"tls://dns.example.com": {Scheme: DNSTLS, Host: "dns.example.com", Port: 853},
+		"https://dns.example.com": {Scheme: DNSHTTPS, Host: "dns.example.com", Port: 443,
+			Path: "/dns-query"},
+		"https://[2001:db8::1]:8443/q/x": {Scheme: DNSHTTPS, Host: "2001:db8::1", Port: 8443,
+			Path: "/q/x"},
+		"quic://1.1.1.1": {Scheme: DNSQUIC, Host: "1.1.1.1", Port: 853}} {
+		server, err := ParseDNSServer(text)
+		require.NoError(t, err, text)
+		require.Equal(t, expected, server, text)
+	}
+	{
+		texts := map[string]string{"8.8.8.8": "8.8.8.8", "8.8.8.8:5353": "8.8.8.8:5353",
+			"2001:db8::1": "2001:db8::1", "[2001:db8::1]:54": "[2001:db8::1]:54",
+			"udp://9.9.9.9:53": "udp://9.9.9.9", "tcp://9.9.9.9:5353": "tcp://9.9.9.9:5353",
+			"tls://dns.example.com:853":    "tls://dns.example.com",
+			"https://dns.example.com":      "https://dns.example.com/dns-query",
+			"https://[2001:db8::1]:8443/q": "https://[2001:db8::1]:8443/q"}
+		for text, expected := range texts {
+			server, err := ParseDNSServer(text)
+			require.NoError(t, err, text)
+			require.Equal(t, expected, server.String(), text)
+		}
+	}
+	{
+		server, err := ParseDNSServer("2001:db8::1")
+		require.NoError(t, err)
+		require.Equal(t, "[2001:db8::1]:53", server.Address())
+		require.Equal(t, "tcp://[2001:db8::1]", server.URL(DNSTCP))
+		require.Equal(t, "", server.Named())
+		server, err = ParseDNSServer("tls://DNS.example.com")
+		require.NoError(t, err)
+		require.Equal(t, "dns.example.com", server.Named())
+		require.Equal(t, "DNS.example.com:853", server.Address())
+	}
+}
+
+func TestParseDNSServer_Invalid(t *testing.T) {
+	for text, expected := range map[string]string{
+		"":                              "expected IP address or URL",
+		"dns.example.com":               "expected IP address or URL",
+		"8.8.8.8:0":                     "expected IP address or URL",
+		"8.8.8.8:70000":                 "expected IP address or URL",
+		"ftp://8.8.8.8":                 "unexpected scheme of DNS server",
+		"https://user@dns.example.com":  "unexpected part in DNS server",
+		"https://dns.example.com/q?a=1": "unexpected part in DNS server",
+		"8.8.8.8#Exit":                  "expected IP address or URL",
+		"tls://1.1.1.1#Exit":            "unexpected part in DNS server",
+		"tls://1.1.1.1/path":            "unexpected path in DNS server",
+		"tcp://8.8.8.8:0":               "invalid port of DNS server",
+		"udp://dns.example.com":         "expected IP address",
+		"tcp://dns.example.com":         "expected IP address",
+		"tls://bad_host":                "invalid host of DNS server",
+		"https://":                      "invalid host of DNS server",
+		"tcp://[8.8.8.8":                "cannot parse"} {
+		_, err := ParseDNSServer(text)
+		require.ErrorContains(t, err, expected, text)
+	}
+}
+
 func TestRemoveOutbound_Cascade(t *testing.T) {
 	config := makeConfig(t)
 	_, err := config.AddFallback(Fallback{Outbounds: []string{"SOCKS5 1", "OpenVPN 1"}})
@@ -1194,6 +1311,43 @@ func TestSetRoutes_Lifecycle(t *testing.T) {
 	}
 }
 
+func TestSetSettings_DNS(t *testing.T) {
+	config := makeConfig(t)
+	settings := config.Settings
+	require.Equal(t, DNSOptions{Servers: []string{}, Exit: ViaHost}, settings.DNS)
+	{
+		settings.DNS = DNSOptions{Servers: []string{" 8.8.8.8, 8.8.8.8:53 ", "TLS://dns.example.com:853",
+			"8.8.8.8", "https://dns.example.com"}, Exit: " SOCKS5 1 "}
+		require.NoError(t, config.SetSettings(settings))
+		require.NoError(t, config.Validate())
+		require.Equal(t, DNSOptions{Servers: []string{"8.8.8.8", "tls://dns.example.com",
+			"https://dns.example.com/dns-query"}, Exit: "SOCKS5 1"}, config.Settings.DNS)
+	}
+	{
+		settings.DNS = DNSOptions{Exit: ""}
+		require.NoError(t, config.SetSettings(settings))
+		require.NoError(t, config.Validate())
+		require.Equal(t, DNSOptions{Servers: []string{}, Exit: ViaHost}, config.Settings.DNS)
+		settings.DNS.Exit = ViaRouter
+		require.NoError(t, config.SetSettings(settings))
+		settings.DNS.Exit = "missing"
+		require.EqualError(t, config.SetSettings(settings), "DNS exit 'missing' does not exist")
+		settings.DNS.Exit = TargetReject
+		require.EqualError(t, config.SetSettings(settings), "DNS exit 'REJECT' does not exist")
+	}
+	{
+		settings.DNS = DNSOptions{Servers: []string{"dns.example.com"}, Exit: ViaHost}
+		require.NoError(t, config.SetSettings(settings))
+		require.EqualError(t, config.Validate(), "failed to check settings: invalid DNS server "+
+			"'dns.example.com', expected IP address or URL")
+		settings.DNS.Servers = []string{"1.1.1.1 1.1.1.2 1.1.1.3 1.1.1.4 1.1.1.5 1.1.1.6 1.1.1.7",
+			"1.1.1.8;1.1.1.9"}
+		require.NoError(t, config.SetSettings(settings))
+		require.EqualError(t, config.Validate(),
+			"failed to check settings: too many DNS servers (9), expected up to 8")
+	}
+}
+
 func TestUpdateInbound_Identity(t *testing.T) {
 	config := makeConfig(t)
 	now := time.Unix(1700000000, 0)
@@ -1250,6 +1404,65 @@ func TestUpdateInbound_Identity(t *testing.T) {
 	}
 }
 
+func TestUpdateOutbound_DNS(t *testing.T) {
+	config := makeConfig(t)
+	_, err := config.AddFallback(Fallback{Enabled: true, Outbounds: []string{"SOCKS5 1", "HOST 1"}})
+	require.NoError(t, err)
+	_, err = config.AddOutbound(Outbound{Type: TypeHost, DNS: DNSOptions{Exit: "missing"}})
+	require.EqualError(t, err, "DNS exit 'missing' does not exist")
+	_, err = config.AddOutbound(Outbound{Type: TypeHost, DNS: DNSOptions{Servers: []string{"x"}}})
+	require.ErrorContains(t, err, "invalid DNS server 'x'")
+	added, err := config.AddOutbound(Outbound{Type: TypeHost, ID: "Own", DNS: DNSOptions{
+		Servers: []string{"8.8.8.8\t8.8.4.4"}, Exit: "Own"}})
+	require.NoError(t, err)
+	require.Equal(t, DNSOptions{Servers: []string{"8.8.8.8", "8.8.4.4"}}, added.DNS)
+	{
+		outbound, _ := config.FindOutbound("HTTP 1")
+		outbound.DNS = DNSOptions{Servers: []string{"https://1.1.1.1/dns-query"}, Exit: "HTTP 1"}
+		require.NoError(t, config.UpdateOutbound("HTTP 1", outbound))
+		outbound, _ = config.FindOutbound("HTTP 1")
+		require.Equal(t, "", outbound.DNS.Exit)
+		outbound.DNS.Exit = "missing"
+		require.EqualError(t, config.UpdateOutbound("HTTP 1", outbound),
+			"DNS exit 'missing' does not exist")
+		for _, exit := range []string{ViaHost, ViaRouter, "Fallback 1", "SOCKS5 1"} {
+			outbound.DNS.Exit = exit
+			require.NoError(t, config.UpdateOutbound("HTTP 1", outbound))
+		}
+	}
+	{
+		config.Settings.DNS = DNSOptions{Servers: []string{"9.9.9.9"}, Exit: "SOCKS5 1"}
+		renamed, _ := config.FindOutbound("SOCKS5 1")
+		renamed.ID = "Upstream"
+		require.NoError(t, config.UpdateOutbound("SOCKS5 1", renamed))
+		outbound, _ := config.FindOutbound("HTTP 1")
+		require.Equal(t, "Upstream", outbound.DNS.Exit)
+		require.Equal(t, "Upstream", config.Settings.DNS.Exit)
+		clone := config.Clone()
+		clone.Settings.DNS.Servers[0], clone.Outbounds[2].DNS.Servers[0] = "changed", "changed"
+		require.Equal(t, "9.9.9.9", config.Settings.DNS.Servers[0])
+		require.Equal(t, "https://1.1.1.1/dns-query", config.Outbounds[2].DNS.Servers[0])
+		require.NoError(t, config.RemoveOutbound("Upstream"))
+		require.NoError(t, config.Validate())
+		outbound, _ = config.FindOutbound("HTTP 1")
+		require.Equal(t, "", outbound.DNS.Exit)
+		require.Equal(t, ViaHost, config.Settings.DNS.Exit)
+	}
+	{
+		outbound, _ := config.FindOutbound("HTTP 1")
+		outbound.DNS.Exit = "Fallback 1"
+		require.NoError(t, config.UpdateOutbound("HTTP 1", outbound))
+		config.Settings.DNS.Exit = "Fallback 1"
+		require.NoError(t, config.RemoveFallback("Fallback 1"))
+		require.NoError(t, config.Validate())
+		outbound, _ = config.FindOutbound("HTTP 1")
+		require.Equal(t, "", outbound.DNS.Exit)
+		require.Equal(t, ViaHost, config.Settings.DNS.Exit)
+		require.True(t, config.ExitExists(""))
+		require.False(t, config.ExitExists(TargetDirect))
+	}
+}
+
 func TestUpdateOutbound_Identity(t *testing.T) {
 	config := makeConfig(t)
 	require.NoError(t, config.UpdateOutbound("SOCKS5 1", Outbound{Type: TypeHost, Slot: 77,
@@ -1258,7 +1471,8 @@ func TestUpdateOutbound_Identity(t *testing.T) {
 	require.True(t, found)
 	require.Equal(t, Outbound{ID: "SOCKS5 1", Type: TypeSocks5, Slot: 2, Autostart: true,
 		Attempts: 3, ReconnectTimeout: 10, Recovery: &Recovery{Enabled: true, Delay: 60},
-		Socks5: &Socks5Options{Server: "10.0.0.9", Port: 1081}}, outbound)
+		Socks5: &Socks5Options{Server: "10.0.0.9", Port: 1081},
+		DNS:    DNSOptions{Servers: []string{}}}, outbound)
 	require.ErrorContains(t, config.UpdateOutbound("SOCKS5 1", Outbound{}), "invalid server address")
 	require.ErrorContains(t, config.UpdateOutbound("missing", Outbound{}), "does not exist")
 	_, found = config.FindOutbound("missing")

@@ -113,6 +113,13 @@ Outbound object (fields depend on `type`):
 
 Tunnels also take `monitoring: {enabled, interval, timeout, retries, target}`.
 
+Every outbound takes `dns: {servers: [...], exit}` — the DNS servers for the domains
+routed to it. A server is `8.8.8.8`, `8.8.8.8:5353`, `udp://`, `tcp://` (address only),
+`tls://`, `https://host/path` or `quic://` (address or name), up to 8. `exit` is `""`
+(through this outbound), `"@host"` (directly), `"@router"` (the routes decide) or the ID
+of another outbound or fallback. A view of `GET /api/outbounds` has `resolvers`: the
+servers in effect as the router gets them, for example `["tcp://8.8.8.8#SOCKS5 1"]`.
+
 Common fields of outbounds and inbounds: `autostart` (default `true` when omitted) — start
 when the router starts; `attempts` (1…100, default 3) — failed attempts in a row before
 the state becomes `failed`; `reconnect_timeout` (1…3600 s, default 10) — pause between
@@ -221,9 +228,15 @@ Settings object:
   "log_lines": 300, "verbose_log_lines": 3000,
   "time_manual": false,
   "time_servers": ["time.cloudflare.com", "time.google.com", "pool.ntp.org"],
-  "time_tolerance": 1, "time_interval": 3600, "time_wait": 60
+  "time_tolerance": 1, "time_interval": 3600, "time_wait": 60,
+  "dns": {"servers": [], "exit": "@host"}
 }
 ```
+
+`dns` — the default DNS servers (the same forms as for an outbound; empty — the resolver
+of the system) and their exit: `"@host"`, `"@router"` or the ID of an outbound or fallback.
+A request without `dns` resets it. Configurations and backups older than version 10 get
+the empty value.
 
 `autostart` — start the router when the container starts, but only if it was running
 when the container stopped. When it is `false`, the router always stays stopped after a

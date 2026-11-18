@@ -63,15 +63,6 @@ type Options struct {
 	ProxyBind string
 }
 
-type dnsSection struct {
-	Enable       bool                `json:"enable"`
-	IPv6         bool                `json:"ipv6"`
-	EnhancedMode string              `json:"enhanced-mode,omitempty"`
-	FakeIPRange  string              `json:"fake-ip-range,omitempty"`
-	Nameserver   []string            `json:"nameserver"`
-	Policy       map[string][]string `json:"nameserver-policy"`
-}
-
 type document struct {
 	MixedPort   int              `json:"mixed-port"`
 	AllowLan    bool             `json:"allow-lan"`
@@ -100,6 +91,8 @@ type buildState struct {
 	variants map[string][]rules.Variant
 	active   map[string]bool
 	warnings []string
+	entries  []dnsEntry
+	cache    map[string][]dnsUpstream
 }
 
 const secureSuffix = "~https"
@@ -114,7 +107,7 @@ func Generate(snapshot config.Config, links map[string]link.Status, options Opti
 	[]string, error) {
 	state := &buildState{config: snapshot, links: links, variants: map[string][]rules.Variant{},
 		active:   map[string]bool{config.TargetDirect: true, config.TargetReject: true},
-		warnings: []string{}}
+		warnings: []string{}, cache: map[string][]dnsUpstream{}}
 	settings := snapshot.Settings
 	state.document = document{MixedPort: settings.MixedPort, AllowLan: true,
 		BindAddress: settings.BindAddress, Mode: "rule", LogLevel: settings.LogLevel,
@@ -442,7 +435,6 @@ func (state *buildState) table(target string) int {
 }
 
 func (state *buildState) buildRules() {
-	policy := map[string][]string{}
 	for index, route := range state.config.Routes {
 		label := routeLabel(route, index)
 		if !route.Enabled {
@@ -457,25 +449,12 @@ func (state *buildState) buildRules() {
 			state.warnf("route %v is skipped: %v", label, err)
 			continue
 		}
-		servers := state.nameservers(route.Target)
+		state.noteDomains(route.Target, parsed)
 		for _, rule := range parsed {
 			state.document.Rules = append(state.document.Rules,
 				rule.Lines(route.Target, state.variants[route.Target])...)
 			if strings.HasPrefix(rule.Directive, "PROCESS-") {
 				state.document.FindProcess = "strict"
-			}
-			if rule.Directive == rules.DomainSuffix && len(servers) != 0 {
-				policy["+."+rule.Value] = servers
-			} else if rule.Directive == rules.Domain && len(servers) != 0 {
-				policy[rule.Value] = servers
-			}
-		}
-	}
-	for _, outbound := range state.config.Outbounds {
-		servers := state.nameservers(outbound.ID)
-		for _, domain := range state.links[outbound.ID].Domains {
-			if len(servers) != 0 && domain != "" {
-				policy["+."+domain] = servers
 			}
 		}
 	}
@@ -485,32 +464,5 @@ func (state *buildState) buildRules() {
 		target = config.TargetDirect
 	}
 	state.document.Rules = append(state.document.Rules, "MATCH,"+target)
-	if state.document.Tun != nil || len(policy) != 0 {
-		dns := &dnsSection{Enable: true, IPv6: state.config.Settings.IPv6,
-			Nameserver: []string{"system"}, Policy: policy}
-		if state.document.Tun != nil {
-			dns.EnhancedMode = "fake-ip"
-			dns.FakeIPRange = link.CaptureFakeIPRange
-		}
-		state.document.DNS = dns
-	}
-}
-
-func (state *buildState) nameservers(id string) []string {
-	outbound, found := state.config.FindOutbound(id)
-	if !found || !outbound.Enabled || !outbound.IsTunnel() {
-		return nil
-	} else if outbound.OpenVPN != nil && !outbound.OpenVPN.UseDNS {
-		return nil
-	} else if outbound.AmneziaWG != nil && !outbound.AmneziaWG.UseDNS {
-		return nil
-	}
-	result := []string{}
-	for _, server := range state.links[id].DNS {
-		if strings.Contains(server, ":") {
-			server = "[" + server + "]"
-		}
-		result = append(result, server+"#"+id)
-	}
-	return result
+	state.buildDNS(target)
 }

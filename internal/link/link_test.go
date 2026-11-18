@@ -33,6 +33,7 @@ const sampleTunnel = "[Interface]\nPrivateKey = " + sampleKey + "\nAddress = 10.
 	"DNS = 10.8.1.1\n[Peer]\nPublicKey = " + sampleKey + "\nEndpoint = 127.0.0.1:51820\n" +
 	"AllowedIPs = 0.0.0.0/0, 10.55.0.9, 10.66.0.0/16\n"
 const sampleOpenVPN = "client\ndev tun\nremote vpn.example.com 1194 udp\ndaemon\n"
+const sampleAddress = "203.0.113.9"
 const fakeIP = `#!/bin/bash
 echo "$*" >> "$(dirname "$0")/ip.log"
 case "$*" in
@@ -135,6 +136,13 @@ const sampleStatus = "TITLE,OpenVPN\nHEADER,CLIENT_LIST,Common Name,Real Address
 	"CLIENT_LIST,UNDEF,192.0.2.6:5001,10.77.2.3,,1,2,2026-01-01 00:00:01,1700000001,UNDEF,1,1,A\n" +
 	"CLIENT_LIST,UNDEF,192.0.2.7:5002,,,0,0,2026-01-01 00:00:02,1700000002,UNDEF,2,2,A\n" +
 	"CLIENT_LIST,short\nROUTING_TABLE,10.77.2.2,bob\nEND\n"
+
+func sampleResolve(_ context.Context, host string) ([]string, error) {
+	if host != "vpn.example.com" {
+		return nil, fmt.Errorf("unexpected name '%v'", host)
+	}
+	return []string{sampleAddress}, nil
+}
 
 func writeScript(t *testing.T, directory string, name string, text string) string {
 	path := filepath.Join(directory, name)
@@ -509,9 +517,67 @@ func TestLogBook_Rotation(t *testing.T) {
 	}
 }
 
+func TestLookup_Addresses(t *testing.T) {
+	answers := map[string][]string{"mixed.test": {"2001:db8::1", "198.18.0.9", "192.0.2.1",
+		"::ffff:192.0.2.2", "bad"}, "fake.test": {"198.18.0.7", "198.18.255.1"},
+		"six.test": {"2001:db8::2"}}
+	manager := &Manager{options: Options{Resolve: func(_ context.Context, host string) ([]string,
+		error) {
+		if answers[host] == nil {
+			return nil, fmt.Errorf("failed to resolve '%v': no such name", host)
+		}
+		return answers[host], nil
+	}}}
+	{
+		addresses, err := manager.Lookup(context.Background(), "mixed.test")
+		require.NoError(t, err)
+		require.Equal(t, []string{"192.0.2.1", "192.0.2.2", "2001:db8::1"}, addresses)
+		addresses, err = manager.Lookup(context.Background(), "192.0.2.7")
+		require.NoError(t, err)
+		require.Equal(t, []string{"192.0.2.7"}, addresses)
+		addresses, err = manager.Lookup(context.Background(), "[2001:db8::7]")
+		require.NoError(t, err)
+		require.Equal(t, []string{"2001:db8::7"}, addresses)
+	}
+	{
+		_, err := manager.Lookup(context.Background(), "fake.test")
+		require.EqualError(t, err,
+			"name 'fake.test' has no usable address (198.18.0.7, 198.18.255.1)")
+		_, err = manager.Lookup(context.Background(), "missing.test")
+		require.EqualError(t, err, "failed to resolve 'missing.test': no such name")
+	}
+	{
+		target, err := manager.ResolveTarget(context.Background(), "mixed.test:443")
+		require.NoError(t, err)
+		require.Equal(t, "192.0.2.1:443", target)
+		target, err = manager.ResolveTarget(context.Background(), "six.test:123")
+		require.NoError(t, err)
+		require.Equal(t, "[2001:db8::2]:123", target)
+		target, err = manager.ResolveTarget(context.Background(), "mixed.test")
+		require.NoError(t, err)
+		require.Equal(t, "192.0.2.1", target)
+		target, err = manager.ResolveTarget(context.Background(), "192.0.2.9:53")
+		require.NoError(t, err)
+		require.Equal(t, "192.0.2.9:53", target)
+		_, err = manager.ResolveTarget(context.Background(), "missing.test:1")
+		require.ErrorContains(t, err, "no such name")
+	}
+	{
+		manager := &Manager{}
+		addresses, err := manager.Lookup(context.Background(), "localhost")
+		require.NoError(t, err)
+		require.Contains(t, addresses, "127.0.0.1")
+		ctx, cancel := context.WithCancel(context.Background())
+		cancel()
+		_, err = manager.Lookup(ctx, "name.invalid")
+		require.ErrorContains(t, err, "failed to resolve 'name.invalid'")
+	}
+}
+
 func TestManager_AmneziaFailure(t *testing.T) {
 	tools, directory := makeTools(t)
-	manager, err := NewManager(Options{Directory: filepath.Join(directory, "run"), Tools: tools})
+	manager, err := NewManager(Options{Resolve: sampleResolve,
+		Directory: filepath.Join(directory, "run"), Tools: tools})
 	require.NoError(t, err)
 	manager.SetActive(true, config.Config{})
 	defer manager.Close()
@@ -557,7 +623,8 @@ func TestManager_Inbounds(t *testing.T) {
 	writeScript(t, directory, "port.txt", strconv.Itoa(port))
 	home := filepath.Join(directory, "run", "inbound-"+slot)
 	commands := makeManagement(t, filepath.Join(home, "management.sock"))
-	manager, err := NewManager(Options{Directory: filepath.Join(directory, "run"),
+	manager, err := NewManager(Options{Resolve: sampleResolve,
+		Directory:  filepath.Join(directory, "run"),
 		Executable: "/usr/local/bin/proximity", Tools: tools, HostNetwork: true})
 	require.NoError(t, err)
 	manager.SetActive(true, config.Config{})
@@ -767,10 +834,78 @@ func TestManager_Inbounds(t *testing.T) {
 	}
 }
 
+func TestManager_Names(t *testing.T) {
+	tools, directory := makeTools(t)
+	target := makeListener(t)
+	_, port, err := net.SplitHostPort(target)
+	require.NoError(t, err)
+	number, err := strconv.Atoi(port)
+	require.NoError(t, err)
+	answers := map[string]string{"proxy.example.com": "127.0.0.1", "down.example.com": "127.0.0.1",
+		"fake.example.com": "198.18.0.7", "vpn.example.com": sampleAddress}
+	manager, err := NewManager(Options{Directory: filepath.Join(directory, "run"), Tools: tools,
+		Resolve: func(_ context.Context, host string) ([]string, error) {
+			if answers[host] == "" {
+				return nil, fmt.Errorf("failed to resolve '%v': no such name", host)
+			}
+			return []string{answers[host]}, nil
+		}})
+	require.NoError(t, err)
+	manager.SetActive(true, config.Config{})
+	defer manager.Close()
+	tunnel := strings.ReplaceAll(sampleTunnel, "127.0.0.1:51820", "vpn.example.com:51820")
+	monitoring := &config.Monitoring{Interval: 5, Timeout: 1, Retries: 1, Target: "127.0.0.1:1"}
+	outbounds := []config.Outbound{
+		{ID: "S", Type: config.TypeSocks5, Enabled: true, Slot: 1, Verbose: true,
+			Socks5: &config.Socks5Options{Server: "proxy.example.com", Port: number}},
+		{ID: "D", Type: config.TypeHTTP, Enabled: true, Slot: 2,
+			HTTP: &config.HTTPOptions{Server: "down.example.com", Port: 1}},
+		{ID: "F", Type: config.TypeSocks5, Enabled: true, Slot: 3,
+			Socks5: &config.Socks5Options{Server: "fake.example.com", Port: number}},
+		{ID: "M", Type: config.TypeSocks5, Enabled: true, Slot: 4,
+			Socks5: &config.Socks5Options{Server: "missing.example.com", Port: number}},
+		{ID: "A", Type: config.TypeAmneziaWG, Enabled: true, Slot: 5, Attempts: 1, ReconnectTimeout: 1,
+			AmneziaWG: &config.AmneziaWGOptions{Config: tunnel}, Monitoring: monitoring,
+			Recovery: &config.Recovery{}},
+		{ID: "B", Type: config.TypeAmneziaWG, Enabled: true, Slot: 6, Attempts: 1, ReconnectTimeout: 1,
+			AmneziaWG: &config.AmneziaWGOptions{Config: strings.ReplaceAll(sampleTunnel,
+				"127.0.0.1:51820", "other.example.com:51820")}, Monitoring: monitoring,
+			Recovery: &config.Recovery{}},
+		{ID: "V", Type: config.TypeOpenVPN, Enabled: true, Slot: 7, Attempts: 1, ReconnectTimeout: 1,
+			OpenVPN:    &config.OpenVPNOptions{Config: "client\nremote other.example.com 1194\n"},
+			Monitoring: monitoring, Recovery: &config.Recovery{}}}
+	manager.Apply(outbounds, config.Settings{ProbeTarget: target, CheckInterval: 5,
+		ConnectivityChecks: true})
+	status := waitState(t, manager, "S", StateUp)
+	require.Equal(t, "proxy.example.com:"+port, status.Gateway)
+	require.Contains(t, strings.Join(manager.Log("S"), "\n"),
+		"debug: 'proxy.example.com:"+port+"' is resolved to '"+target+"'")
+	status = waitState(t, manager, "D", StateFailed)
+	require.Contains(t, status.Message,
+		"failed to check 'down.example.com:1': failed to connect to '127.0.0.1:1'")
+	status = waitState(t, manager, "F", StateFailed)
+	require.Equal(t, "name 'fake.example.com' has no usable address (198.18.0.7)", status.Message)
+	status = waitState(t, manager, "M", StateFailed)
+	require.Equal(t, "failed to resolve 'missing.example.com': no such name", status.Message)
+	{
+		waitState(t, manager, "A", StateFailed)
+		require.Contains(t, strings.Join(manager.Log("A"), "\n"),
+			"'vpn.example.com' is resolved to "+sampleAddress)
+		status := waitState(t, manager, "B", StateFailed)
+		require.Equal(t, "failed to resolve Endpoint 'other.example.com': failed to resolve "+
+			"'other.example.com': no such name", status.Message)
+		status = waitState(t, manager, "V", StateFailed)
+		require.Equal(t, "failed to resolve 'other.example.com': no such name", status.Message)
+		require.Contains(t, strings.Join(manager.Log("V"), "\n"),
+			"remote 'other.example.com' is skipped: failed to resolve")
+	}
+}
+
 func TestManager_OpenVPN(t *testing.T) {
 	tools, directory := makeTools(t)
 	changes := atomic.Int32{}
-	manager, err := NewManager(Options{Directory: filepath.Join(directory, "run"),
+	manager, err := NewManager(Options{Resolve: sampleResolve,
+		Directory:  filepath.Join(directory, "run"),
 		Executable: "/usr/local/bin/proximity", Tools: tools, Changed: func() {
 			changes.Add(1)
 		}})
@@ -803,7 +938,7 @@ func TestManager_OpenVPN(t *testing.T) {
 		require.Regexp(t, `^\d{6}$`, parts[2])
 		text, err := os.ReadFile(filepath.Join(directory, "run", "openvpn-7", "client.ovpn"))
 		require.NoError(t, err)
-		require.Equal(t, "client\nremote vpn.example.com 1194 udp\n\nauth-user-pass\n", string(text))
+		require.Equal(t, "client\nremote 203.0.113.9 1194 udp\n\nauth-user-pass\n", string(text))
 		log := strings.Join(manager.Log("VPN"), "\n")
 		require.Contains(t, log, "Enter Auth Username:")
 		require.Contains(t, log, "CHALLENGE: Enter OTP")
@@ -914,7 +1049,8 @@ func TestManager_OpenVPN(t *testing.T) {
 
 func TestManager_Capture(t *testing.T) {
 	tools, directory := makeTools(t)
-	manager, err := NewManager(Options{Directory: filepath.Join(directory, "run"),
+	manager, err := NewManager(Options{Resolve: sampleResolve,
+		Directory:  filepath.Join(directory, "run"),
 		Executable: "/usr/local/bin/proximity", Tools: tools, HostNetwork: true})
 	require.NoError(t, err)
 	manager.SetActive(true, config.Config{})
@@ -924,13 +1060,15 @@ func TestManager_Capture(t *testing.T) {
 	calls, err := os.ReadFile(filepath.Join(directory, "ip.log"))
 	require.NoError(t, err)
 	for _, line := range []string{"-4 rule add priority 5150 fwmark 51000 lookup main",
-		"-4 rule add priority 5155 iif lo ipproto 17 dport 53 lookup 51000",
-		"-4 rule add priority 5155 iif lo ipproto 6 dport 53 lookup 51000",
+		"-4 rule add priority 5155 from 0.0.0.0/32 iif lo ipproto 17 dport 53 lookup 51000",
+		"-4 rule add priority 5155 from 0.0.0.0/32 iif lo ipproto 6 dport 53 lookup 51000",
+		"-4 rule add priority 5155 from 198.18.0.0/30 iif lo ipproto 17 dport 53 lookup 51000",
+		"-4 rule add priority 5155 from 198.18.0.0/30 iif lo ipproto 6 dport 53 lookup 51000",
 		"-4 rule add priority 5160 lookup main suppress_prefixlength 0",
 		"-4 rule add priority 5170 from 0.0.0.0/32 iif lo lookup 51000",
 		"-4 rule add priority 5170 from 198.18.0.0/30 iif lo lookup 51000",
-		"-6 rule add priority 5155 iif lo ipproto 17 dport 53 lookup 51000",
-		"-6 rule add priority 5155 iif lo ipproto 6 dport 53 lookup 51000",
+		"-6 rule add priority 5155 from ::/128 iif lo ipproto 17 dport 53 lookup 51000",
+		"-6 rule add priority 5155 from fdfe:dcba:9876::/126 iif lo ipproto 6 dport 53 lookup 51000",
 		"-6 rule add priority 5170 from ::/128 iif lo lookup 51000",
 		"-6 rule add priority 5170 from fdfe:dcba:9876::/126 iif lo lookup 51000"} {
 		require.Contains(t, string(calls), line+"\n")
@@ -1053,7 +1191,8 @@ func TestManager_Capture(t *testing.T) {
 		require.Contains(t, string(calls), "-6 route flush table 51000\n")
 	}
 	{
-		plain, err := NewManager(Options{Directory: filepath.Join(directory, "plain"), Tools: tools})
+		plain, err := NewManager(Options{Resolve: sampleResolve,
+			Directory: filepath.Join(directory, "plain"), Tools: tools})
 		require.NoError(t, err)
 		defer plain.Close()
 		plain.capture.device = "lo"
@@ -1063,7 +1202,8 @@ func TestManager_Capture(t *testing.T) {
 
 func TestManager_HostAttempts(t *testing.T) {
 	tools, directory := makeTools(t)
-	manager, err := NewManager(Options{Directory: filepath.Join(directory, "run"), Tools: tools})
+	manager, err := NewManager(Options{Resolve: sampleResolve,
+		Directory: filepath.Join(directory, "run"), Tools: tools})
 	require.NoError(t, err)
 	manager.SetActive(true, config.Config{})
 	defer manager.Close()
@@ -1105,7 +1245,8 @@ func TestManager_Proxies(t *testing.T) {
 	require.NoError(t, err)
 	number, err := strconv.Atoi(port)
 	require.NoError(t, err)
-	manager, err := NewManager(Options{Directory: filepath.Join(directory, "run"), Tools: tools})
+	manager, err := NewManager(Options{Resolve: sampleResolve,
+		Directory: filepath.Join(directory, "run"), Tools: tools})
 	require.NoError(t, err)
 	manager.SetActive(true, config.Config{})
 	settings := config.Settings{ProbeTarget: target, CheckInterval: 5, ConnectivityChecks: true}
@@ -1202,7 +1343,8 @@ func TestManager_Proxies(t *testing.T) {
 
 func TestManager_Recovery(t *testing.T) {
 	tools, directory := makeTools(t)
-	manager, err := NewManager(Options{Directory: filepath.Join(directory, "run"),
+	manager, err := NewManager(Options{Resolve: sampleResolve,
+		Directory:  filepath.Join(directory, "run"),
 		Executable: "/usr/local/bin/proximity", Tools: tools})
 	require.NoError(t, err)
 	manager.SetActive(true, config.Config{})
@@ -1284,7 +1426,8 @@ func TestManager_Recovery(t *testing.T) {
 		tools.Iptables = writeScript(t, directory, "iptables", fakeFirewall)
 		tools.Forwarding = writeScript(t, directory, "ip_forward", "0\n")
 		port, _ := makeInboundPort(t)
-		server, err := NewManager(Options{Directory: filepath.Join(directory, "server"),
+		server, err := NewManager(Options{Resolve: sampleResolve,
+			Directory:  filepath.Join(directory, "server"),
 			Executable: "/usr/local/bin/proximity", Tools: tools, HostNetwork: true})
 		require.NoError(t, err)
 		server.SetActive(true, config.Config{})
@@ -1329,7 +1472,8 @@ func TestManager_RejectedCode(t *testing.T) {
 	timeClock.Apply(clock.Options{Servers: []string{"ntp.test"}, Tolerance: time.Millisecond,
 		Wait: time.Second, Interval: time.Hour})
 	defer timeClock.Close()
-	manager, err := NewManager(Options{Directory: filepath.Join(directory, "run"),
+	manager, err := NewManager(Options{Resolve: sampleResolve,
+		Directory:  filepath.Join(directory, "run"),
 		Executable: "/usr/local/bin/proximity", Tools: tools, Clock: timeClock})
 	require.NoError(t, err)
 	manager.SetActive(true, config.Config{})
@@ -1360,8 +1504,9 @@ func TestManager_Services(t *testing.T) {
 		AmneziaWG:  &config.AmneziaWGOptions{Config: sampleTunnel},
 		Monitoring: &config.Monitoring{Interval: 5, Timeout: 1, Retries: 1, Target: "127.0.0.1:1"}}}
 	open := func() *Manager {
-		manager, err := NewManager(Options{Directory: filepath.Join(directory, "run"),
-			StateDir: state, Tools: tools})
+		manager, err := NewManager(Options{Resolve: sampleResolve,
+			Directory: filepath.Join(directory, "run"),
+			StateDir:  state, Tools: tools})
 		require.NoError(t, err)
 		t.Cleanup(manager.Close)
 		return manager
@@ -1479,7 +1624,8 @@ func TestManager_Time(t *testing.T) {
 	start := func(timeClock *clock.Clock, faketime string) (*Manager, string) {
 		tools, directory := makeTools(t)
 		tools.Faketime = faketime
-		manager, err := NewManager(Options{Directory: filepath.Join(directory, "run"),
+		manager, err := NewManager(Options{Resolve: sampleResolve,
+			Directory:  filepath.Join(directory, "run"),
 			Executable: "/usr/local/bin/proximity", Tools: tools, Clock: timeClock})
 		require.NoError(t, err)
 		manager.SetActive(true, config.Config{})
@@ -1537,7 +1683,8 @@ func TestManager_Time(t *testing.T) {
 		tools.Iptables = writeScript(t, directory, "iptables", fakeFirewall)
 		tools.Forwarding = writeScript(t, directory, "ip_forward", "0\n")
 		port, _ := makeInboundPort(t)
-		manager, err := NewManager(Options{Directory: filepath.Join(directory, "run"),
+		manager, err := NewManager(Options{Resolve: sampleResolve,
+			Directory:  filepath.Join(directory, "run"),
 			Executable: "/usr/local/bin/proximity", Tools: tools, HostNetwork: true,
 			Clock: makeClock(0, false)})
 		require.NoError(t, err)
@@ -1578,12 +1725,14 @@ func TestNewManager_Problems(t *testing.T) {
 	tools, directory := makeTools(t)
 	blocker := writeScript(t, directory, "file", "x")
 	{
-		_, err := NewManager(Options{Directory: filepath.Join(blocker, "run"), Tools: tools})
+		_, err := NewManager(Options{Resolve: sampleResolve,
+			Directory: filepath.Join(blocker, "run"), Tools: tools})
 		require.ErrorContains(t, err, "failed to create directory")
 	}
 	{
 		tools.IP = filepath.Join(directory, "missing")
-		_, err := NewManager(Options{Directory: filepath.Join(directory, "run"), Tools: tools})
+		_, err := NewManager(Options{Resolve: sampleResolve,
+			Directory: filepath.Join(directory, "run"), Tools: tools})
 		require.ErrorContains(t, err, "ip tool does not exist")
 	}
 }
@@ -1600,7 +1749,8 @@ func TestOpenJournal_Problems(t *testing.T) {
 		require.NoError(t, os.MkdirAll(filepath.Join(state, journalName), 0o700))
 		_, err := openJournal(state)
 		require.ErrorContains(t, err, "failed to read file")
-		_, err = NewManager(Options{Directory: filepath.Join(directory, "run"), StateDir: state,
+		_, err = NewManager(Options{Resolve: sampleResolve,
+			Directory: filepath.Join(directory, "run"), StateDir: state,
 			Tools: Tools{IP: writeScript(t, directory, "ip", fakeIP)}})
 		require.ErrorContains(t, err, "failed to read file")
 	}
@@ -1648,6 +1798,52 @@ func TestPortListening_Tables(t *testing.T) {
 		ctx, cancel := context.WithCancel(context.Background())
 		cancel()
 		require.Error(t, acceptor.start(ctx))
+	}
+}
+
+func TestResolveOpenVPN_Lines(t *testing.T) {
+	answers := map[string][]string{"vpn.example.com": {"203.0.113.1", "203.0.113.2"},
+		"gate.example.com": {"203.0.113.3", "203.0.113.4"}, "six.example.com": {"2001:db8::1"}}
+	lookup := func(host string) ([]string, error) {
+		if answers[host] == nil {
+			return nil, fmt.Errorf("failed to resolve '%v': no such name", host)
+		}
+		return answers[host], nil
+	}
+	{
+		text, notes, err := resolveOpenVPN("client\n  remote vpn.example.com 1194 udp\n"+
+			"--remote 198.51.100.7 443 tcp\nremote missing.example.com 1195\n"+
+			"http-proxy gate.example.com 3128 auto\nsocks-proxy 10.0.0.1 1080\n"+
+			"<connection>\nremote vpn.example.com 1196\n</connection>\n"+
+			"<ca>\nremote vpn.example.com 1\n</ca>\n# remote vpn.example.com 2\nremote\n"+
+			"remote six.example.com 1197\nverb 3\n", lookup)
+		require.NoError(t, err)
+		require.Equal(t, "client\nremote 203.0.113.1 1194 udp\nremote 203.0.113.2 1194 udp\n"+
+			"--remote 198.51.100.7 443 tcp\nhttp-proxy 203.0.113.3 3128 auto\n"+
+			"socks-proxy 10.0.0.1 1080\n<connection>\nremote 203.0.113.1 1196\n</connection>\n"+
+			"<ca>\nremote vpn.example.com 1\n</ca>\n# remote vpn.example.com 2\nremote\n"+
+			"remote 2001:db8::1 1197\nverb 3\n", text)
+		require.Equal(t, []string{"'vpn.example.com' is resolved to 203.0.113.1, 203.0.113.2",
+			"remote 'missing.example.com' is skipped: failed to resolve 'missing.example.com': " +
+				"no such name", "'gate.example.com' is resolved to 203.0.113.3",
+			"'vpn.example.com' is resolved to 203.0.113.1",
+			"'six.example.com' is resolved to 2001:db8::1"}, notes)
+	}
+	{
+		text, notes, err := resolveOpenVPN("client\nremote 198.51.100.7 443\n", lookup)
+		require.NoError(t, err)
+		require.Equal(t, "client\nremote 198.51.100.7 443\n", text)
+		require.Empty(t, notes)
+		_, notes, err = resolveOpenVPN("remote a.example.com 1\nremote b.example.com 2\n", lookup)
+		require.ErrorContains(t, err, "failed to resolve 'a.example.com': no such name")
+		require.ErrorContains(t, err, "failed to resolve 'b.example.com': no such name")
+		require.Len(t, notes, 2)
+		_, _, err = resolveOpenVPN("remote 198.51.100.7 1\nsocks-proxy missing.example.com 1\n",
+			lookup)
+		require.EqualError(t, err, "failed to resolve 'missing.example.com': no such name")
+		_, _, err = resolveOpenVPN("<connection>\nremote missing.example.com 1\n</connection>\n",
+			lookup)
+		require.EqualError(t, err, "failed to resolve 'missing.example.com': no such name")
 	}
 }
 

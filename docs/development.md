@@ -89,6 +89,7 @@ make screenshot <picture>   # retake one picture
 make stand-security   # end-to-end checks of the OpenVPN inbound security
 make stand-config     # end-to-end check of a start with a damaged configuration
 make stand-capture    # end-to-end checks of TCP and ping of a host with transparent capture
+make stand-dns        # end-to-end checks of DNS: which server is asked and where the query leaves
 make down     # stop
 ```
 
@@ -249,19 +250,19 @@ The header of `README.md` (two badges and a line), its *Project status* and the 
 below show the number of tests and the coverage. Run `make coverage-docs` after every
 change of the Go code: it replaces these numbers and changes nothing else.
 
-Current state (version 1.2.0): **128 tests, all passing, 94.1% total statement coverage.**
+Current state (version 1.2.0): **146 tests, all passing, 94.5% total statement coverage.**
 
 | Package | Coverage |
 |---|---|
 | `cmd/proximity` | 81.4% |
 | `internal/auth` | 94.1% |
 | `internal/clock` | 97.0% |
-| `internal/config` | 96.0% |
-| `internal/link` | 90.6% |
-| `internal/router` | 96.8% |
+| `internal/config` | 96.3% |
+| `internal/link` | 91.0% |
+| `internal/router` | 97.3% |
 | `internal/rules` | 99.1% |
 | `internal/server` | 95.0% |
-| `internal/wgconf` | 97.9% |
+| `internal/wgconf` | 97.5% |
 
 Tests use fake tools (`ip`, `openvpn`, `iptables`, `ping` …) and a fake mihomo, so they run
 without root and without network access. `TestManager_Inbounds` binds one free TCP port in
@@ -279,6 +280,7 @@ make stand-tunnel                       # stand "pair": 24 checks, about 20 seco
 make stand-reload                       # stand "reload": 10 checks, about 25 seconds, needs a browser
 make stand-config                       # stand "broken-config": 17 checks, about 5 seconds
 make stand-capture                      # stand "capture": 29 checks, about 45 seconds
+make stand-dns                          # stand "dns": 25 checks, about 1 minute
 bash scripts/stands/pair/stand.sh up    # only start the stand; "down" removes it
 ```
 
@@ -288,6 +290,7 @@ bash scripts/stands/pair/stand.sh up    # only start the stand; "down" removes i
 | `reload` | one instance on the fixed port `127.0.0.1:18899` (`STAND_PORT`) and a headless browser with its page open; uses the browser and the node modules of the screenshots | `make stand-reload` (`check.sh`): after a restart of the container the page warns that unsaved changes are lost and reloads itself in 5 seconds, also with an open dialog; "Reload now" reloads at once |
 | `broken-config` | one instance started with the damaged `config.json` of the stand | `make stand-config` (`check.sh`): what is dropped, what is kept, the copy of the file, the report and its dismissal |
 | `capture` | a "host" (a network namespace with `rp_filter=1` and its default route via `proximity-stand-wan`), Proximity in its network with capture on (`PROXIMITY_NETWORK=host`), an exit instance with SOCKS5 and OpenVPN inbounds, an AmneziaWG server (`proximity-stand-awg`), a local time server and the "Internet" `proximity-stand-wan` that owns `1.1.1.1` (route `IP-CIDR` to SOCKS5), `1.1.1.2` (no route), `1.1.1.3` (route to OpenVPN) and `1.1.1.4` (route from the `AllowedIPs` of AmneziaWG) and counts the packets by source | `make stand-capture` (`check.sh`): TCP of each address leaves where its route says; ping of the SOCKS5 route does not leave and gets no false answer, ping without a route gets real answers, ping of the tunnel route goes through the tunnel; the AmneziaWG outbound connects with its obfuscation, *Receive routes* adds the networks of `AllowedIPs` first and switches the route off when the outbound stops, TCP and ping of that route go through the tunnel; the default target SOCKS5 drops ping, the default tunnel carries it and LAN ping stays on the LAN; *Keep ping of the host on its routes* off removes everything |
+| `dns` | the "host" of `capture` with `nameserver 1.1.1.1`, Proximity in its network with capture on, an exit instance with two SOCKS5 inbounds (with and without UDP) and an OpenVPN inbound, the "Internet" `proximity-stand-wan` with `1.1.1.1` (the resolver of the system), `1.1.1.53` (the DNS server given to the outbounds) and `1.1.1.2`, and `proximity-stand-dns`: a DNS server on both addresses (`server.py`) that prints every query with the address it came from | `make stand-dns` (`check.sh`): outbounds whose servers are given by name (`exit.stand.test`, `vpn.stand.test`) connect, the `remote` is replaced by the real address, the server name of a proxy is never asked through the proxy (the pin in `nameserver-policy`), the time servers are resolved by the router, an application gets a placeholder address; the domain of a route is asked from the server of its outbound through the outbound (UDP, TCP for a proxy without UDP, the far side of a tunnel, the exit *Host*), the default servers of Settings and the DNS of the default target; the answers pass `rp_filter=1`; no warnings |
 | screenshots | two linked instances with sample data and traffic, see [Screenshots](#screenshots) | — |
 
 `scripts/stands/lib.sh` holds the common parts (image, network, instance, removal),

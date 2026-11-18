@@ -10,6 +10,7 @@ import (
 	"io"
 	"net"
 	"net/http"
+	"net/url"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -62,6 +63,17 @@ type logEvent struct {
 	Payload string `json:"payload"`
 }
 
+type dnsRecord struct {
+	Data string `json:"data"`
+	Type int    `json:"type"`
+}
+
+type dnsReply struct {
+	Status  int         `json:"Status"`
+	Answer  []dnsRecord `json:"Answer"`
+	Message string      `json:"message"`
+}
+
 type Mihomo struct {
 	mutex     sync.Mutex
 	binary    string
@@ -81,6 +93,13 @@ const configName = "config.yaml"
 const logsPath = "/logs?level=info"
 const restartDelay = 2 * time.Second
 const startTimeout = 15 * time.Second
+const dnsPath = "/dns/query?name=%v&type=%v"
+const dnsTimeout = 8 * time.Second
+
+var dnsKinds = []struct {
+	name string
+	code int
+}{{"A", 1}, {"AAAA", 28}}
 
 func NewMihomo(binary string, directory string, socket string,
 	output func(line string)) (*Mihomo, error) {
@@ -136,6 +155,37 @@ func (mihomo *Mihomo) Connections() (Connections, error) {
 		return Connections{}, fmt.Errorf("failed to get router connections: %w", err)
 	}
 	return result, nil
+}
+
+// NOTE: The answer comes from the resolver of mihomo, so it follows the DNS servers of the
+// routes and is a real address, also while applications get placeholder (fake-IP) answers.
+func (mihomo *Mihomo) Resolve(ctx context.Context, host string) ([]string, error) {
+	ctx, cancel := context.WithTimeout(ctx, dnsTimeout)
+	defer cancel()
+	var failure error
+	for _, kind := range dnsKinds {
+		reply, result := dnsReply{}, []string{}
+		path := fmt.Sprintf(dnsPath, url.QueryEscape(host), kind.name)
+		if err := mihomo.query(ctx, path, &reply); err != nil {
+			return nil, fmt.Errorf("failed to resolve '%v': %w", host, err)
+		} else if reply.Message != "" {
+			return nil, fmt.Errorf("failed to resolve '%v': %v", host, reply.Message)
+		} else if reply.Status != 0 {
+			failure = fmt.Errorf("failed to resolve '%v': DNS status (%v)", host, reply.Status)
+		}
+		for _, record := range reply.Answer {
+			if record.Type == kind.code {
+				result = append(result, record.Data)
+			}
+		}
+		if len(result) != 0 {
+			return result, nil
+		}
+	}
+	if failure != nil {
+		return nil, failure
+	}
+	return nil, fmt.Errorf("failed to resolve '%v': address does not exist", host)
 }
 
 func (mihomo *Mihomo) Watch(ctx context.Context, observe func(payload string)) {
@@ -265,6 +315,25 @@ func (mihomo *Mihomo) stream(ctx context.Context, observe func(payload string)) 
 		}
 		observe(event.Payload)
 	}
+}
+
+func (mihomo *Mihomo) query(ctx context.Context, path string, result any) error {
+	request, err := http.NewRequestWithContext(ctx, http.MethodGet, "http://mihomo"+path, nil)
+	if err != nil {
+		return fmt.Errorf("failed to create request '%v': %w", path, err)
+	}
+	response, err := mihomo.client.Do(request)
+	if err != nil {
+		return fmt.Errorf("failed to send request '%v': %w", path, err)
+	}
+	defer response.Body.Close()
+	data, err := io.ReadAll(io.LimitReader(response.Body, 1<<20))
+	if err != nil {
+		return fmt.Errorf("failed to read response '%v': %w", path, err)
+	} else if err = json.Unmarshal(data, result); err != nil {
+		return fmt.Errorf("failed to decode response '%v' (%v): %w", path, response.StatusCode, err)
+	}
+	return nil
 }
 
 func (mihomo *Mihomo) request(method string, path string, body any, result any) error {

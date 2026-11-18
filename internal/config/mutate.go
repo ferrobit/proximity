@@ -33,6 +33,7 @@ func makeKey() (string, error) {
 func (config *Config) Clone() Config {
 	result := *config
 	result.Settings.TimeServers = slices.Clone(config.Settings.TimeServers)
+	result.Settings.DNS = config.Settings.DNS.clone()
 	result.Users = slices.Clone(config.Users)
 	result.Outbounds = slices.Clone(config.Outbounds)
 	result.Fallbacks = slices.Clone(config.Fallbacks)
@@ -150,6 +151,8 @@ func (config *Config) AddOutbound(outbound Outbound) (Outbound, error) {
 		return Outbound{}, fmt.Errorf("ID '%v' already exists", outbound.ID)
 	} else if err := outbound.validate(); err != nil {
 		return Outbound{}, err
+	} else if err = config.checkExit(outbound.DNS.Exit); err != nil {
+		return Outbound{}, err
 	}
 	config.Outbounds = append(config.Outbounds, outbound)
 	return outbound, nil
@@ -170,6 +173,11 @@ func (config *Config) UpdateOutbound(id string, outbound Outbound) error {
 	} else if outbound.ID != id && config.TargetExists(outbound.ID) {
 		return fmt.Errorf("ID '%v' already exists", outbound.ID)
 	} else if err := outbound.validate(); err != nil {
+		return err
+	} else if outbound.DNS.Exit == id {
+		outbound.DNS.Exit = ""
+	}
+	if err := config.checkExit(outbound.DNS.Exit); err != nil {
 		return err
 	}
 	config.Outbounds[index] = outbound
@@ -192,7 +200,7 @@ func (config *Config) RemoveOutbound(id string) error {
 	config.Routes = slices.DeleteFunc(config.Routes, func(route Route) bool {
 		return route.Provided == id
 	})
-	if config.Settings.DefaultTarget == id {
+	if config.renameExit(id, ""); config.Settings.DefaultTarget == id {
 		config.Settings.DefaultTarget = TargetDirect
 	}
 	return nil
@@ -239,7 +247,7 @@ func (config *Config) RemoveFallback(id string) error {
 		return fmt.Errorf("fallback '%v' does not exist", id)
 	}
 	config.Fallbacks = slices.Delete(config.Fallbacks, index, index+1)
-	if config.Settings.DefaultTarget == id {
+	if config.renameExit(id, ""); config.Settings.DefaultTarget == id {
 		config.Settings.DefaultTarget = TargetDirect
 	}
 	return nil
@@ -417,7 +425,7 @@ func (config *Config) renameTarget(previous string, current string) {
 			config.Inbounds[index].Outbound = current
 		}
 	}
-	if config.Settings.DefaultTarget == previous {
+	if config.renameExit(previous, current); config.Settings.DefaultTarget == previous {
 		config.Settings.DefaultTarget = current
 	}
 }
@@ -586,5 +594,6 @@ func (outbound Outbound) Clone() Outbound {
 		recovery := *outbound.Recovery
 		outbound.Recovery = &recovery
 	}
+	outbound.DNS = outbound.DNS.clone()
 	return outbound
 }

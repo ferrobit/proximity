@@ -186,7 +186,15 @@ func (driver *openvpnDriver) start(ctx context.Context) error {
 	hook := filepath.Join(driver.directory, "environment.json")
 	path := filepath.Join(driver.directory, "client.ovpn")
 	text, kind := sanitizeOpenVPN(driver.options.Config, driver.options.Username != "")
-	if err = os.MkdirAll(driver.directory, 0o700); err != nil {
+	text, notes, err := resolveOpenVPN(text, func(host string) ([]string, error) {
+		return driver.runner.manager.Lookup(ctx, host)
+	})
+	for _, note := range notes {
+		driver.runner.logf("%v", note)
+	}
+	if err != nil {
+		return err
+	} else if err = os.MkdirAll(driver.directory, 0o700); err != nil {
 		return fmt.Errorf("failed to create directory '%v': %w", driver.directory, err)
 	} else if err = os.WriteFile(path, []byte(text), 0o600); err != nil {
 		return fmt.Errorf("failed to write file '%v': %w", path, err)

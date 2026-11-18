@@ -3,6 +3,7 @@ package router
 import (
 	"encoding/json"
 	"net/netip"
+	"strings"
 	"testing"
 	"time"
 
@@ -62,6 +63,265 @@ func makeSnapshot(t *testing.T) config.Config {
 	return result
 }
 
+func TestGenerate_DNSDefault(t *testing.T) {
+	snapshot := config.Default()
+	for _, outbound := range []config.Outbound{
+		{Type: config.TypeSocks5, ID: "Down", Enabled: true, Socks5: &config.Socks5Options{
+			Server: "10.0.0.1", Port: 1080, UDP: true},
+			DNS: config.DNSOptions{Servers: []string{"8.8.4.4"}}},
+		{Type: config.TypeSocks5, ID: "Up", Enabled: true, Socks5: &config.Socks5Options{
+			Server: "10.0.0.2", Port: 1080, UDP: true},
+			DNS: config.DNSOptions{Servers: []string{"8.8.8.8"}}}} {
+		_, err := snapshot.AddOutbound(outbound)
+		require.NoError(t, err)
+	}
+	_, err := snapshot.AddFallback(config.Fallback{Enabled: true, Outbounds: []string{"Down", "Up"}})
+	require.NoError(t, err)
+	links := map[string]link.Status{"Down": {State: link.StateDown}, "Up": {State: link.StateUp}}
+	build := func() *dnsSection {
+		require.NoError(t, snapshot.Validate())
+		data, warnings, err := Generate(snapshot, links, Options{Socket: "socket"})
+		require.NoError(t, err)
+		require.Empty(t, warnings)
+		result := document{}
+		require.NoError(t, json.Unmarshal(data, &result))
+		return result.DNS
+	}
+	{
+		snapshot.Settings.DNS = config.DNSOptions{Servers: []string{"1.1.1.1",
+			"https://dns.example.com/dns-query"}}
+		require.Equal(t, &dnsSection{Enable: true, Bootstrap: []string{"1.1.1.1"},
+			Nameserver: []string{"1.1.1.1", "https://dns.example.com/dns-query"},
+			Policy:     policyList{}}, build())
+		snapshot.Settings.DNS = config.DNSOptions{Servers: []string{"tls://dns.example.com"},
+			Exit: config.ViaRouter}
+		require.Equal(t, &dnsSection{Enable: true, Bootstrap: []string{"system"},
+			Nameserver: []string{"tls://dns.example.com#RULES"}, Policy: policyList{}}, build())
+		snapshot.Settings.DNS = config.DNSOptions{Servers: []string{"1.1.1.1"}, Exit: "Fallback 1"}
+		require.Equal(t, &dnsSection{Enable: true, Bootstrap: []string{"1.1.1.1#Fallback 1"},
+			Nameserver: []string{"1.1.1.1#Fallback 1"}, Policy: policyList{}}, build())
+	}
+	{
+		snapshot.Settings.DNS = config.DNSOptions{}
+		snapshot.Settings.DefaultTarget = "Fallback 1"
+		require.Equal(t, &dnsSection{Enable: true, Bootstrap: []string{"system"},
+			Nameserver: []string{"8.8.8.8#Up"}, Policy: policyList{}}, build())
+		links["Up"] = link.Status{State: link.StateDown}
+		require.Equal(t, []string{"8.8.4.4#Down"}, build().Nameserver)
+		snapshot.Settings.DefaultTarget = "Down"
+		_, err := snapshot.AddRoute(config.Route{Directive: "DOMAIN", Target: "DIRECT",
+			Enabled: true, Params: []string{"direct.test"}})
+		require.NoError(t, err)
+		result := build()
+		require.Equal(t, []string{"8.8.4.4#Down"}, result.Nameserver)
+		require.Equal(t, policyList{{"direct.test", []string{"system"}}}, result.Policy)
+	}
+}
+
+func TestGenerate_DNSPins(t *testing.T) {
+	proxy := config.Outbound{Type: config.TypeSocks5, ID: "P", Enabled: true,
+		Socks5: &config.Socks5Options{Server: "proxy.corp.test", Port: 1080, UDP: true}}
+	tunnel := config.Outbound{Type: config.TypeOpenVPN, ID: "V", Enabled: true,
+		OpenVPN: &config.OpenVPNOptions{Config: "client\nremote vpn.other.test 1194\n", UseDNS: true}}
+	links := map[string]link.Status{"V": {State: link.StateUp, DNS: []string{"10.8.0.1"}}}
+	build := func(target string, outbounds []config.Outbound, routes ...config.Route) *dnsSection {
+		snapshot := config.Default()
+		for _, outbound := range outbounds {
+			_, err := snapshot.AddOutbound(outbound)
+			require.NoError(t, err)
+		}
+		for _, route := range routes {
+			route.Enabled, route.Directive = true, "DOMAIN-SUFFIX"
+			_, err := snapshot.AddRoute(route)
+			require.NoError(t, err)
+		}
+		if target != "" {
+			snapshot.Settings.DNS = config.DNSOptions{Servers: []string{"1.1.1.1"}, Exit: target}
+		}
+		require.NoError(t, snapshot.Validate())
+		data, warnings, err := Generate(snapshot, links, Options{Socket: "socket"})
+		require.NoError(t, err)
+		require.Empty(t, warnings)
+		result := document{}
+		require.NoError(t, json.Unmarshal(data, &result))
+		return result.DNS
+	}
+	{
+		proxy.DNS = config.DNSOptions{Servers: []string{"10.0.0.53"}}
+		result := build("", []config.Outbound{proxy},
+			config.Route{Target: "P", Params: []string{"corp.test"}})
+		require.Equal(t, policyList{{"proxy.corp.test", []string{"system"}},
+			{"+.corp.test", []string{"10.0.0.53#P"}}}, result.Policy)
+		require.Equal(t, []string{"system"}, result.Nameserver)
+	}
+	{
+		proxy.DNS = config.DNSOptions{}
+		result := build("", []config.Outbound{proxy, tunnel},
+			config.Route{Target: "V", Params: []string{"corp.test"}})
+		require.Equal(t, policyList{{"proxy.corp.test", []string{"10.8.0.1#V"}},
+			{"+.corp.test", []string{"10.8.0.1#V"}}}, result.Policy)
+	}
+	{
+		proxy.DNS = config.DNSOptions{Servers: []string{"8.8.8.8"}}
+		routes := []config.Route{{Target: "V", Params: []string{"corp.test"}},
+			{Target: "P", Params: []string{"other.test"}}}
+		result := build("", []config.Outbound{tunnel, proxy}, routes...)
+		require.Equal(t, policyList{{"vpn.other.test", []string{"system"}},
+			{"proxy.corp.test", []string{"10.8.0.1#V"}}, {"+.corp.test", []string{"10.8.0.1#V"}},
+			{"+.other.test", []string{"8.8.8.8#P"}}}, result.Policy)
+		result = build("", []config.Outbound{proxy, tunnel}, routes...)
+		require.Equal(t, policyList{{"proxy.corp.test", []string{"system"}},
+			{"vpn.other.test", []string{"8.8.8.8#P"}}, {"+.corp.test", []string{"10.8.0.1#V"}},
+			{"+.other.test", []string{"8.8.8.8#P"}}}, result.Policy)
+	}
+	{
+		proxy.DNS = config.DNSOptions{}
+		second := config.Outbound{Type: config.TypeHTTP, ID: "Q", Enabled: true,
+			HTTP: &config.HTTPOptions{Server: "proxy.corp.test", Port: 3128, Single: true}}
+		result := build("P", []config.Outbound{proxy, second})
+		require.Equal(t, policyList{{"proxy.corp.test", []string{"system"}}}, result.Policy)
+		require.Equal(t, []string{"1.1.1.1#P"}, result.Nameserver)
+		require.Equal(t, []string{"1.1.1.1#P"}, result.Bootstrap)
+		result = build("Q", []config.Outbound{proxy, second})
+		require.Equal(t, policyList{{"proxy.corp.test", []string{"system"}}}, result.Policy)
+		require.Equal(t, []string{"tcp://1.1.1.1#Q"}, result.Nameserver)
+	}
+}
+
+func TestGenerate_DNSPolicy(t *testing.T) {
+	snapshot := config.Default()
+	for _, outbound := range []config.Outbound{
+		{Type: config.TypeOpenVPN, Enabled: true, OpenVPN: &config.OpenVPNOptions{
+			Config: "client\nremote 203.0.113.1 1194\n", UseDNS: true}},
+		{Type: config.TypeSocks5, Enabled: true, Socks5: &config.Socks5Options{Server: "10.0.0.1",
+			Port: 1080, UDP: true}, DNS: config.DNSOptions{Servers: []string{"8.8.8.8"}}},
+		{Type: config.TypeHost, Enabled: true}} {
+		_, err := snapshot.AddOutbound(outbound)
+		require.NoError(t, err)
+	}
+	for _, route := range []config.Route{
+		{Directive: "DOMAIN-SUFFIX", Target: "DIRECT", Params: []string{"www.corp.test"}},
+		{Directive: "DOMAIN-SUFFIX", Target: "OpenVPN 1",
+			Params: []string{"corp.test", "deep.www.corp.test"}},
+		{Directive: "DOMAIN", Target: "SOCKS5 1", Params: []string{"corp.test"}},
+		{Directive: "GEOSITE", Target: "DIRECT", Params: []string{"google"}},
+		{Directive: "DOMAIN", Target: "SOCKS5 1", Params: []string{"a.test"}},
+		{Directive: "DOMAIN", Target: "OpenVPN 1", Params: []string{"a.test"}},
+		{Directive: "DOMAIN-KEYWORD", Target: "SOCKS5 1", Params: []string{"key"}},
+		{Directive: "GEOSITE", Target: "SOCKS5 1", Params: []string{"google"}},
+		{Directive: "DOMAIN-SUFFIX", Target: "DIRECT", Params: []string{"tail.test"}},
+		{Directive: "DOMAIN-SUFFIX", Target: "HOST 1", Params: []string{"b.a.test"}}} {
+		route.Enabled = true
+		_, err := snapshot.AddRoute(route)
+		require.NoError(t, err)
+	}
+	links := map[string]link.Status{"OpenVPN 1": {State: link.StateUp,
+		DNS: []string{"10.8.0.1"}, Domains: []string{"vpn.test", "corp.test"}}}
+	tunnel, proxy, system := []string{"10.8.0.1#OpenVPN 1"}, []string{"8.8.8.8#SOCKS5 1"},
+		[]string{"system"}
+	{
+		data, warnings, err := Generate(snapshot, links, Options{Socket: "socket", Capture: true})
+		require.NoError(t, err)
+		require.Empty(t, warnings)
+		result := document{}
+		require.NoError(t, json.Unmarshal(data, &result))
+		require.Equal(t, &dnsSection{Enable: true, EnhancedMode: "fake-ip",
+			FakeIPRange: link.CaptureFakeIPRange, Bootstrap: system, Nameserver: system,
+			Policy: policyList{{"+.www.corp.test", system}, {"+.corp.test", tunnel},
+				{"geosite:google", system}, {"a.test", proxy}, {"+.vpn.test", tunnel}}}, result.DNS)
+		require.Contains(t, string(data), `"+.www.corp.test": [`)
+		require.Less(t, strings.Index(string(data), `"+.www.corp.test"`),
+			strings.Index(string(data), `"+.corp.test"`))
+		require.Less(t, strings.Index(string(data), `"geosite:google"`),
+			strings.Index(string(data), `"a.test"`))
+	}
+	{
+		snapshot.Settings.DefaultTarget = "SOCKS5 1"
+		data, _, err := Generate(snapshot, links, Options{Socket: "socket"})
+		require.NoError(t, err)
+		result := document{}
+		require.NoError(t, json.Unmarshal(data, &result))
+		require.Equal(t, &dnsSection{Enable: true, Bootstrap: system, Nameserver: proxy,
+			Policy: policyList{{"+.www.corp.test", system}, {"+.corp.test", tunnel},
+				{"geosite:google", system}, {"+.tail.test", system}, {"+.b.a.test", system},
+				{"+.vpn.test", tunnel}}}, result.DNS)
+	}
+	{
+		snapshot.Outbounds[0].OpenVPN.UseDNS = false
+		data, _, err := Generate(snapshot, links, Options{Socket: "socket"})
+		require.NoError(t, err)
+		result := document{}
+		require.NoError(t, json.Unmarshal(data, &result))
+		require.Equal(t, policyList{{"+.www.corp.test", system}, {"+.corp.test", system},
+			{"geosite:google", system}, {"+.tail.test", system}, {"+.b.a.test", system}},
+			result.DNS.Policy)
+	}
+}
+
+func TestGenerate_DNSServers(t *testing.T) {
+	snapshot := config.Default()
+	for _, outbound := range []config.Outbound{
+		{Type: config.TypeSocks5, Enabled: true, Socks5: &config.Socks5Options{Server: "10.0.0.1",
+			Port: 1080, UDP: true}, DNS: config.DNSOptions{Servers: []string{"8.8.8.8",
+			"https://dns.google/dns-query", "tls://1.1.1.1", "quic://dns.adguard-dns.com"}}},
+		{Type: config.TypeSocks5, Enabled: true, Socks5: &config.Socks5Options{Server: "10.0.0.2",
+			Port: 1080}, DNS: config.DNSOptions{Servers: []string{"9.9.9.9", "udp://9.9.9.10",
+			"quic://9.9.9.11", "[2001:db8::1]:5353", "tls://9.9.9.9"}}},
+		{Type: config.TypeHTTP, Enabled: true, HTTP: &config.HTTPOptions{Server: "10.0.0.3",
+			Port: 3128, HTTPSServer: "10.0.0.4", HTTPSPort: 3129}, DNS: config.DNSOptions{
+			Servers: []string{"https://1.1.1.1/dns-query", "1.0.0.1", "tcp://1.0.0.2:5353"}}},
+		{Type: config.TypeHost, Enabled: true, DNS: config.DNSOptions{
+			Servers: []string{"192.168.1.1"}, Exit: config.ViaRouter}},
+		{Type: config.TypeHost, Enabled: true, DNS: config.DNSOptions{
+			Servers: []string{"192.168.2.1", "2001:db8::2"}, Exit: config.ViaHost}},
+		{Type: config.TypeHost, Enabled: true, DNS: config.DNSOptions{
+			Servers: []string{"192.168.3.1"}, Exit: "SOCKS5 2"}},
+		{Type: config.TypeHost}} {
+		_, err := snapshot.AddOutbound(outbound)
+		require.NoError(t, err)
+	}
+	for _, fallback := range []config.Fallback{{Enabled: true, Outbounds: []string{"SOCKS5 1",
+		"SOCKS5 2"}}, {Outbounds: []string{"HOST 1"}}, {Enabled: true, Outbounds: []string{"HOST 4"}}} {
+		_, err := snapshot.AddFallback(fallback)
+		require.NoError(t, err)
+	}
+	for _, outbound := range []config.Outbound{
+		{Type: config.TypeHost, Enabled: true, DNS: config.DNSOptions{
+			Servers: []string{"192.168.5.1"}, Exit: "HOST 4"}},
+		{Type: config.TypeHost, Enabled: true, DNS: config.DNSOptions{
+			Servers: []string{"192.168.6.1", "https://1.1.1.1/dns-query"}, Exit: "Fallback 1"}},
+		{Type: config.TypeHost, Enabled: true, DNS: config.DNSOptions{
+			Servers: []string{"192.168.7.1"}, Exit: "Fallback 2"}},
+		{Type: config.TypeHost, Enabled: true, DNS: config.DNSOptions{
+			Servers: []string{"192.168.8.1"}, Exit: "Fallback 3"}}} {
+		_, err := snapshot.AddOutbound(outbound)
+		require.NoError(t, err)
+	}
+	snapshot.Outbounds[8].DNS.Servers = append(snapshot.Outbounds[8].DNS.Servers, "broken")
+	require.Equal(t, map[string][]string{
+		"SOCKS5 1": {"8.8.8.8#SOCKS5 1", "https://dns.google/dns-query#SOCKS5 1",
+			"tls://1.1.1.1#SOCKS5 1", "quic://dns.adguard-dns.com#SOCKS5 1"},
+		"SOCKS5 2": {"tcp://9.9.9.9#SOCKS5 2", "tcp://[2001:db8::1]:5353#SOCKS5 2",
+			"tls://9.9.9.9#SOCKS5 2"},
+		"HTTP 1": {"https://1.1.1.1/dns-query#HTTP 1~https", "tcp://1.0.0.1#HTTP 1",
+			"tcp://1.0.0.2:5353#HTTP 1"},
+		"HOST 1": {"192.168.1.1#RULES"}, "HOST 2": {"192.168.2.1", "[2001:db8::2]"},
+		"HOST 3": {"tcp://192.168.3.1#SOCKS5 2"},
+		"HOST 6": {"tcp://192.168.6.1#Fallback 1", "https://1.1.1.1/dns-query#Fallback 1"}},
+		Resolvers(snapshot, nil))
+	_, warnings, err := Generate(snapshot, nil, Options{Socket: "socket"})
+	require.NoError(t, err)
+	require.Equal(t, []string{"fallback 'Fallback 3' is skipped: no enabled outbounds",
+		"DNS server 'udp://9.9.9.10' of outbound 'SOCKS5 2' is skipped: 'SOCKS5 2' does not carry UDP",
+		"DNS server 'quic://9.9.9.11' of outbound 'SOCKS5 2' is skipped: 'SOCKS5 2' does not carry UDP",
+		"DNS servers of outbound 'HOST 5' are skipped: exit 'HOST 4' is disabled or does not exist",
+		"DNS server 'broken' of outbound 'HOST 6' is skipped: invalid DNS server 'broken', " +
+			"expected IP address or URL",
+		"DNS servers of outbound 'HOST 7' are skipped: exit 'Fallback 2' is disabled or does not exist",
+		"DNS servers of outbound 'HOST 8' are skipped: exit 'Fallback 3' is disabled or does not exist"},
+		warnings)
+}
+
 func TestGenerate_Document(t *testing.T) {
 	snapshot := makeSnapshot(t)
 	links := map[string]link.Status{"OpenVPN 1": {DNS: []string{"10.99.0.1", "fd00::1"},
@@ -111,9 +371,9 @@ func TestGenerate_Document(t *testing.T) {
 			"IP-CIDR,10.0.0.0/8,Fallback 1", "PROCESS-NAME,curl,HOST 3", "MATCH,DIRECT"},
 			result.Rules)
 		servers := []string{"10.99.0.1#OpenVPN 1", "[fd00::1]#OpenVPN 1"}
-		require.Equal(t, &dnsSection{Enable: true, Nameserver: []string{"system"},
-			Policy: map[string][]string{"+.corp.test": servers, "wiki.test": servers,
-				"+.vpn.test": servers}}, result.DNS)
+		require.Equal(t, &dnsSection{Enable: true, Bootstrap: []string{"system"},
+			Nameserver: []string{"system"}, Policy: policyList{{"+.corp.test", servers},
+				{"wiki.test", servers}, {"+.vpn.test", servers}}}, result.DNS)
 	}
 	{
 		require.Equal(t, []string{"fallback 'Fallback 2' is skipped: no enabled outbounds",
@@ -199,7 +459,8 @@ func TestGenerate_Minimal(t *testing.T) {
 	require.NoError(t, json.Unmarshal(data, &result))
 	require.Equal(t, []string{"MATCH,DIRECT"}, result.Rules)
 	require.Equal(t, "off", result.FindProcess)
-	require.Nil(t, result.DNS)
+	require.Equal(t, &dnsSection{Enable: true, Bootstrap: []string{"system"},
+		Nameserver: []string{"system"}, Policy: policyList{}}, result.DNS)
 	require.Empty(t, result.Proxies)
 	require.Len(t, warnings, 1)
 	require.Contains(t, warnings[0], "route #1 is skipped: failed to parse line 1")
@@ -223,8 +484,8 @@ func TestGenerate_Capture(t *testing.T) {
 	require.Equal(t, sniffPorts{Ports: []string{"80", "8080-8880"}}, result.Sniffer.Sniff["HTTP"])
 	require.Contains(t, result.Sniffer.Sniff, "QUIC")
 	require.Equal(t, &dnsSection{Enable: true, EnhancedMode: "fake-ip",
-		FakeIPRange: link.CaptureFakeIPRange, Nameserver: []string{"system"},
-		Policy: map[string][]string{}}, result.DNS)
+		FakeIPRange: link.CaptureFakeIPRange, Bootstrap: []string{"system"},
+		Nameserver: []string{"system"}, Policy: policyList{}}, result.DNS)
 }
 
 func TestGenerate_CaptureProxyDNS(t *testing.T) {
@@ -339,6 +600,28 @@ func TestPing_Rules(t *testing.T) {
 			Ping(snapshot, nil)[1])
 		snapshot.Settings.DefaultTarget = "AmneziaWG 1"
 		require.Equal(t, link.PingRule{Allow: true}, Ping(snapshot, nil)[1])
+	}
+}
+
+func TestPolicyList_JSON(t *testing.T) {
+	list := policyList{{"+.z.test", []string{"1.1.1.1#A B"}}, {"geosite:x", []string{"system"}},
+		{"a.test", []string{"tcp://[2001:db8::1]:5353", "8.8.8.8"}}}
+	data, err := json.Marshal(list)
+	require.NoError(t, err)
+	require.Equal(t, `{"+.z.test":["1.1.1.1#A B"],"geosite:x":["system"],`+
+		`"a.test":["tcp://[2001:db8::1]:5353","8.8.8.8"]}`, string(data))
+	result := policyList{}
+	require.NoError(t, json.Unmarshal(data, &result))
+	require.Equal(t, list, result)
+	data, err = json.Marshal(policyList{})
+	require.NoError(t, err)
+	require.Equal(t, "{}", string(data))
+	{
+		require.Error(t, result.UnmarshalJSON([]byte(``)))
+		require.ErrorContains(t, result.UnmarshalJSON([]byte(`{"a":5}`)),
+			"failed to decode policy servers of 'a'")
+		require.ErrorContains(t, result.UnmarshalJSON([]byte(`{"a":["b"],`)),
+			"failed to decode policy key")
 	}
 }
 

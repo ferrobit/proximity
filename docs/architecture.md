@@ -167,7 +167,7 @@ the routing itself:
 | Priority | Rule | Purpose |
 |---|---|---|
 | 5150 | `fwmark 51000 lookup main` | Bypass: mihomo's own connections and tunnel transports are never captured |
-| 5155 | `iif lo ipproto udp/tcp dport 53 lookup 51000` | Host DNS queries go to the TUN (DNS hijack) |
+| 5155 | `from 0.0.0.0/32 iif lo ipproto udp/tcp dport 53 lookup 51000` (and the TUN source range) | Host DNS queries go to the TUN (DNS hijack). The source keeps the rule away from the reverse path check of an answer that a DNS server sends to mihomo itself: without it `rp_filter=1` drops such answers |
 | 5160 | `lookup main suppress_prefixlength 0` | Anything with a specific route (LAN, Docker networks, VPN clients' own routes) uses the main table |
 | 5170 | `from 0.0.0.0/32 iif lo lookup 51000` (and the TUN source range) | New locally originated connections without a specific route go to the TUN |
 
@@ -206,15 +206,49 @@ addresses.
 
 ## DNS
 
-| Situation | mihomo DNS configuration |
+The `dns` section is always written (`router/dns.go`), so the resolver of mihomo answers in
+every mode.
+
+| Part | mihomo DNS configuration |
 |---|---|
-| Transparent capture | `enhanced-mode: fake-ip`, range `198.18.0.1/16`, `dns-hijack: any:53`, nameserver `system` |
-| VPN with *Use DNS servers…* enabled | `nameserver-policy` sends the route's domains (and domains pushed by the VPN) to the tunnel's DNS servers, through the tunnel |
-| Otherwise | mihomo resolves through the system resolver of the container |
+| Transparent capture, OpenVPN inbound | `enhanced-mode: fake-ip`, range `198.18.0.1/16`, `dns-hijack: any:53` |
+| Servers of an outbound (tab **DNS**, DNS of a VPN) | `nameserver-policy`: the domains of the routes to the outbound (and the domains pushed by the VPN) → `server#outbound`, the query goes through the outbound |
+| Default servers (**Settings → Router → DNS**) | `nameserver` and the policy entries of `DIRECT` routes; `system` when none are set |
+| Names without a route | `nameserver`: the servers of the default target when it has its own, else the default servers |
+| Names of DNS servers | `default-nameserver`: the default servers given by address, else `system` |
 
 With fake-IP the application receives a placeholder address immediately; the real name is
-resolved later by the target: remotely by a proxy, through the tunnel's DNS for a VPN, or
-by the system resolver for DIRECT/HOST.
+resolved later by the target: remotely by a proxy, through the DNS of the outbound for a
+tunnel or a HOST outbound, or by the default servers for `DIRECT`.
+
+**Exit of a server.** `8.8.8.8#OpenVPN 1` is asked through the proxy `OpenVPN 1` (a mihomo
+`direct` proxy with the routing mark of the tunnel), `#Fallback 1` through a group,
+`#RULES` (exit *Router*) by the rules, no suffix — directly. mihomo does not change the
+transport itself: UDP through a SOCKS5 proxy without UDP or through an HTTP proxy fails, so
+for such an exit a server given by address is written as `tcp://…` and `udp://` / `quic://`
+servers are skipped with a warning. A split HTTP outbound takes port 443 through `ID~https`.
+
+**Order.** Routes take the first match; mihomo keeps `nameserver-policy` in the order of
+the file, puts consecutive domains into one tree (the most specific domain wins) and stops
+at the first policy that matches. The generator therefore keeps the order of the routes,
+leaves out an entry that an earlier one covers, and writes an entry with the servers of
+"everything else" only where a later entry would otherwise take its domains.
+
+**Names of the configuration.** A proxy server, a `remote`, an `Endpoint`, a check target
+and a time server are resolved by Proximity through `GET /dns/query` of mihomo
+(`Mihomo.Resolve`, `link.Manager.Lookup`): the answer follows the policy and is a real
+address also while applications get fake-IP answers; an address of the fake-IP range is
+refused. While mihomo does not run, the resolver of the system answers. The names are
+written into the configuration of the tunnel before it starts (`resolveOpenVPN`,
+`wgconf.Config.Resolve`): `openvpn` and `awg` would ask the resolver of the system, which
+is hijacked in transparent mode.
+
+**Loops.** The name of an outbound's own server must not be asked through that outbound,
+or through an outbound whose own server name is asked through the first one. The generator
+builds this dependency (`pins`): a name gets an exact policy entry with the servers that
+are left when the loop is cut — the servers of its route without the forbidden exits, then
+the default servers, then `system`. A loop is cut in one place, at the outbound that
+stands first in the list.
 
 ## Monitoring and states
 

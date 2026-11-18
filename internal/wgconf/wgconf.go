@@ -10,6 +10,7 @@ import (
 	"io"
 	"net"
 	"net/netip"
+	"slices"
 	"strconv"
 	"strings"
 )
@@ -175,6 +176,41 @@ func (config Config) MTU() int {
 
 func (config Config) AllowedIPs() []string {
 	return config.values(sectionPeer, "allowedips")
+}
+
+func (config Config) EndpointHosts() []string {
+	result := []string{}
+	for _, endpoint := range config.values(sectionPeer, "endpoint") {
+		if host, _, err := net.SplitHostPort(endpoint); err != nil {
+			continue
+		} else if _, err = netip.ParseAddr(host); err != nil {
+			result = append(result, host)
+		}
+	}
+	return result
+}
+
+// NOTE: awg resolves an Endpoint name with the resolver of the system; the caller gives the
+// address it has resolved itself.
+func (config Config) Resolve(resolveFunc func(host string) (string, error)) (Config, error) {
+	result := Config{Sections: make([]Section, len(config.Sections))}
+	for index, section := range config.Sections {
+		result.Sections[index] = Section{Name: section.Name, Entries: slices.Clone(section.Entries)}
+		for position, entry := range section.Entries {
+			host, port, err := net.SplitHostPort(strings.TrimSpace(entry.Value))
+			if section.Name != sectionPeer || strings.ToLower(entry.Key) != "endpoint" || err != nil {
+				continue
+			} else if _, err = netip.ParseAddr(host); err == nil {
+				continue
+			}
+			address, err := resolveFunc(host)
+			if err != nil {
+				return Config{}, fmt.Errorf("failed to resolve Endpoint '%v': %w", host, err)
+			}
+			result.Sections[index].Entries[position].Value = net.JoinHostPort(address, port)
+		}
+	}
+	return result, nil
 }
 
 func (config Config) Strip() string {

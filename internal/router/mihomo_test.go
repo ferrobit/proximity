@@ -88,6 +88,24 @@ func runFake(arguments []string) int {
 		writer.(http.Flusher).Flush()
 		<-request.Context().Done()
 	})
+	routes.HandleFunc("GET /dns/query", func(writer http.ResponseWriter, request *http.Request) {
+		name, kind := request.URL.Query().Get("name"), request.URL.Query().Get("type")
+		switch {
+		case name == "good.test" && kind == "A":
+			_, _ = writer.Write([]byte(`{"Status":0,"Answer":[{"data":"alias.test.","type":5},` +
+				`{"data":"192.0.2.1","type":1},{"data":"192.0.2.2","type":1}]}`))
+		case name == "six.test" && kind == "AAAA":
+			_, _ = writer.Write([]byte(`{"Status":0,"Answer":[{"data":"2001:db8::1","type":28}]}`))
+		case name == "missing.test":
+			_, _ = writer.Write([]byte(`{"Status":3}`))
+		case name == "broken.test":
+			http.Error(writer, `{"message":"all DNS requests failed"}`, http.StatusInternalServerError)
+		case name == "garbage.test":
+			_, _ = writer.Write([]byte(`<html>`))
+		default:
+			_, _ = writer.Write([]byte(`{"Status":0}`))
+		}
+	})
 	routes.HandleFunc("POST /exit", func(_ http.ResponseWriter, _ *http.Request) {
 		os.Exit(3)
 	})
@@ -219,6 +237,40 @@ func TestNewMihomo_Problems(t *testing.T) {
 		require.ErrorContains(t, err, "failed to check router configuration")
 		require.Contains(t, mihomo.State().Message, "failed to check router configuration")
 		mihomo.Close()
+	}
+}
+
+func TestResolve_Answers(t *testing.T) {
+	t.Setenv(fakeVariable, "1")
+	directory := t.TempDir()
+	socket, output := filepath.Join(directory, "mihomo.sock"), &lineCollector{}
+	mihomo, err := NewMihomo(os.Args[0], filepath.Join(directory, "home"), socket, output.add)
+	require.NoError(t, err)
+	defer mihomo.Close()
+	_, err = mihomo.Resolve(context.Background(), "good.test")
+	require.ErrorContains(t, err, "failed to resolve 'good.test': failed to send request")
+	require.NoError(t, mihomo.Apply(makeDocument(t, socket, "warning", 7899)))
+	{
+		addresses, err := mihomo.Resolve(context.Background(), "good.test")
+		require.NoError(t, err)
+		require.Equal(t, []string{"192.0.2.1", "192.0.2.2"}, addresses)
+		addresses, err = mihomo.Resolve(context.Background(), "six.test")
+		require.NoError(t, err)
+		require.Equal(t, []string{"2001:db8::1"}, addresses)
+	}
+	{
+		_, err := mihomo.Resolve(context.Background(), "missing.test")
+		require.EqualError(t, err, "failed to resolve 'missing.test': DNS status (3)")
+		_, err = mihomo.Resolve(context.Background(), "broken.test")
+		require.EqualError(t, err, "failed to resolve 'broken.test': all DNS requests failed")
+		_, err = mihomo.Resolve(context.Background(), "empty.test")
+		require.EqualError(t, err, "failed to resolve 'empty.test': address does not exist")
+		_, err = mihomo.Resolve(context.Background(), "garbage.test")
+		require.ErrorContains(t, err, "failed to decode response '/dns/query?name=garbage.test")
+		ctx, cancel := context.WithCancel(context.Background())
+		cancel()
+		_, err = mihomo.Resolve(ctx, "good.test")
+		require.ErrorContains(t, err, "context canceled")
 	}
 }
 

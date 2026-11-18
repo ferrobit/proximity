@@ -102,13 +102,15 @@ func (capture *captureState) install(tools Tools, ipv6 bool) {
 	for family, sources := range families {
 		_, _ = tools.ip(family, "rule", "add", "priority", bypassPriority, "fwmark", table, "lookup",
 			"main")
-		for _, protocol := range []string{dnsUDP, dnsTCP} {
-			_, _ = tools.ip(family, "rule", "add", "priority", dnsPriority, "iif", "lo", "ipproto",
-				protocol, "dport", "53", "lookup", table)
-		}
 		_, _ = tools.ip(family, "rule", "add", "priority", localPriority, "lookup", "main",
 			"suppress_prefixlength", "0")
 		for _, source := range sources {
+			// NOTE: Without "from" the strict reverse path filter (rp_filter=1) finds this rule
+			// for an answer of a DNS server to the router itself and drops the answer.
+			for _, protocol := range []string{dnsUDP, dnsTCP} {
+				_, _ = tools.ip(family, "rule", "add", "priority", dnsPriority, "from", source, "iif",
+					"lo", "ipproto", protocol, "dport", "53", "lookup", table)
+			}
 			_, _ = tools.ip(family, "rule", "add", "priority", capturePriority, "from", source, "iif",
 				"lo", "lookup", table)
 		}

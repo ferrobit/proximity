@@ -10,6 +10,7 @@ const shots = [
   { file: 'setup', kind: 'setup', live: true },
   { file: 'outbound-general', kind: 'tab', section: 'outbounds', name: 'Proxy DE', tab: 'General' },
   { file: 'outbound-socks5', kind: 'tab', section: 'outbounds', name: 'Proxy DE', tab: 'SOCKS5 Proxy' },
+  { file: 'outbound-dns', kind: 'tab', section: 'outbounds', name: 'Proxy DE', tab: 'DNS' },
   { file: 'outbound-http', kind: 'tab', section: 'outbounds', name: 'Proxy US', tab: 'HTTP Proxy' },
   { file: 'outbound-host', kind: 'tab', section: 'outbounds', name: 'Home ISP', tab: 'HOST Network' },
   { file: 'outbound-openvpn', kind: 'tab', section: 'outbounds', name: 'Corp VPN', tab: 'OpenVPN' },

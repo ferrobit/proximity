@@ -221,6 +221,7 @@ For domain rules the name is resolved by the side that owns the target:
 
 | Target | Who resolves the domain |
 |---|---|
+| An outbound with its own servers (tab **DNS**) | those servers, through the outbound or through the exit chosen there |
 | SOCKS5 / HTTP proxy | the proxy server (the domain is sent as is) |
 | OpenVPN / AmneziaWG with *Use DNS servers…* enabled | DNS servers of the tunnel, through the tunnel |
 | OpenVPN / AmneziaWG without it, HOST, `DIRECT` | system DNS of the container |
@@ -229,6 +230,23 @@ In transparent mode (Linux) host DNS queries are intercepted and answered with f
 so the real resolution happens only when the connection is made — by the target above.
 This is why intranet names that exist only behind the VPN work without changing
 `/etc/resolv.conf`.
+
+The binding follows the routes: `DOMAIN`, `DOMAIN-SUFFIX` and `GEOSITE` rules, the first
+route that matches a name decides, the same as for the traffic. A route to `DIRECT` above
+a wider route to a VPN keeps its domains on the default servers:
+
+```text
+Public corp sites  DOMAIN-SUFFIX  www.corp.example   → DIRECT       default DNS servers
+Corporate          DOMAIN-SUFFIX  corp.example       → OpenVPN 1    DNS of the VPN, through the tunnel
+Everything else                                      → SOCKS5 1     DNS servers of SOCKS5 1, through the proxy
+```
+
+The default servers and their exit are set in **Settings → Router → DNS**; when the
+default target (**Everything else**) has its own servers, names without a route are asked
+there. A proxy still resolves the names it is given by itself; the servers of a proxy
+outbound answer what the router has to resolve: records other than addresses (browsers ask
+for `HTTPS` records), and names checked against an `IP-CIDR` / `GEOIP` route that stands
+above without `,no-resolve`. More in the [user guide](user-guide.md#dns).
 
 ## Recipes
 

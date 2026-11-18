@@ -84,6 +84,33 @@ restart; its log keeps the lines of the failed attempt.
 - In bridge mode programs must send the *name* to the proxy, not an IP they resolved
   themselves: use `socks5h://` in curl, "proxy DNS when using SOCKS" in Firefox, or the
   HTTP proxy.
+- A VPN that gives no DNS servers: write the address of the DNS server of the intranet on
+  the **DNS** tab of the outbound.
+
+## The DNS queries leave past the route
+
+- Look at **Dashboard → Router configuration**, `dns.nameserver-policy`: which servers a
+  domain gets, and through which exit (`server#exit`). The outbounds table shows the
+  servers of an outbound as `DNS …`.
+- Only `DOMAIN`, `DOMAIN-SUFFIX` and `GEOSITE` routes bind a domain to the DNS servers of
+  their outbound; an outbound without servers on its **DNS** tab uses the default servers
+  of **Settings → Router → DNS**.
+- A warning *DNS server … is skipped: … does not carry UDP*: the outbound is a SOCKS5
+  proxy without UDP or an HTTP proxy. Use `tcp://`, `tls://` or `https://`, or choose
+  another exit in *Send the queries through*.
+- An HTTP proxy often opens only port 443: plain DNS over TCP (port 53) is refused, use
+  `https://…`.
+
+## An outbound cannot resolve its server (`failed to resolve …`)
+
+- The name of a proxy server, of an OpenVPN `remote` or of an AmneziaWG `Endpoint` is
+  resolved by the router, through the DNS servers of the route that takes its domain. When
+  that outbound is down, the name is not resolved: route the name elsewhere (a `DOMAIN`
+  route to `DIRECT` above) or write the address.
+- `name '…' has no usable address (198.18.…)`: the DNS server answered with a placeholder
+  address. This happens when the name is asked through a tunnel to another Proximity (its
+  OpenVPN inbound answers its clients with fake-IP). Write the address, or route the name
+  to `DIRECT`.
 
 ## Transparent mode is not active (Linux)
 
@@ -208,7 +235,8 @@ the *Traffic* column are saved every 30 seconds and survive restarts.
 ## Replies from a tunnel are dropped (`rp_filter`)
 
 Proximity adds a rule by tunnel source address, so strict reverse path filtering
-(`rp_filter=1`) works. The bridge compose file additionally sets `rp_filter=2` and
+(`rp_filter=1`) works. The DNS rule of transparent capture has a source for the same
+reason: the answers of DNS servers to the router pass the filter. The bridge compose file additionally sets `rp_filter=2` and
 `src_valid_mark=1` inside the container. If you run a custom setup, apply the same sysctls.
 
 ## Reporting a problem

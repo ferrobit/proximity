@@ -21,10 +21,11 @@ import (
 
 type outboundView struct {
 	config.Outbound
-	Status   link.Status    `json:"status"`
-	Traffic  router.Traffic `json:"traffic"`
-	Usage    string         `json:"usage"`
-	Redacted bool           `json:"redacted"`
+	Status    link.Status    `json:"status"`
+	Traffic   router.Traffic `json:"traffic"`
+	Usage     string         `json:"usage"`
+	Redacted  bool           `json:"redacted"`
+	Resolvers []string       `json:"resolvers"`
 }
 
 type inboundView struct {
@@ -225,10 +226,13 @@ func (server *Server) capturing() bool {
 func (server *Server) views(snapshot config.Config, level int) []outboundView {
 	links, used := server.manager.Status(), router.Used(snapshot)
 	traffic, _ := server.tracker.Snapshot()
-	result := []outboundView{}
+	result, resolvers := []outboundView{}, router.Resolvers(snapshot, links)
 	for _, outbound := range snapshot.Outbounds {
 		view := outboundView{Outbound: outbound, Status: emptyStatus(), Usage: usageEnabled,
-			Traffic: traffic[outbound.ID], Redacted: level < 2}
+			Traffic: traffic[outbound.ID], Redacted: level < 2, Resolvers: []string{}}
+		if level >= 1 && resolvers[outbound.ID] != nil {
+			view.Resolvers = resolvers[outbound.ID]
+		}
 		if status, found := links[outbound.ID]; found {
 			view.Status = status
 		}
@@ -755,8 +759,7 @@ func (server *Server) updateSettings(request *http.Request, _ session) (any, err
 		return nil, err
 	}
 	return body, server.store.Update(func(config *config.Config) error {
-		config.Settings = body
-		return nil
+		return config.SetSettings(body)
 	})
 }
 
