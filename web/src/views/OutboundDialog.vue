@@ -136,7 +136,7 @@
           </a-form-item>
           <a-row :gutter="16">
             <a-col :span="12">
-              <a-form-item label="Restore after, seconds" :name="['recovery', 'delay']" :rules="range(1, 86400)" extra="Pause before a new series of connection attempts">
+              <a-form-item label="Restore after, seconds" :name="['recovery', 'delay']" :rules="range(1, 86400)" extra="Pause before a new series of attempts">
                 <a-input-number v-model:value="form.recovery.delay" :disabled="!form.recovery.enabled" style="width: 100%" />
               </a-form-item>
             </a-col>
@@ -146,7 +146,7 @@
               </a-form-item>
             </a-col>
           </a-row>
-          <a-divider v-if="tunnel" />
+          <a-divider v-if="tunnel" style="margin-top: 0" />
           <a-form-item v-if="tunnel" label="Enable monitoring" extra="A failed check is a signal that the connection is lost: reconnection starts without waiting for the tunnel to notice">
             <a-switch v-model:checked="form.monitoring.enabled" />
           </a-form-item>

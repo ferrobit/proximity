@@ -44,7 +44,7 @@ they are used only when there are no users.
 
 | Message in the log / status | What to do |
 |---|---|
-| `authentication failed` (OpenVPN) | Check user name and password. Without an OTP key Proximity does not retry, to avoid locking the account |
+| `authentication failed` (OpenVPN) | Check user name and password. Without an OTP key Proximity does not retry, to avoid locking the account; with a key it uses the *Connection attempts* once. *Restore lost connections* never repeats a rejected login |
 | `OTP key is required by server` | Fill in *OTP key* (base32 secret) and choose *OTP code usage*: answer the `CHALLENGE` prompt or append the code to the password |
 | `… is required by server` | The server asked for something not configured (user name, password, private key password). The outbound fails at once and is not retried |
 | `invalid private key password` (OpenVPN) | The client key in the configuration is encrypted and *Private key password* does not open it |

@@ -225,7 +225,8 @@ reset the attempt counter and start again, at most *Recovery attempts* series in
 (0 — unlimited); the series counter is reset by a working connection. A tunnel or inbound
 is `reconnecting` meanwhile, so the service journal keeps `running` and the service
 starts again after a container restart. A fatal error (credentials, certificate,
-configuration) is not restored; a time synchronization error (`link.clockError`) is. A
+configuration) and `authentication failed` (`link.deniedError`, also with an OTP key) are
+not restored; a time synchronization error (`link.clockError`) is. A
 failed monitoring check ends the link in the same way as an exited process, so it is one
 of the signals that start reconnection.
 

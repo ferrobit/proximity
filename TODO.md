@@ -95,7 +95,7 @@ document `proximity-openvpn-test-report.md`.
     outbound and inbound (on by default, 60 s, unlimited). Covers an
     unreachable server, a failed monitoring check, an NTP outage at
     start and a busy inbound port; errors that need a user action
-    still end as `failed`.
+    and `authentication failed` still end as `failed`.
 
 - [ ] **Default inbound networks collide between instances**
   - Every instance uses `10.77.<N>.0/24`, so two default instances cannot
@@ -127,6 +127,20 @@ document `proximity-openvpn-test-report.md`.
   - Repeat the three tests in host mode (transparent capture).
   - Put the lab (helper containers, client driver, case matrices) into
     the repository as an automated test.
+
+## Configuration
+
+- [ ] **Start with a partly invalid configuration**
+  - When Proximity starts and finds something wrong in the configuration,
+    it must still start with what is valid.
+  - A block of settings with incorrect data (an outbound, inbound, route,
+    fallback, user or a group of settings) is dropped; the rest is applied.
+  - After the start show a message at the top, in the header: Proximity
+    started, but there were errors, with the list of the configuration
+    elements that were dropped and the reason for each.
+  - Decide: keep the dropped blocks in the file (so that they can be
+    fixed) or remove them on the next save; what to do with references
+    to a dropped element (routes, fallbacks, inbounds).
 
 ## Performance
 

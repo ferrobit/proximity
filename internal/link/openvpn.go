@@ -325,7 +325,8 @@ func (driver *openvpnDriver) output(line string) {
 		}
 	} else if strings.Contains(line, openvpnAuthFailed) && !strings.Contains(line,
 		openvpnChallenge) && driver.failure == nil {
-		if driver.failure = errors.New("authentication failed"); driver.options.OTPKey == "" {
+		driver.failure = &deniedError{errors.New("authentication failed")}
+		if driver.options.OTPKey == "" {
 			driver.failure = &fatalError{driver.failure}
 		}
 		driver.terminal.signal(syscall.SIGTERM)

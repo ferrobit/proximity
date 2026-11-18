@@ -271,9 +271,11 @@ Every outbound and inbound has a **Monitoring** tab. It starts with the recovery
 Recovery covers everything that can pass by itself: an unreachable server, a timeout, a
 failed monitoring check, time that is not synchronized yet, a busy port of an inbound.
 Errors of a tunnel or inbound that need your action are not retried and end as `failed`
-at once: `authentication failed` without an OTP key, `… is required by server`, `invalid
-private key password`, `server certificate is rejected`, an overlapping tunnel network, a
-broken configuration. A HOST or proxy outbound stays `failed` between the checks and
+at once: `… is required by server`, `invalid private key password`, `server certificate
+is rejected`, an overlapping tunnel network, a broken configuration. `authentication
+failed` is never restored either, so that rejected credentials are not repeated without
+an end: with an OTP key the attempts of the current series are used (each with a fresh
+code), without it — one attempt. A HOST or proxy outbound stays `failed` between the checks and
 returns to `good` by itself; for it *Restore after* is the interval of these checks.
 
 Tunnels (OpenVPN, AmneziaWG) also have the checks of a working connection below. A failed

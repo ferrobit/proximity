@@ -1,5 +1,5 @@
 <template>
-  <a-modal :open="open" :title="title" :width="kind === 'openvpn' ? '880px' : '780px'" :confirm-loading="busy" ok-text="Save" destroy-on-close
+  <a-modal :open="open" :title="title" :width="kind === 'openvpn' ? '960px' : '780px'" :confirm-loading="busy" ok-text="Save" destroy-on-close
     @ok="save(false)" @cancel="$emit('update:open', false)">
     <a-form ref="formRef" layout="vertical" :model="form">
       <a-tabs v-model:active-key="tab">
@@ -225,7 +225,7 @@
           </a-form-item>
           <a-row :gutter="16">
             <a-col :span="12">
-              <a-form-item label="Restore after, seconds" :name="['recovery', 'delay']" :rules="range(1, 86400)" extra="Pause before a new series of connection attempts">
+              <a-form-item label="Restore after, seconds" :name="['recovery', 'delay']" :rules="range(1, 86400)" extra="Pause before a new series of attempts">
                 <a-input-number v-model:value="form.recovery.delay" :disabled="!form.recovery.enabled" style="width: 100%" />
               </a-form-item>
             </a-col>

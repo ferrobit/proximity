@@ -118,7 +118,8 @@ after the attempts are exhausted wait `delay` seconds (1…86400) and start a ne
 at most `attempts` series in a row (0…1000, 0 — unlimited). While a tunnel or an inbound
 is being restored its state is `reconnecting` and the message starts with `recovery
 attempt N`; with `enabled: false`, after the last series or after an error that needs a
-user action it is `failed` and waits for **Start** / **Restart**. A failed HOST or proxy
+user action (also `authentication failed`) it is `failed` and waits for **Start** /
+**Restart**. A failed HOST or proxy
 outbound stays `failed` and is checked again every `delay` seconds.
 Configurations before version 7 move `host.attempts` / `host.reconnect_timeout` and
 `monitoring.reconnect_attempts + 1` / `monitoring.reconnect_delay` here.

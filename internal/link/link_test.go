@@ -1073,36 +1073,45 @@ func TestManager_Recovery(t *testing.T) {
 	require.NoError(t, os.Remove(down))
 	status = waitState(t, manager, "VPN", StateUp)
 	require.Empty(t, status.Message)
-	denied := &config.OpenVPNOptions{Config: sampleOpenVPN, Username: "denied", Password: "x",
-		OTPKey: "GEZDGNBVGY3TQOJQ", OTPMode: config.OTPChallenge}
 	{
-		outbound.OpenVPN, outbound.Recovery = denied, &config.Recovery{Enabled: true, Delay: 1,
+		writeScript(t, directory, "down", "x")
+		outbound.ID, outbound.Recovery = "Limited", &config.Recovery{Enabled: true, Delay: 1,
 			Attempts: 2}
 		manager.Apply([]config.Outbound{outbound}, settings)
-		status := waitState(t, manager, "VPN", StateReconnecting)
-		require.Equal(t, "recovery attempt 1 of 2: authentication failed", status.Message)
-		status = waitState(t, manager, "VPN", StateFailed)
-		require.Equal(t, "authentication failed", status.Message)
-		log := strings.Join(manager.Log("VPN"), "\n")
+		status := waitState(t, manager, "Limited", StateReconnecting)
+		require.True(t, strings.HasPrefix(status.Message, "recovery attempt 1 of 2: "))
+		status = waitState(t, manager, "Limited", StateFailed)
+		require.NotContains(t, status.Message, "recovery")
+		log := strings.Join(manager.Log("Limited"), "\n")
 		require.Contains(t, log, "recovery attempt 2 of 2 in 1s")
 		require.Contains(t, log, "recovery is stopped after 2 attempts")
-	}
-	{
-		count := strings.Count(strings.Join(manager.Log("VPN"), "\n"), "recovery attempt")
 		outbound.ID, outbound.Recovery = "Off", &config.Recovery{Delay: 1}
 		manager.Apply([]config.Outbound{outbound}, settings)
-		status := waitState(t, manager, "Off", StateFailed)
-		require.Equal(t, "authentication failed", status.Message)
-		fatal := *denied
-		fatal.OTPKey = ""
-		outbound.ID, outbound.OpenVPN = "Fatal", &fatal
+		waitState(t, manager, "Off", StateFailed)
+		log = strings.Join(manager.Log("Off"), "\n")
+		require.Contains(t, log, "debug: recovery false, delay 1 s, attempts 0")
+		require.Equal(t, 1, strings.Count(log, "recovery is stopped"))
+		require.NoError(t, os.Remove(down))
+	}
+	{
+		count := strings.Count(strings.Join(manager.Log("Off"), "\n"), "recovery attempt")
+		outbound.ID, outbound.Attempts = "Denied", 2
+		outbound.OpenVPN = &config.OpenVPNOptions{Config: sampleOpenVPN, Username: "denied",
+			Password: "x", OTPKey: "GEZDGNBVGY3TQOJQ", OTPMode: config.OTPChallenge}
 		outbound.Recovery = &config.Recovery{Enabled: true, Delay: 1}
+		manager.Apply([]config.Outbound{outbound}, settings)
+		status := waitState(t, manager, "Denied", StateFailed)
+		require.Equal(t, "authentication failed", status.Message)
+		log := strings.Join(manager.Log("Denied"), "\n")
+		require.Contains(t, log, "connection failed after 2 of 2 attempts")
+		require.Equal(t, count, strings.Count(log, "recovery attempt"))
+		outbound.ID, outbound.OpenVPN.OTPKey = "Fatal", ""
 		manager.Apply([]config.Outbound{outbound}, settings)
 		status = waitState(t, manager, "Fatal", StateFailed)
 		require.Equal(t, "authentication failed", status.Message)
-		log := strings.Join(manager.Log("Fatal"), "\n")
+		log = strings.Join(manager.Log("Fatal"), "\n")
+		require.Contains(t, log, "connection failed after 1 of 2 attempts")
 		require.Equal(t, count, strings.Count(log, "recovery attempt"))
-		require.Contains(t, log, "debug: recovery false, delay 1 s, attempts 0")
 	}
 	{
 		host := config.Outbound{ID: "H", Type: config.TypeHost, Enabled: true, Slot: 5, Attempts: 1,

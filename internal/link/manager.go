@@ -95,6 +95,10 @@ type clockError struct {
 	cause error
 }
 
+type deniedError struct {
+	cause error
+}
+
 const (
 	StateDisabled     = "disabled"
 	StateConnecting   = "connecting"
@@ -152,6 +156,14 @@ func (failure *clockError) Unwrap() error {
 	return failure.cause
 }
 
+func (failure *deniedError) Error() string {
+	return failure.cause.Error()
+}
+
+func (failure *deniedError) Unwrap() error {
+	return failure.cause
+}
+
 func (policy policy) restore(recovery *config.Recovery) policy {
 	if recovery != nil {
 		policy.recovery, policy.recoveries = recovery.Enabled, recovery.Attempts
@@ -161,11 +173,14 @@ func (policy policy) restore(recovery *config.Recovery) policy {
 }
 
 func (policy policy) recovers(err error, count int) bool {
-	fatal, clock := &fatalError{}, &clockError{}
+	fatal, clock, denied := &fatalError{}, &clockError{}, &deniedError{}
 	if !policy.recovery || (policy.recoveries != 0 && count > policy.recoveries) {
 		return false
+	} else if errors.As(err, &denied) {
+		// NOTE: Repeating rejected credentials without an end may lock the account.
+		return false
 	}
-	// NOTE: An error of configuration or credentials does not go away by itself.
+	// NOTE: An error of configuration does not go away by itself.
 	return !policy.terminal || !errors.As(err, &fatal) || errors.As(err, &clock)
 }
 
