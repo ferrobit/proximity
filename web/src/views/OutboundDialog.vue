@@ -214,7 +214,7 @@ const attemptsHint = computed(() => tunnel.value
 const recoveryHint = computed(() => tunnel.value
   ? 'When all connection attempts fail, the tunnel waits and starts a new series of attempts. Errors that need your action (wrong credentials, rejected certificate, bad configuration) are not retried. Off: the tunnel fails and stays down until Start or Restart'
   : 'A failed outbound is checked again after the pause and returns to good by itself. Off: it stays failed until Restart')
-const title = computed(() => props.outbound ? `Edit outbound '${props.outbound.id}'` : `Add ${typeLabels[props.kind]} outbound`)
+const title = computed(() => props.outbound ? `Edit ${shortLabels[props.kind]} outbound '${props.outbound.id}'` : `Add ${shortLabels[props.kind]} outbound`)
 const interfaceOptions = computed(() => interfaces.value.map((item) => ({
   value: item.name,
   label: `${item.name} (${item.state}${item.addresses.length ? `, ${item.addresses.join(', ')}` : ''})`
