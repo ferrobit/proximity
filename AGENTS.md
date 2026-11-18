@@ -33,7 +33,8 @@ save time. Add a line when a new command fails; keep it short.
 | An outbound stopped with `POST …/stop` stays stopped after a restart of the container | Start it again with `POST …/start` |
 | A check counts log lines of a successful login: OpenVPN writes the same line for a password and for a token | Look at the side effect: `codes.json` is filled only by a login with a one-time code |
 | `make test`, `make cover`, `make coverage-docs` in a sandbox: *rsync is required* | Run `go test -coverprofile=… ./...` in the working tree and give its output to `bash scripts/coverage.sh <report>` |
-| A test expects the exact text of an `encoding/json` error: Go 1.25+ with `jsonv2` (default in the user's Go 1.27) prints other type names | Build the expected text with `unmarshalError` (the same `json.Unmarshal` call) or give the code its own message; check with `GOTOOLCHAIN=go1.27.1 go test ./...` |
+| A test expects the exact text of an `encoding/json` error: Go 1.25+ with `jsonv2` (default in the user's Go 1.27) prints other type names | Build the expected text with `unmarshalError` (the same `json.Unmarshal` call) or give the code its own message |
+| Go versions drift apart (`go.mod`, `GO_IMAGE`, the user's machine) | One version: `toolchain` in `go.mod` and `GO_IMAGE` in `Dockerfile` and `docs/development.md` change together; an older local `go` downloads the toolchain itself |
 
 ## Rules
 

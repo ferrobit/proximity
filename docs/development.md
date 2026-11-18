@@ -47,7 +47,7 @@ proximity/
 
 | Tool | Version |
 |---|---|
-| Go | 1.24+ (the image builds with 1.25) |
+| Go | 1.27.4 (`toolchain` in `go.mod`; an older `go` downloads it itself) |
 | Node.js | 22 |
 | rsync | any, for `make` |
 | Docker | with Compose v2, for the image |
@@ -314,7 +314,7 @@ Versions are build arguments in the `Dockerfile`:
 | `MIHOMO_IMAGE` | `metacubex/mihomo:v1.19.34` |
 | `AWG_GO_VERSION` | `v3.1.20260828` |
 | `AWG_TOOLS_VERSION` | `v3.1.20260812` |
-| `GO_IMAGE` | `golang:1.25-bookworm` |
+| `GO_IMAGE` | `golang:1.27.4-bookworm` |
 | `NODE_IMAGE` | `node:22-bookworm-slim` |
 | `BASE_IMAGE` | `debian:bookworm-slim` |
 

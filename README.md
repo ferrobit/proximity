@@ -12,7 +12,7 @@
 
 <p align="center">
   <img alt="Version" src="https://img.shields.io/badge/version-1.2.0-19c2b8">
-  <img alt="Go" src="https://img.shields.io/badge/Go-1.24-00ADD8?logo=go&logoColor=white">
+  <img alt="Go" src="https://img.shields.io/badge/Go-1.27-00ADD8?logo=go&logoColor=white">
   <img alt="Vue" src="https://img.shields.io/badge/Vue-3-42b883?logo=vuedotjs&logoColor=white">
   <img alt="mihomo" src="https://img.shields.io/badge/mihomo-v1.19.34-0b1f2a">
   <img alt="Docker" src="https://img.shields.io/badge/Docker-ready-2496ED?logo=docker&logoColor=white">

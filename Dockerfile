@@ -1,6 +1,6 @@
 # syntax=docker/dockerfile:1
 ARG MIHOMO_IMAGE=metacubex/mihomo:v1.19.34
-ARG GO_IMAGE=golang:1.25-bookworm
+ARG GO_IMAGE=golang:1.27.4-bookworm
 ARG NODE_IMAGE=node:22-bookworm-slim
 ARG BASE_IMAGE=debian:bookworm-slim
 

@@ -265,6 +265,17 @@ document `proximity-openvpn-test-report.md`.
     tests. Add an AmneziaWG peer to the stand `pair` or a stand of its
     own.
 
+## Build
+
+- [x] **One Go version for the tests and the image**
+  - Done: `go 1.27.0` and `toolchain go1.27.4` in `go.mod`, the image builds
+    with `golang:1.27.4-bookworm`; an older local `go` downloads 1.27.4 itself.
+  - `go.mod` says `go 1.24`, the image builds with `golang:1.25-bookworm`,
+    the user's machine has Go 1.27, where `encoding/json` works on jsonv2
+    and prints other error texts (found by `make test` on 2026-11-18).
+  - Pin one version (`toolchain` in `go.mod` and `GO_IMAGE`), or run the
+    tests with both versions in `make test`.
+
 ## Performance
 
 - [ ] **Investigate high latency when routing traffic through Proximity**
