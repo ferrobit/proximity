@@ -111,7 +111,7 @@
             <a-col :span="12"><a-form-item label="Clients can reach each other"><a-switch v-model:checked="form.openvpn.client_to_client" /></a-form-item></a-col>
             <a-col :span="12">
               <a-form-item label="Additional routes (one network per line)" :name="['openvpn', 'routes_text']" :rules="[{ validator: checkRoutes }]" extra="Pushed to clients, for example 192.168.10.0/24">
-                <a-textarea v-model:value="form.openvpn.routes_text" class="mono" :rows="3" spellcheck="false" />
+                <CodeEditor v-model:value="form.openvpn.routes_text" language="routes" :height="92" placeholder="192.168.10.0/24" />
               </a-form-item>
             </a-col>
             <a-col :span="12">
@@ -244,6 +244,7 @@ import { api, id } from '../api'
 import { copyText } from '../clipboard'
 import { inboundLabels } from '../format'
 import CodeEditor from '../components/CodeEditor.vue'
+import { routeValid } from '../components/vpnSyntax'
 
 const props = defineProps({
   open: Boolean,
@@ -258,7 +259,6 @@ const idPattern = /^$|^[A-Za-z0-9]([A-Za-z0-9 _.-]{0,46}[A-Za-z0-9_.-])?$/
 const hostPattern = /^$|^[A-Za-z0-9]([A-Za-z0-9.-]{0,251}[A-Za-z0-9])?$/
 const namePattern = /^[A-Za-z0-9][A-Za-z0-9_.@-]{0,63}$/
 const passwordPattern = /^[!-~]{1,64}$/
-const networkPattern = /^(\d{1,3}\.){3}\d{1,3}\/\d{1,2}$/
 const alphabet = 'ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz23456789'
 const listenRules = [{ required: true, pattern: /^\*$|^(\d{1,3}\.){3}\d{1,3}$/, message: '* or IPv4 address' }]
 const pemRules = [{ required: true, pattern: /-----BEGIN [A-Za-z0-9 ]+-----/, message: 'PEM text expected; press Regenerate to create it' }]
@@ -379,7 +379,7 @@ function userError(record, index) {
 
 async function checkRoutes(rule, value) {
   for (const line of String(value || '').split('\n').map((item) => item.trim()).filter(Boolean)) {
-    if (!networkPattern.test(line)) {
+    if (!routeValid(line)) {
       throw new Error(`'${line}' is not an IPv4 network`)
     }
   }

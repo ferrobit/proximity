@@ -120,4 +120,22 @@ export function highlightPEM(text) {
   })
 }
 
-export const highlighters = { openvpn: highlightOpenVPN, amneziawg: highlightAmnezia, pem: highlightPEM }
+const routePattern = /^(\s*)((?:\d{1,3}\.){3}\d{1,3})(\/\d{1,2})(\s*)$/
+
+export function routeValid(line) {
+  const found = line.match(routePattern)
+  return !!found && found[2].split('.').every((part) => Number(part) <= 255) && Number(found[3].slice(1)) <= 32
+}
+
+export function highlightRoutes(text) {
+  return text.split('\n').map((line) => {
+    if (!line.trim()) return [token(line, 'plain')]
+    if (!routeValid(line)) return [token(line, 'error')]
+    const found = line.match(routePattern)
+    return [token(found[1], 'plain'), token(found[2], 'ip'), token(found[3], 'mask'), token(found[4], 'plain')]
+      .filter((part) => part.text)
+  })
+}
+
+export const highlighters = { openvpn: highlightOpenVPN, amneziawg: highlightAmnezia, pem: highlightPEM,
+  routes: highlightRoutes }

@@ -416,7 +416,7 @@ The OpenVPN inbound dialog has the tabs **General**, **Server**, **Clients**, **
 | Tab | Fields |
 |---|---|
 | Server | *Public address* and *Public port* (what clients connect to; written to exported configurations), *Protocol* UDP/TCP, *Listen address*, *VPN network* (`10.77.<N>.0/24` when empty), *Maximum clients*, *Tunnel MTU*, *Log verbosity* |
-| Clients | *Route all client traffic through the VPN*, *Clients can reach each other*, *Additional routes*, *DNS servers* (empty: the Proximity resolver, so domain routes work for VPN clients) |
+| Clients | *Route all client traffic through the VPN*, *Clients can reach each other*, *Additional routes* (one IPv4 network per line, up to 64; addresses and masks are highlighted, an invalid line is underlined in red and blocks saving), *DNS servers* (empty: the Proximity resolver, so domain routes work for VPN clients) |
 | Security | *Data ciphers*, *HMAC digest*, *Minimum TLS version*, *Renegotiation*, *Keepalive*, *Require one-time code (TOTP)* with the *TOTP key* |
 | Keys and certificates | CA certificate and key, server certificate and key, client certificate and key, TLS-crypt key. The fields highlight the `BEGIN` / `END` lines; the body of private and static keys is red |
 
