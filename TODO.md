@@ -142,6 +142,24 @@ document `proximity-openvpn-test-report.md`.
     fixed) or remove them on the next save; what to do with references
     to a dropped element (routes, fallbacks, inbounds).
 
+## Web UI
+
+- [ ] **Reload the open web UI when Proximity behind it was updated or restarted**
+  - An open page keeps running the old JavaScript after the container was
+    rebuilt (a new version) or just restarted; it must notice this and
+    reload itself.
+  - What to compare with the values remembered at page load:
+    - the Proximity version (`version` of `GET /api/session`);
+    - a unique ID of the running instance: a random value generated at
+      every start of the process. There is no such ID in the API now;
+      add it (for example `instance` in `GET /api/session` or in
+      `GET /api/dashboard`, which the page already polls every 3 seconds).
+  - Choose: the version alone misses a restart and a rebuild without a
+    version bump; the instance ID alone covers both cases.
+  - On a mismatch reload the page automatically. Decide what to do with
+    an open dialog that has unsaved changes and with the time when the
+    server does not answer (the container is still starting).
+
 ## Performance
 
 - [ ] **Investigate high latency when routing traffic through Proximity**

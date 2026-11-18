@@ -5,6 +5,7 @@
 - [Build](#build)
 - [Run locally without Docker](#run-locally-without-docker)
 - [UI development](#ui-development)
+- [Screenshots](#screenshots)
 - [Tests](#tests)
 - [Code style](#code-style)
 - [Updating bundled components](#updating-bundled-components)
@@ -28,12 +29,15 @@ proximity/
 ├── scripts/
 │   ├── proximity.sh        compose wrapper for Linux and macOS
 │   ├── proximity.ps1       compose wrapper for Windows
+│   ├── screenshots.sh      retakes the dialog pictures of docs/images (make screenshots)
+│   ├── screenshots/        its headless browser script, sample data and npm packages list
 │   └── githooks/pre-commit make vet build before commit
 ├── docs/                   documentation and screenshots
 ├── Dockerfile              multi-stage image build
 ├── docker-compose.yml          Linux, host network, transparent capture
 ├── docker-compose.bridge.yml   macOS / Windows / Linux without capture
-└── Makefile
+├── Makefile                    only includes makefile.mk
+└── makefile.mk                 all make targets
 ```
 
 ## Prerequisites
@@ -44,6 +48,7 @@ proximity/
 | Node.js | 22 |
 | rsync | any, for `make` |
 | Docker | with Compose v2, for the image |
+| A Chromium-based browser | Chrome, Chromium, Brave, Thorium, Edge, Vivaldi or Yandex Browser, for `make screenshots` |
 | For running tunnels locally | `ip` (iproute2), `ping`, `openvpn`, `amneziawg-go`, `awg`, `oathtool`, root or `CAP_NET_ADMIN` |
 
 ## Build
@@ -59,6 +64,7 @@ proximity-build/
 ├── bin/proximity    the binary
 ├── cache/           Go build and module caches, npm cache (GOCACHE, GOMODCACHE, npm_config_cache)
 ├── tmp/             TMPDIR / GOTMPDIR of builds and tests
+├── screenshots/     node_modules of make screenshots
 └── coverage.out     make cover
 ```
 
@@ -74,6 +80,7 @@ make clean    # remove ../proximity-build
 make image    # docker image only
 make up       # build image and start the container
 make logs     # follow container logs
+make screenshots   # retake the dialog pictures in docs/images
 make down     # stop
 ```
 
@@ -148,6 +155,64 @@ repository every second, so edits in `web/src` reload the page. Run the Go binar
 | `src/components/history.js` | shared `/api/history` loader for both Dashboard charts |
 | `src/components/LogView.vue` | auto-refreshing, auto-scrolling log view |
 
+## Screenshots
+
+```bash
+make screenshots                                           # all dialog pictures
+make screenshots ONLY="outbound-monitoring inbound-users"  # only these
+```
+
+`make screenshots` runs `scripts/screenshots.sh` (it also works by itself, with the
+picture names as arguments). The script builds the image `proximity-screenshots` from the working tree,
+starts a throwaway container of the same name (no host network, no capabilities, no
+volume; the UI on a free port of `127.0.0.1`), adds the sample data of
+`scripts/screenshots/seed.json` through the API, opens every dialog in a headless browser and
+compares the picture with the file in `docs/images` pixel by pixel. A file is written only
+when the pixels changed (`updated`) or the file did not exist (`new`); the same picture in
+other bytes (another browser version, added metadata) is left as it is (`unchanged`), so
+Git sees only real changes. The container is removed at the end; a running Proximity and
+its settings are not touched. The pictures are 2x and the page behind the dialog is hidden,
+so the same UI gives the same pixels on the same machine. Fonts differ between machines,
+so the first run on another machine rewrites all pictures.
+
+| Picture | Dialog of | Tab |
+|---|---|---|
+| `outbound-general.png` | outbound 'Proxy DE' (SOCKS5) | General |
+| `outbound-socks5.png` | outbound 'Proxy DE' | SOCKS5 Proxy |
+| `outbound-http.png` | outbound 'Proxy US' | HTTP Proxy |
+| `outbound-host.png` | outbound 'Home ISP' | HOST Network |
+| `outbound-openvpn.png` | outbound 'Corp VPN' | OpenVPN |
+| `outbound-openvpn-auth.png` | outbound 'Corp VPN' | Authentication |
+| `outbound-monitoring.png` | outbound 'Corp VPN' | Monitoring |
+| `outbound-amneziawg.png` | outbound 'AWG NL' | AmneziaWG |
+| `inbound-openvpn.png` | inbound 'Office VPN' | Server |
+| `inbound-users.png` | inbound 'Office VPN' | Users |
+
+A new picture is one line in the `shots` list of `scripts/screenshots/screenshots.mjs`
+(file, section, row, tab) and, when it needs other data, an entry in `seed.json`. The
+other pictures (dashboard, connection map, lists, logs, routes, settings) need live
+tunnels and traffic and are still taken by hand, see the note above.
+
+The browser is looked up by name in `PATH`, as `which` does: `google-chrome`, `chromium`,
+`chromium-browser`, `brave-browser`, `brave`, `thorium-browser`, `microsoft-edge`, `vivaldi`,
+`yandex-browser` and their `-stable` / `-beta` names, in this order (the full list is
+`browsers` in `screenshots.mjs`). When none is in `PATH`, the usual install paths are tried
+(`/opt/...`, `/snap/bin`, `/Applications` — the list `applications`). The script checks the
+browser before the image build. Any other browser on the Chromium engine works through
+`CHROME`.
+
+| Variable | Meaning |
+|---|---|
+| `PROXIMITY_IMAGE` | use this ready image instead of building one |
+| `CHROME` | name or path of the browser to use instead of the one found |
+| `SCREENSHOT_OUTPUT` | folder for the pictures (default `docs/images`) |
+| `SCREENSHOT_TOOLS` | folder for `node_modules` (default `../proximity-build/screenshots`, `make` follows `BUILD`) |
+
+> [!NOTE]
+> A picture that must have changed because the code or the layout of its dialog changed
+> may be replaced right away: there is no need to open the new picture and to compare it
+> with the old one. Look at a picture only when it is not clear whether it had to change.
+
 ## Tests
 
 ```bash
@@ -210,9 +275,10 @@ new ones after an upgrade.
 
 1. `make vet test` — clean.
 2. `make all` — the UI and the binary build without errors.
-3. Bump `VERSION` in `Makefile`, `Dockerfile` and the default `PROXIMITY_VERSION` in the
+3. Bump `VERSION` in `makefile.mk`, `Dockerfile` and the default `PROXIMITY_VERSION` in the
    compose files.
-4. Update the *Project status* section in `README.md` and screenshots if the UI changed.
+4. Update the *Project status* section in `README.md` and screenshots if the UI changed
+   (`make screenshots` retakes the dialog pictures).
 5. `make up` on a clean settings folder: first-run dialog, one outbound of each type,
    transparent mode on Linux.
 6. Tag the release.
