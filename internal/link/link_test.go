@@ -919,6 +919,7 @@ func TestManager_Capture(t *testing.T) {
 	require.NoError(t, err)
 	manager.SetActive(true, config.Config{})
 	defer manager.Close()
+	manager.capture.device = "proximity_missing"
 	require.False(t, manager.Capture(true, true))
 	calls, err := os.ReadFile(filepath.Join(directory, "ip.log"))
 	require.NoError(t, err)

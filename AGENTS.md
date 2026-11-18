@@ -23,7 +23,7 @@ save time. Add a line when a new command fails; keep it short.
 | puppeteer: a table row is not found by the text of an input | Compare `input.value`, not `textContent` |
 | puppeteer: `click` on a dropdown button, the menu does not open | `hover`: Ant Design dropdowns open on hover |
 | puppeteer: the same dialog gives different pixels | Hide `#app` behind the dialog, blur the focused control, take the picture until two in a row are equal |
-| `make test` with a running Proximity on the same machine | Stop it first: `TestManager_Capture` needs no `proximity_tun` interface |
+| A test of the capture code fails when a running Proximity left `proximity_tun` on the machine | Give the test its own device name (`manager.capture.device = "proximity_missing"`); reproduce with `ip tuntap add dev proximity_tun mode tun` |
 | Node `execFileSync('docker', ['logs', …])`: the log is empty | `docker logs` writes to stderr too: read both streams (`docker()` in `scripts/stands/lib.mjs`) |
 | A test with a one-time code waits up to 30 seconds for the next code | Give the test a clock that stands a few seconds before the next 30-second window (`TestManager_RejectedCode`) |
 | A test expects the exact text of the generated OpenVPN server config | Build the expected text from the same helper (`certificateFingerprint`) instead of a constant |
