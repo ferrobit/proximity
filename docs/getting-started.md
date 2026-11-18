@@ -5,6 +5,7 @@ sites, a proxy for a couple of services, everything else straight to your ISP.
 
 - [1. Requirements](#1-requirements)
 - [2. Install and start](#2-install-and-start)
+  - [Start after a reboot](#start-after-a-reboot)
 - [3. Create the administrator](#3-create-the-administrator)
 - [4. Add outbounds](#4-add-outbounds)
 - [5. Optional: group outbounds into a fallback](#5-optional-group-outbounds-into-a-fallback)
@@ -51,10 +52,32 @@ Any arguments are passed to `docker compose`, so the same script manages the con
 ```bash
 scripts/proximity.sh ps          # status
 scripts/proximity.sh logs -f     # logs
+scripts/proximity.sh stop        # stop; it stays stopped after a reboot
+scripts/proximity.sh start       # start again
 scripts/proximity.sh down        # stop and remove the container
 ```
 
 Open <http://localhost:8899>.
+
+### Start after a reboot
+
+The container has `restart: unless-stopped`: when the computer reboots, Docker starts it
+again with the same settings, unless it was stopped with `stop` or removed with `down`.
+Docker itself must start at boot:
+
+- **Linux** — the Docker service must be enabled. `scripts/proximity.sh up` warns when it
+  is not; enable it once with `sudo systemctl enable docker.service`.
+- **macOS and Windows** — turn on *Start Docker Desktop when you sign in* in Docker Desktop
+  (Settings → General); containers start after you sign in.
+
+`up` also saves the variables `PROXIMITY_NETWORK`, `PROXIMITY_UI_BIND`,
+`PROXIMITY_PROXY_BIND`, `PROXIMITY_INBOUND_BIND`, `PROXIMITY_IPTABLES` and `TZ` to
+`proximity.env` in the settings folder (the Windows script saves the bridge-mode ones). Later
+runs of the script use them when they are not set in the shell, so `up -d --build` after an
+upgrade creates the container with the settings of the first start. Set a variable again to
+change it, or edit or delete the file. The administrator name and password are not saved:
+they are needed only for the first start. A non-default `PROXIMITY_CONFIG_DIR` must be set on
+every run, because the file is inside that folder.
 
 ## 3. Create the administrator
 
@@ -146,7 +169,8 @@ curl -x socks5h://127.0.0.1:7899 https://ifconfig.me
 ## Environment variables
 
 Variables read by `scripts/proximity.sh` and the compose files (set them in the shell or in
-a `.env` file next to the compose file):
+a `.env` file next to the compose file; the script remembers some of them in
+`proximity.env`, see [Start after a reboot](#start-after-a-reboot)):
 
 | Variable | Default | Meaning |
 |---|---|---|
@@ -185,8 +209,9 @@ The binary also accepts flags with the same meaning: `--listen`, `--config`, `--
 
 ```bash
 git pull
-scripts/proximity.sh up -d --build   # rebuild and restart; settings are kept
-scripts/proximity.sh down            # stop; host routing rules are removed
+scripts/proximity.sh up -d --build   # rebuild and restart; settings and saved variables are kept
+scripts/proximity.sh stop            # stop; it stays stopped after a reboot
+scripts/proximity.sh down            # stop and remove; host routing rules are removed
 ```
 
 To remove Proximity completely, stop it and delete the settings folder

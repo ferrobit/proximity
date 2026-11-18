@@ -112,7 +112,10 @@ scripts/proximity.sh up -d --build      # Linux and macOS
 .\scripts\proximity.ps1 up -d --build   # Windows (PowerShell)
 ```
 
-The script picks the right compose file and configuration folder for your OS.
+The script picks the right compose file and configuration folder for your OS, remembers the
+start settings in `proximity.env`, and the container starts again after a reboot
+(`restart: unless-stopped`) when Docker starts at boot — see
+[Start after a reboot](docs/getting-started.md#start-after-a-reboot).
 
 | What | Where |
 |---|---|
@@ -291,6 +294,7 @@ Settings stay unchanged.
 | `router.json` | router state (running or stopped) for *Start the router when the container starts* |
 | `services.json` | state of tunnels and inbounds (running, stopped, failed) kept across restarts |
 | `logs/` | logs of outbounds and inbounds, kept across restarts |
+| `proximity.env` | variables of the first `scripts/proximity.sh up` (network mode, bind addresses, iptables tool, time zone), reused by later runs |
 | `mihomo/config.yaml` | generated mihomo configuration (JSON, which is valid YAML) |
 
 > [!WARNING]
