@@ -38,6 +38,12 @@ func makeConfig(t *testing.T) *Config {
 	return &result
 }
 
+func unmarshalError(t *testing.T, data string, target any) string {
+	err := json.Unmarshal([]byte(data), target)
+	require.Error(t, err)
+	return err.Error()
+}
+
 func TestAddFallback_Members(t *testing.T) {
 	config := makeConfig(t)
 	{
@@ -914,12 +920,9 @@ func TestOpen_Repairs(t *testing.T) {
 		store, err := Open(directory)
 		require.NoError(t, err)
 		require.Equal(t, []Problem{
-			{Kind: KindUser, ID: "#1", Reason: "json: cannot unmarshal number into Go struct " +
-				"field User.role of type string"},
-			{Kind: KindUser, ID: "#2", Reason: "json: cannot unmarshal number into Go value of " +
-				"type config.User"},
-			{Kind: KindRoute, ID: "*", Reason: "json: cannot unmarshal number into Go value of " +
-				"type []json.RawMessage"},
+			{Kind: KindUser, ID: "#1", Reason: unmarshalError(t, `{"role":1}`, &User{})},
+			{Kind: KindUser, ID: "#2", Reason: unmarshalError(t, `7`, &User{})},
+			{Kind: KindRoute, ID: "*", Reason: "unexpected JSON number instead of list"},
 			{Kind: KindSettings, ID: KindSettings, Reason: "failed to check settings: unexpected " +
 				"log level 'loud'"}}, store.Problems().Items)
 		require.Equal(t, Default().Settings, store.Snapshot().Settings)
@@ -928,13 +931,23 @@ func TestOpen_Repairs(t *testing.T) {
 		store, err = Open(directory)
 		require.NoError(t, err)
 		require.Len(t, store.Problems().Items, 5)
-		require.Equal(t, Problem{Kind: KindSettings, ID: KindSettings, Reason: "json: cannot " +
-			"unmarshal number into Go value of type config.Settings"}, store.Problems().Items[4])
+		require.Equal(t, Problem{Kind: KindSettings, ID: KindSettings,
+			Reason: unmarshalError(t, `7`, &Settings{})}, store.Problems().Items[4])
 		require.NoError(t, os.WriteFile(report, []byte("{"), 0o600))
 		require.NoError(t, os.WriteFile(path, []byte(`{"version":7,"version":"x"}`), 0o600))
 		store, err = Open(directory)
 		require.NoError(t, err)
 		require.Len(t, store.Problems().Items, 1)
+		require.NoError(t, store.ClearProblems())
+		require.NoError(t, os.WriteFile(path, []byte(`{"outbounds":{},"fallbacks":"x",`+
+			`"inbounds":true,"routes":null}`), 0o600))
+		store, err = Open(directory)
+		require.NoError(t, err)
+		require.Equal(t, []Problem{
+			{Kind: KindOutbound, ID: "*", Reason: "unexpected JSON object instead of list"},
+			{Kind: KindFallback, ID: "*", Reason: "unexpected JSON string instead of list"},
+			{Kind: KindInbound, ID: "*", Reason: "unexpected JSON boolean instead of list"}},
+			store.Problems().Items)
 		require.NoError(t, store.ClearProblems())
 	}
 	{
@@ -973,10 +986,9 @@ func TestOpen_Repairs(t *testing.T) {
 		store, err := Open(directory)
 		require.NoError(t, err)
 		require.Equal(t, []Problem{
-			{Kind: KindSettings, ID: "version", Reason: "json: cannot unmarshal string into Go " +
-				"value of type int"},
-			{Kind: KindOutbound, ID: "SOCKS5 1", Reason: "json: cannot unmarshal string into Go " +
-				"struct field Socks5Options.socks5.port of type int"},
+			{Kind: KindSettings, ID: "version", Reason: unmarshalError(t, `"seven"`, new(int))},
+			{Kind: KindOutbound, ID: "SOCKS5 1",
+				Reason: unmarshalError(t, `{"socks5":{"port":"abc"}}`, &Outbound{})},
 			{Kind: KindUser, ID: "king", Reason: "unexpected role 'king'"},
 			{Kind: KindOutbound, ID: "HTTP 1", Reason: "failed to check outbound 'HTTP 1': " +
 				"invalid port (0)"},

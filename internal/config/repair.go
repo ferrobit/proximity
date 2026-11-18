@@ -1,6 +1,7 @@
 package config
 
 import (
+	"bytes"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -52,7 +53,8 @@ func decodeItems[T any](state *repairState, kind string, data json.RawMessage) [
 	if len(data) == 0 {
 		return result
 	} else if err := json.Unmarshal(data, &items); err != nil {
-		state.drop(kind, wholeList, err.Error())
+		state.drop(kind, wholeList, fmt.Sprintf("unexpected JSON %v instead of list",
+			valueKind(data)))
 		return result
 	}
 	for index, item := range items {
@@ -74,6 +76,20 @@ func keepValid[T any](state *repairState, result *Config, list *[]T, items []T, 
 			state.drop(kind, nameFunc(item), err.Error())
 			*list = (*list)[:len(*list)-1]
 		}
+	}
+}
+
+// NOTE: The data is valid JSON that is neither a list nor null, so the rest is a number.
+func valueKind(data json.RawMessage) string {
+	switch token, _ := json.NewDecoder(bytes.NewReader(data)).Token(); token.(type) {
+	case json.Delim:
+		return "object"
+	case string:
+		return "string"
+	case bool:
+		return "boolean"
+	default:
+		return "number"
 	}
 }
 
