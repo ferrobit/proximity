@@ -11,7 +11,7 @@ save time. Add a line when a new command fails; keep it short.
 | `rm`, `mv`, `chmod`, `git` on the user's machine: no shell there | Write the new file and give the user the one-line command; call a script through `bash file.sh` so it works without `chmod +x` |
 | Writing a file to the user's folder right after copying it to the outputs folder: the old version arrived | `sync`, wait some seconds, write, then stage the file back and `cmp` it with the tested copy |
 | Comparing PNG files by bytes: the transfer adds metadata | Compare pixels (`make screenshots` does it) |
-| `docker build` in a sandbox behind a TLS proxy: certificate errors | `--build-arg GO_IMAGE=… NODE_IMAGE=… BASE_IMAGE=…` with images that hold the proxy CA, or `PROXIMITY_IMAGE=<ready image>` for the screenshots |
+| `docker build` in a sandbox behind a TLS proxy: certificate errors | `--build-arg GO_IMAGE=… NODE_IMAGE=… BASE_IMAGE=…` with images that hold the proxy CA, or `PROXIMITY_IMAGE=<ready image>` for the screenshots; the proxy refuses plain HTTP (405), so switch the apt sources of the base image to `https://deb.debian.org` |
 | `docker …`: *Cannot connect to the Docker daemon* after a pause in a sandbox | `rm -f /var/run/docker.pid`, start `dockerd` again, then repeat |
 | OpenVPN waits for time synchronization: no NTP in a sandbox | A local NTP server in the Docker network with the aliases `time.cloudflare.com`, `time.google.com`, `pool.ntp.org`; for the screenshots pass the network as `SCREENSHOT_NETWORK` |
 | `curl`, `wget`, `sysctl` inside the Proximity container: not installed | Call the API from outside; inside there are `ip`, `iptables`, `ping`, `openvpn`, `awg` |
@@ -59,7 +59,7 @@ make a stand for it in `scripts/stands/<stand>/` and add its line here.
 | pair | `bash scripts/stands/pair/stand.sh up` / `down` / `status` | Two empty linked instances: `proximity-stand-a` (client side) and `proximity-stand-b` (server side, answers for `1.1.1.1:443`). A check adds what it needs through the API |
 | pair: security | `make stand-security` (1 minute, 16 checks) | OpenVPN inbound with TOTP and two users against two outbounds: single use of one-time codes, rejection of an old client certificate, ping of clients |
 | pair: tunnel | `make stand-tunnel` (20 seconds, 24 checks) | OpenVPN inbound with pushed routes and an outbound with *Receive routes*: defaults of a new inbound (network, MTU), the provided route (first, follows the connection, moved, kept after a restart), the token after a restart of the inbound, a disabled user, the instance mark |
-| reload | `make stand-reload` (20 seconds, 7 checks, needs a browser) | One instance on the fixed port `127.0.0.1:18899` and a headless browser: the open page reloads itself after `docker restart`, waits with a notice while a dialog is open |
+| reload | `make stand-reload` (25 seconds, 10 checks, needs a browser) | One instance on the fixed port `127.0.0.1:18899` and a headless browser: after `docker restart` the open page warns that unsaved changes are lost and reloads itself in 5 seconds, also with an open dialog |
 | broken-config | `make stand-config` (5 seconds, 17 checks) | One instance started with the damaged `config.json`: what is dropped and kept, the copy of the file, the report in the API |
 
 Common parts: `scripts/stands/lib.sh` (image, network, instance, removal) and `lib.mjs`

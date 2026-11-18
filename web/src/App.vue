@@ -157,7 +157,6 @@ const collapsed = ref(false)
 const section = ref('dashboard')
 const overview = ref(null)
 const problems = ref({ items: [], backup: '' })
-const stale = ref(false)
 const loginOpen = ref(false)
 const passwordOpen = ref(false)
 const busy = ref(false)
@@ -165,6 +164,8 @@ const passwordForm = ref()
 const password = reactive({ current: '', password: '', repeat: '' })
 const setupForm = ref()
 const setup = reactive({ username: 'admin', password: '', confirm: '' })
+const reloadDelay = 5
+let stale = false
 let timer = null
 
 const theme = computed(() => ({
@@ -201,31 +202,18 @@ function toggleTheme() {
 
 const reloadPage = () => window.location.reload()
 
-// NOTE: A dialog may hold unsaved input, so the page waits until it is closed.
-function dialogOpen() {
-  return Array.from(document.querySelectorAll('.ant-modal-wrap, .ant-drawer-open'))
-    .some((element) => getComputedStyle(element).display !== 'none')
-}
-
-function reloadStale() {
-  if (stale.value && !dialogOpen()) {
-    reloadPage()
-  }
-}
-
-// NOTE: The notice lies above an open dialog, so its button can be pressed.
+// NOTE: An update or a restart of Proximity goes before the input of the user: the page says
+// that unsaved changes are lost and reloads itself. The notice lies above an open dialog.
 function markStale() {
-  if (!stale.value && dialogOpen()) {
-    notification.info({ key: 'stale', duration: 0, message: 'Proximity was restarted or updated',
-      description: 'The page reloads itself as soon as the open dialog is closed.',
-      btn: () => h(Button, { type: 'primary', size: 'small', onClick: reloadPage }, () => 'Reload now') })
-  }
-  stale.value = true
-  reloadStale()
+  if (stale) return
+  stale = true
+  notification.warning({ key: 'stale', duration: 0, message: 'Proximity was restarted or updated',
+    description: `The page reloads in ${reloadDelay} seconds. Unsaved changes, also in open dialogs, will be lost.`,
+    btn: () => h(Button, { type: 'primary', size: 'small', onClick: reloadPage }, () => 'Reload now') })
+  setTimeout(reloadPage, reloadDelay * 1000)
 }
 
 async function refreshOverview() {
-  reloadStale()
   if (locked.value) {
     overview.value = null
     return

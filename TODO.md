@@ -203,9 +203,10 @@ document `proximity-openvpn-test-report.md`.
 
 - [x] **Reload the open web UI when Proximity behind it was updated or restarted**
   - Done: every answer carries `X-Proximity-Instance`, a mark that is new
-    after every start. The page reloads itself when the mark changes;
-    with an open dialog it shows a notice with "Reload now" and reloads
-    when the dialog is closed. Checked in a browser: `make stand-reload`.
+    after every start. When the mark changes, the page warns that unsaved
+    changes, also in open dialogs, are lost and reloads itself in 5 seconds
+    ("Reload now" at once): an update goes before the input of the user.
+    Checked in a browser: `make stand-reload`.
   - Original task:
   - An open page keeps running the old JavaScript after the container was
     rebuilt (a new version) or just restarted; it must notice this and
@@ -222,8 +223,11 @@ document `proximity-openvpn-test-report.md`.
     an open dialog that has unsaved changes and with the time when the
     server does not answer (the container is still starting).
 
-- [ ] **Reload with unsaved input outside dialogs**
-  - The automatic reload waits only for dialogs. Values typed on the
+- [x] **Reload with unsaved input outside dialogs**
+  - Done: dropped by the decision of 2026-11-18. An update is rare and goes
+    before the input of the user: the page warns that unsaved changes, on
+    forms and in dialogs, are lost and reloads itself in 5 seconds.
+  - Original task: the automatic reload waits only for dialogs. Values typed on the
     Settings page (it is a form, not a dialog) are lost when Proximity
     restarts at that moment. Track changed forms and show the notice
     instead of reloading.

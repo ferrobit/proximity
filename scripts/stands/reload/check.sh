@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 # Stand "reload": one instance on a fixed port of 127.0.0.1 and a headless browser with its
-# page open. Checks that an open page reloads itself after a restart of the container, and
-# that it waits with a notice while a dialog is open.
-# Usage: make stand-reload, or bash scripts/stands/reload/check.sh   (about 40 seconds)
+# page open. Checks that an open page warns that unsaved changes are lost and reloads itself
+# after a restart of the container, also while a dialog is open.
+# Usage: make stand-reload, or bash scripts/stands/reload/check.sh   (about 60 seconds)
 # Needs the browser and the node modules of the screenshots (see scripts/screenshots.sh).
 # Variables: STAND_PORT (default 18899), CHROME, SCREENSHOT_TOOLS and those of ../lib.sh.
 source "$(dirname "$0")/../lib.sh"

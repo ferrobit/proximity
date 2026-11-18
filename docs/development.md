@@ -276,7 +276,7 @@ stand does not use the host network and does not touch a running Proximity.
 ```bash
 make stand-security                     # stand "pair": 16 checks, about 1 minute
 make stand-tunnel                       # stand "pair": 24 checks, about 20 seconds
-make stand-reload                       # stand "reload": 7 checks, about 20 seconds, needs a browser
+make stand-reload                       # stand "reload": 10 checks, about 25 seconds, needs a browser
 make stand-config                       # stand "broken-config": 17 checks, about 5 seconds
 bash scripts/stands/pair/stand.sh up    # only start the stand; "down" removes it
 ```
@@ -284,7 +284,7 @@ bash scripts/stands/pair/stand.sh up    # only start the stand; "down" removes i
 | Stand | What it is | Checks |
 |---|---|---|
 | `pair` | two linked instances: `proximity-stand-a` (client side) and `proximity-stand-b` (server side, also answers for `1.1.1.1:443`) | `make stand-security` (`security.sh`): single use of one-time codes, rejection of an old client certificate, ping of clients. `make stand-tunnel` (`tunnel.sh`): default network and MTU of a new inbound, the route of *Receive routes* (appears, follows the connection, can be moved, keeps its place after a restart), the token after a restart of the inbound, a disabled user, the instance mark |
-| `reload` | one instance on the fixed port `127.0.0.1:18899` (`STAND_PORT`) and a headless browser with its page open; uses the browser and the node modules of the screenshots | `make stand-reload` (`check.sh`): the page reloads itself after a restart of the container; with an open dialog it shows a notice, keeps the input and reloads when the dialog is closed |
+| `reload` | one instance on the fixed port `127.0.0.1:18899` (`STAND_PORT`) and a headless browser with its page open; uses the browser and the node modules of the screenshots | `make stand-reload` (`check.sh`): after a restart of the container the page warns that unsaved changes are lost and reloads itself in 5 seconds, also with an open dialog; "Reload now" reloads at once |
 | `broken-config` | one instance started with the damaged `config.json` of the stand | `make stand-config` (`check.sh`): what is dropped, what is kept, the copy of the file, the report and its dismissal |
 | screenshots | two linked instances with sample data and traffic, see [Screenshots](#screenshots) | — |
 
