@@ -224,7 +224,10 @@ Tabs: **General**, **OpenVPN**, **Authentication**, **Monitoring**.
 **OpenVPN** tab (above):
 
 - **VPN configuration file** — *Upload .ovpn file* or paste/edit the text; inline
-  `<ca>`, `<cert>`, `<key>`, `<tls-auth>` blocks are supported.
+  `<ca>`, `<cert>`, `<key>`, `<tls-auth>` blocks are supported. The editor numbers the
+  lines and highlights them: directives, protocols and other keywords, host names, IP
+  addresses, netmasks and ports, comments, inline block tags, certificates; private keys,
+  static keys and the password of `<auth-user-pass>` are shown in red.
 - **Use DNS servers pushed by VPN** — resolve the domains of routes that target this
   outbound through the VPN's DNS.
 
@@ -245,7 +248,9 @@ as **Routes of OpenVPN N**.
 
 ![AmneziaWG outbound](images/outbound-amneziawg.png)
 
-- **Upload .conf file** or paste the configuration.
+- **Upload .conf file** or paste the configuration. The editor highlights sections, keys,
+  addresses and masks, the endpoint, numbers of the obfuscation parameters (`Jc`, `Jmin`,
+  `Jmax`, `S1`, `S2`, `H1`–`H4`) and shows `PrivateKey` and `PresharedKey` in red.
 - **Scan QR code from image** — choose a screenshot/photo of the QR code from the Amnezia
   app; it is decoded in the browser.
 - **Convert vpn:// key** — paste the `vpn://…` key exported by the Amnezia app and press
@@ -413,7 +418,7 @@ The OpenVPN inbound dialog has the tabs **General**, **Server**, **Clients**, **
 | Server | *Public address* and *Public port* (what clients connect to; written to exported configurations), *Protocol* UDP/TCP, *Listen address*, *VPN network* (`10.77.<N>.0/24` when empty), *Maximum clients*, *Tunnel MTU*, *Log verbosity* |
 | Clients | *Route all client traffic through the VPN*, *Clients can reach each other*, *Additional routes*, *DNS servers* (empty: the Proximity resolver, so domain routes work for VPN clients) |
 | Security | *Data ciphers*, *HMAC digest*, *Minimum TLS version*, *Renegotiation*, *Keepalive*, *Require one-time code (TOTP)* with the *TOTP key* |
-| Keys and certificates | CA certificate and key, server certificate and key, client certificate and key, TLS-crypt key |
+| Keys and certificates | CA certificate and key, server certificate and key, client certificate and key, TLS-crypt key. The fields highlight the `BEGIN` / `END` lines; the body of private and static keys is red |
 
 Keys, certificates, the TLS-crypt key and the TOTP key are generated automatically when
 the dialog opens. Every field can be edited (paste your own PEM text) or regenerated with
@@ -433,7 +438,7 @@ password.
 |---|---|
 | Allow anonymous connections | SOCKS5: no authentication at all, the list is not checked. OpenVPN: a client with the certificate connects without user name and password |
 | User list | *Enabled*, *User name*, *Password* (⚡ generates a random one), delete |
-| Export configuration (OpenVPN) | Saves the inbound and opens a read-only preview of the client configuration with **Copy to clipboard** and **Export**. The file is named `<ID>-<username>.conf`. *Embed user name and password* writes the credentials into the file (OpenVPN 2.6 or newer) |
+| Export configuration (OpenVPN) | Saves the inbound and opens a read-only, highlighted preview of the client configuration with **Copy to clipboard** and **Export**. The file is named `<ID>-<username>.conf`. *Embed user name and password* writes the credentials into the file (OpenVPN 2.6 or newer) |
 
 ![Client configuration](images/inbound-export.png)
 

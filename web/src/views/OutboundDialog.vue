@@ -90,7 +90,7 @@
               <a-upload :before-upload="readText('openvpn')" :show-upload-list="false" accept=".ovpn,.conf,.txt">
                 <a-button size="small" style="margin-bottom: 8px"><template #icon><UploadOutlined /></template>Upload .ovpn file</a-button>
               </a-upload>
-              <a-textarea v-model:value="form.openvpn.config" class="mono" :rows="10" placeholder="client&#10;dev tun&#10;remote vpn.example.com 1194 udp&#10;…" spellcheck="false" />
+              <CodeEditor v-model:value="form.openvpn.config" language="openvpn" :height="280" placeholder="client&#10;dev tun&#10;remote vpn.example.com 1194 udp&#10;…" />
             </a-form-item>
             <a-form-item label="Use DNS servers pushed by VPN" extra="For domains routed to this outbound"><a-switch v-model:checked="form.openvpn.use_dns" /></a-form-item>
           </template>
@@ -105,7 +105,7 @@
                 </a-upload>
                 <a-button size="small" @click="importKey"><template #icon><ImportOutlined /></template>Convert vpn:// key</a-button>
               </a-space>
-              <a-textarea v-model:value="form.amneziawg.config" class="mono" :rows="12" placeholder="[Interface]&#10;PrivateKey = …&#10;Address = 10.8.1.2/32&#10;Jc = 4&#10;…&#10;[Peer]&#10;PublicKey = …&#10;Endpoint = host:port&#10;AllowedIPs = 0.0.0.0/0" spellcheck="false" />
+              <CodeEditor v-model:value="form.amneziawg.config" language="amneziawg" :height="300" placeholder="[Interface]&#10;PrivateKey = …&#10;Address = 10.8.1.2/32&#10;Jc = 4&#10;…&#10;[Peer]&#10;PublicKey = …&#10;Endpoint = host:port&#10;AllowedIPs = 0.0.0.0/0" />
             </a-form-item>
             <a-form-item label="Use DNS servers from configuration" extra="For domains routed to this outbound"><a-switch v-model:checked="form.amneziawg.use_dns" /></a-form-item>
           </template>
@@ -158,6 +158,7 @@ import { ControlOutlined, HeartOutlined, IdcardOutlined, ImportOutlined, Profile
 import jsQR from 'jsqr'
 import { api, id } from '../api'
 import { typeLabels } from '../format'
+import CodeEditor from '../components/CodeEditor.vue'
 
 const props = defineProps({
   open: Boolean,

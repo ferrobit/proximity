@@ -36,3 +36,9 @@
 .rule-dark .rule-string { color: #e5c07b; }
 .rule-secret { color: #b91c1c; font-style: italic; }
 .rule-dark .rule-secret { color: #fca5a5; }
+.rule-tag { color: #7c3aed; font-weight: 600; }
+.rule-pem { color: #0369a1; font-weight: 600; }
+.rule-base64 { color: #8a8f98; }
+.rule-dark .rule-tag { color: #c4b5fd; }
+.rule-dark .rule-pem { color: #7dd3fc; }
+.rule-dark .rule-base64 { color: #7b8794; }

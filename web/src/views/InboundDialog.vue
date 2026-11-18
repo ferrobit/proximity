@@ -64,10 +64,10 @@
               <a-alert type="info" show-icon style="margin-bottom: 16px" message="Clients must connect with TLS (SOCKS5 over TLS). The certificate is self-signed unless you replace it." />
               <a-form-item :name="['socks5', 'certificate']" :rules="pemRules">
                 <template #label>TLS certificate <a-button type="link" size="small" :loading="generating === 'tls'" @click="regenerate('tls')"><ReloadOutlined /> Regenerate</a-button></template>
-                <a-textarea v-model:value="form.socks5.certificate" class="mono" :rows="5" spellcheck="false" />
+                <CodeEditor v-model:value="form.socks5.certificate" language="pem" :height="112" />
               </a-form-item>
               <a-form-item label="TLS private key" :name="['socks5', 'key']" :rules="pemRules">
-                <a-textarea v-model:value="form.socks5.key" class="mono" :rows="4" spellcheck="false" />
+                <CodeEditor v-model:value="form.socks5.key" language="pem" :height="92" />
               </a-form-item>
             </template>
           </template>
@@ -157,26 +157,26 @@
             </template>
           </a-alert>
           <a-row :gutter="16">
-            <a-col :span="12"><a-form-item label="CA certificate" :name="['openvpn', 'ca_certificate']" :rules="pemRules"><a-textarea v-model:value="form.openvpn.ca_certificate" class="mono" :rows="4" spellcheck="false" /></a-form-item></a-col>
-            <a-col :span="12"><a-form-item label="CA private key" :name="['openvpn', 'ca_key']" extra="Needed only to issue certificates"><a-textarea v-model:value="form.openvpn.ca_key" class="mono" :rows="4" spellcheck="false" /></a-form-item></a-col>
+            <a-col :span="12"><a-form-item label="CA certificate" :name="['openvpn', 'ca_certificate']" :rules="pemRules"><CodeEditor v-model:value="form.openvpn.ca_certificate" language="pem" :height="92" /></a-form-item></a-col>
+            <a-col :span="12"><a-form-item label="CA private key" :name="['openvpn', 'ca_key']" extra="Needed only to issue certificates"><CodeEditor v-model:value="form.openvpn.ca_key" language="pem" :height="92" /></a-form-item></a-col>
             <a-col :span="12">
               <a-form-item :name="['openvpn', 'certificate']" :rules="pemRules">
                 <template #label>Server certificate <a-button type="link" size="small" :loading="generating === 'server'" @click="regenerate('server')"><ReloadOutlined /> Regenerate</a-button></template>
-                <a-textarea v-model:value="form.openvpn.certificate" class="mono" :rows="4" spellcheck="false" />
+                <CodeEditor v-model:value="form.openvpn.certificate" language="pem" :height="92" />
               </a-form-item>
             </a-col>
-            <a-col :span="12"><a-form-item label="Server private key" :name="['openvpn', 'key']" :rules="pemRules"><a-textarea v-model:value="form.openvpn.key" class="mono" :rows="4" spellcheck="false" /></a-form-item></a-col>
+            <a-col :span="12"><a-form-item label="Server private key" :name="['openvpn', 'key']" :rules="pemRules"><CodeEditor v-model:value="form.openvpn.key" language="pem" :height="92" /></a-form-item></a-col>
             <a-col :span="12">
               <a-form-item :name="['openvpn', 'client_certificate']" :rules="pemRules">
                 <template #label>Client certificate <a-button type="link" size="small" :loading="generating === 'client'" @click="regenerate('client')"><ReloadOutlined /> Regenerate</a-button></template>
-                <a-textarea v-model:value="form.openvpn.client_certificate" class="mono" :rows="4" spellcheck="false" />
+                <CodeEditor v-model:value="form.openvpn.client_certificate" language="pem" :height="92" />
               </a-form-item>
             </a-col>
-            <a-col :span="12"><a-form-item label="Client private key" :name="['openvpn', 'client_key']" :rules="pemRules"><a-textarea v-model:value="form.openvpn.client_key" class="mono" :rows="4" spellcheck="false" /></a-form-item></a-col>
+            <a-col :span="12"><a-form-item label="Client private key" :name="['openvpn', 'client_key']" :rules="pemRules"><CodeEditor v-model:value="form.openvpn.client_key" language="pem" :height="92" /></a-form-item></a-col>
             <a-col :span="24">
               <a-form-item :name="['openvpn', 'tls_crypt']" :rules="pemRules">
                 <template #label>TLS-crypt key <a-button type="link" size="small" :loading="generating === 'tls_crypt'" @click="regenerate('tls_crypt')"><ReloadOutlined /> Regenerate</a-button></template>
-                <a-textarea v-model:value="form.openvpn.tls_crypt" class="mono" :rows="4" spellcheck="false" />
+                <CodeEditor v-model:value="form.openvpn.tls_crypt" language="pem" :height="92" />
               </a-form-item>
             </a-col>
           </a-row>
@@ -222,7 +222,7 @@
     </a-form>
     <a-modal v-model:open="exportVisible" :title="`Client configuration: ${exported.file}`" width="760px" destroy-on-close>
       <a-alert v-if="exported.notice" type="info" show-icon style="margin-bottom: 12px" :message="exported.notice" />
-      <a-textarea :value="exported.config" class="mono" :rows="18" readonly spellcheck="false" />
+      <CodeEditor :value="exported.config" language="openvpn" readonly :height="372" />
       <a-checkbox v-if="exported.user" v-model:checked="exported.embed" style="margin-top: 12px" @change="fetchExport">Embed user name and password into the file (OpenVPN 2.6 or newer)</a-checkbox>
       <template #footer>
         <a-button @click="exportVisible = false">Close</a-button>
@@ -243,6 +243,7 @@ import {
 import { api, id } from '../api'
 import { copyText } from '../clipboard'
 import { inboundLabels } from '../format'
+import CodeEditor from '../components/CodeEditor.vue'
 
 const props = defineProps({
   open: Boolean,

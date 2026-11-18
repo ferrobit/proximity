@@ -22,7 +22,7 @@ function clean(tokens) {
   return tokens.length && !tokens.some((part) => part.kind === 'error') ? tokens : null
 }
 
-function scalar(text) {
+export function scalar(text) {
   if (portPattern.test(text)) return [token(text, 'number')]
   const address = clean(highlightLine(text, 'IP-CIDR'))
   if (address) return address

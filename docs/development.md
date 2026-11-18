@@ -136,6 +136,7 @@ repository every second, so edits in `web/src` reload the page. Run the Go binar
 | `src/components/RuleEditor.vue` | route parameters editor: highlighting overlay, line numbers, load, save and sort |
 | `src/components/logSyntax.js` | log line parser for `LogView.vue`: time stamp, severity, IP addresses, quoted text, level words, links |
 | `src/components/RulePreview.vue` | highlighted, numbered list of the generated router rules with **Copy** |
+| `src/components/CodeEditor.vue`, `vpnSyntax.js` | text editor with line numbers and a highlighting overlay for OpenVPN configurations, AmneziaWG / WireGuard configurations and PEM keys and certificates; used in the outbound and inbound dialogs and the client configuration preview |
 | `src/components/ConfigView.vue`, `configSyntax.js` | generated mihomo configuration: JSON and YAML (js-yaml) views with line-based highlighting (keys, strings, numbers, addresses, domains, targets, rules, secrets), **Hide passwords**, **Copy** and **Save** |
 | `src/components/ruleSyntax.js` | tokenizers for route parameters and generated router rules, the sort used by the editor |
 | `src/components/rule-colors.css`, `ruleTheme.js` | token colors for the light and dark themes shared by the editor and the preview |
