@@ -22,7 +22,7 @@
 <p align="center">
   <img alt="Tests" src="https://img.shields.io/badge/tests-128%20passing-brightgreen">
   <img alt="Coverage" src="https://img.shields.io/badge/coverage-94.1%25-brightgreen"><br>
-  <sub><b>128</b> Go tests, <b>94.1%</b> statement coverage, 86 end-to-end checks on
+  <sub><b>128</b> Go tests, <b>94.1%</b> statement coverage, 96 end-to-end checks on
   <a href="docs/development.md#test-stands">ready stands</a></sub>
 </p>
 
@@ -338,10 +338,11 @@ connections untouched, `rp_filter=1`, container stop and kill. Inbounds have bee
 with real mihomo 1.19.34 and OpenVPN 2.6 in network namespaces: SOCKS5 authentication and
 TLS, an OpenVPN client with password + TOTP (appended and `static-challenge`), anonymous
 clients, token renegotiation, session kill on user change, traffic through the router,
-DNS hijack, traffic counters. Five ready stands run 86 end-to-end checks with the real
+DNS hijack, traffic counters. Five ready stands run 96 end-to-end checks with the real
 image (`make stand-security`, `stand-tunnel`, `stand-reload`, `stand-config`,
 `stand-capture`): one-time codes, certificates, tokens, received routes, a damaged
-configuration, the reload of an open page, TCP and ping of a host with transparent capture. The web UI, including the connection map, has been checked in
+configuration, the reload of an open page, TCP and ping of a host with transparent capture,
+an AmneziaWG tunnel with obfuscation and received routes. The web UI, including the connection map, has been checked in
 Chrome in the light and dark themes with a live OpenVPN tunnel, SOCKS5 and HTTP proxies and
 both inbound types.
 

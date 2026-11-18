@@ -114,9 +114,8 @@ document `proximity-openvpn-test-report.md`.
     AmneziaWG outbound goes through the tunnel: `ip rule` 5165 / 5166
     (`ipproto icmp … lookup <table>`) in the order of the routes, and
     `MASQUERADE` of the TUN source `198.18.0.0/30` on `proximity_o+` and
-    `proximity_a+`. Checked with OpenVPN on the stand `capture`
-    (19 checks, `rp_filter=1`); AmneziaWG only by unit tests (see *Stand
-    with AmneziaWG*).
+    `proximity_a+`. Checked with OpenVPN and AmneziaWG on the stand
+    `capture` (`rp_filter=1`).
   - Found on the way: the kernel refuses `ip rule add … ipproto 1 lookup T`
     without `to` (*File exists*) when a rule with the same priority, table
     and `to` exists, so the default target has its own priority 5166.
@@ -168,8 +167,8 @@ document `proximity-openvpn-test-report.md`.
     or deleted, can be moved, keeps its place after a restart, and is
     removed when the switch is off. After an upgrade a provided route that
     was on keeps working, one that was off is removed.
-  - Checked on the stand `pair` with OpenVPN (`make stand-tunnel`);
-    AmneziaWG only by unit tests, see *Stand with AmneziaWG* below.
+  - Checked on the stand `pair` with OpenVPN (`make stand-tunnel`) and on
+    the stand `capture` with AmneziaWG (`make stand-capture`).
   - Original task:
   - Add the checkbox "Receive routes" to a VPN outbound, right beside
     "Use DNS servers pushed by VPN". The routes are what the VPN server
@@ -270,11 +269,16 @@ document `proximity-openvpn-test-report.md`.
   - The stand of the screenshots (`scripts/screenshots.sh`) already
     exists; decide whether to move it under `scripts/stands/`.
 
-- [ ] **Stand with AmneziaWG**
-  - No stand has an AmneziaWG server: "Receive routes" of an AmneziaWG
-    outbound (the networks of `AllowedIPs`) is covered only by unit
-    tests. Add an AmneziaWG peer to the stand `pair` or a stand of its
-    own.
+- [x] **Stand with AmneziaWG**
+  - Done: the stand `capture` has an AmneziaWG server
+    (`proximity-stand-awg`: amneziawg-go from the image, Jc/S1/S2/H1-H4,
+    masquerade). Checked: the outbound connects with the obfuscation, the
+    route from `AllowedIPs` appears first and is on, TCP and ping of it go
+    through the tunnel, the route is switched off when the outbound
+    stops and ping then follows the default target (29 checks).
+  - Original task: no stand had an AmneziaWG server: "Receive routes" of
+    an AmneziaWG outbound (the networks of `AllowedIPs`) was covered only
+    by unit tests.
 
 ## Build
 

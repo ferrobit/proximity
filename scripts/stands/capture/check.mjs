@@ -1,14 +1,17 @@
 // Checks of the stand "capture": where TCP and ICMP of a host with transparent capture leave.
 // 1.1.1.1 has the route IP-CIDR -> SOCKS5 exit, 1.1.1.2 has no route (DIRECT), 1.1.1.3 has the
-// route IP-CIDR -> OpenVPN tunnel. The setting "Keep ping of the host on its routes"
+// route IP-CIDR -> OpenVPN tunnel, 1.1.1.4 is in the AllowedIPs of the AmneziaWG peer and gets
+// its route from "Receive routes". The setting "Keep ping of the host on its routes"
 // (ping_filter) is on by default.
 import { check, docker, finish, signIn, sleep, stateOf, waitFor } from '../lib.mjs'
 
-const [host, exit, wan] = process.argv.slice(2)
+const [host, exit, wan, awg] = process.argv.slice(2)
 const routed = '1.1.1.1'
 const direct = '1.1.1.2'
 const tunneled = '1.1.1.3'
-const names = ['host', 'exit'].flatMap((source) => ['routed', 'direct', 'tunneled']
+const amnezia = '1.1.1.4'
+const allowed = [`${amnezia}/32`, '10.66.66.0/24']
+const names = ['host', 'exit', 'awg'].flatMap((source) => ['routed', 'direct', 'tunneled', 'amnezia']
   .flatMap((target) => [`${source} ICMP ${target}`, `${source} TCP ${target}`]))
 
 const addressOf = (container) => docker('inspect', '-f', '{{range .NetworkSettings.Networks}}{{.IPAddress}}{{end}}', container).trim()
@@ -40,6 +43,12 @@ const summary = (output) => output.split('\n').filter((line) => /transmitted|rtt
 function report(label, result) {
   console.log(`${label}: ${JSON.stringify(result.sent)} ${summary(result.output)}`)
   return result
+}
+
+async function providedOf(client) {
+  const routes = (await client.call('GET', '/api/routes')).routes
+  const index = routes.findIndex((route) => route.provided === 'AWG')
+  return index < 0 ? null : { ...routes[index], index }
 }
 
 async function settle(client, change, test) {
@@ -90,6 +99,41 @@ async function run() {
   const pingTunnel = report(`ICMP ${tunneled}`, await ping(tunneled))
   check('ping of the tunnel route goes through the tunnel and gets real answers',
     pingTunnel.sent['exit ICMP tunneled'] === 3 && !pingTunnel.sent['host ICMP tunneled'] && answered(pingTunnel.output))
+
+  // AmneziaWG: the server of the stand, "Receive routes" from AllowedIPs.
+  await client.call('POST', '/api/outbounds', { id: 'AWG', type: 'amneziawg', enabled: true, autostart: true,
+    attempts: 3, reconnect_timeout: 3, statistics: true,
+    amneziawg: { config: docker('exec', awg, 'cat', '/tmp/client.conf'), use_dns: false, use_routes: true },
+    monitoring: { enabled: false, interval: 30, timeout: 5, retries: 3, target: `${amnezia}:80` } })
+  check('AmneziaWG outbound connects', Boolean(await waitFor(async () => (await stateOf(client, 'outbounds', 'AWG')).state === 'up', 60)))
+  const received = await waitFor(async () => {
+    const found = await providedOf(client)
+    return found && found.enabled ? found : null
+  }, 30)
+  check('AmneziaWG route with the networks of AllowedIPs appears first and is on', Boolean(received) && received.index === 0 &&
+    allowed.every((item) => received.params.includes(item)) && received.directive === 'IP-CIDR', received ? received.params.join(' ') : 'no route')
+  const handshake = docker('exec', awg, 'awg', 'show', 'awg0', 'latest-handshakes').trim()
+  check('AmneziaWG server sees the handshake of the peer', /\s[1-9]\d+$/.test(handshake), handshake)
+  const shown = docker('exec', awg, 'awg', 'show', 'awg0')
+  check('handshake uses the obfuscation of AmneziaWG (Jc, S1, S2, H1-H4)', ['jc: 3', 's1: 15', 's2: 18', 'h4: 4567890']
+    .every((line) => shown.includes(line)))
+  check('ping of the AmneziaWG route is routed into the tunnel', Boolean(await waitFor(() =>
+    /5165:\s+from all to 1\.1\.1\.4 ipproto icmp lookup 51\d{3}/.test(inHost('ip', 'rule')), 30)))
+  const tcpAmnezia = report(`TCP  ${amnezia}`, await connect(amnezia))
+  check('TCP to the AmneziaWG route leaves through the AmneziaWG server', tcpAmnezia.sent['awg TCP amnezia'] > 0 && !tcpAmnezia.sent['host TCP amnezia'])
+  const pingAmnezia = report(`ICMP ${amnezia}`, await ping(amnezia))
+  check('ping of the AmneziaWG route goes through the tunnel and gets real answers',
+    pingAmnezia.sent['awg ICMP amnezia'] === 3 && !pingAmnezia.sent['host ICMP amnezia'] && answered(pingAmnezia.output))
+  await client.call('POST', '/api/outbounds/AWG/stop')
+  check('AmneziaWG route is switched off when the outbound stops', Boolean(await waitFor(async () => {
+    const found = await providedOf(client)
+    return found && !found.enabled
+  }, 30)))
+  check('ping rule of the stopped AmneziaWG route is removed', Boolean(await waitFor(() =>
+    !inHost('ip', 'rule').includes('to 1.1.1.4 '), 30)))
+  const pingStopped = report(`ICMP ${amnezia} (AmneziaWG stopped)`, await ping(amnezia))
+  check('ping of the address follows the default target (DIRECT) when the AmneziaWG route is off',
+    pingStopped.sent['host ICMP amnezia'] === 3 && !pingStopped.sent['awg ICMP amnezia'])
 
   check('ping filter follows the default target (SOCKS5)', await settle(client, { default_target: 'Exit' },
     () => pingChain().trim().endsWith('-A PROXIMITY-PING -j DROP')))
