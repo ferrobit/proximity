@@ -331,6 +331,22 @@ func (tools Tools) allowForward(device string) error {
 	return nil
 }
 
+func (tools Tools) filterPing(device string, blocked bool) error {
+	rule := []string{"-i", device, "-p", "icmp", "-j", "REJECT", "--reject-with",
+		"icmp-admin-prohibited"}
+	for range 4 {
+		if _, err := tools.firewall(append([]string{"-D", forwardChain}, rule...)...); err != nil {
+			break
+		}
+	}
+	if !blocked {
+		return nil
+	}
+	// NOTE: The rule stands above the rules that accept the traffic of the device.
+	_, err := tools.firewall(append([]string{"-I", forwardChain, "1"}, rule...)...)
+	return err
+}
+
 func (tools Tools) denyForward(device string) {
 	for _, direction := range []string{"-i", "-o"} {
 		for range 4 {

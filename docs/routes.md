@@ -179,17 +179,26 @@ rows get a ⚠ mark and an orange bar.
 
 ## Routes provided by a VPN
 
-When an OpenVPN server pushes routes (or the configuration contains `route` lines),
-Proximity creates a read-only route **Routes of &lt;outbound&gt;** marked `provided`:
+Turn on **Receive routes** in a VPN outbound (tab *OpenVPN* or *AmneziaWG*, below the DNS
+switch; off by default) and Proximity keeps a route **Routes of &lt;outbound&gt;** marked `provided`. It
+holds what the VPN announces: the routes pushed by an OpenVPN server and the `route` lines
+of its configuration, or the `AllowedIPs` of AmneziaWG (without `0.0.0.0/0`).
 
-- directive `IP-CIDR`, target — the VPN outbound itself;
-- **disabled by default**: the routes are only shown until you turn the switch on;
-- the parameters can't be edited (👁 opens a read-only view), but the route can be moved
-  up and down like any other;
-- the list is updated automatically when the VPN reconnects with different routes.
+- Directive `IP-CIDR`, target — the VPN outbound itself.
+- The route **follows the connection**: it appears and is switched on when the connection
+  is up and has given its routes, it is switched off (and keeps its networks) while the
+  connection is down or stopped, and it is updated when the VPN reconnects with other
+  routes.
+- It can't be edited, switched by hand or deleted (👁 opens a read-only view).
+- A new route of this kind is put **at the top** of the list. Move it up and down like any
+  other route: the place is saved and survives restarts.
+- Turn **Receive routes** off and the route is removed.
 
-Enable it when you want "everything the VPN would normally route" to go through this
-outbound, without copying networks by hand.
+Use it when "everything the VPN would normally route" must go through this outbound,
+without copying networks by hand.
+
+> Upgrading from an earlier version: a provided route that was switched on keeps working
+> (*Receive routes* is turned on for its outbound); one that was switched off is removed.
 
 ## Targets
 
@@ -228,7 +237,7 @@ This is why intranet names that exist only behind the VPN work without changing
 ```text
 Public corp sites  DOMAIN-SUFFIX  www.corp.example, status.corp.example  → DIRECT
 Corporate          DOMAIN-SUFFIX  corp.example, corp.internal           → OpenVPN 1
-Routes of OpenVPN 1 (provided, enabled)                                  → OpenVPN 1
+Routes of OpenVPN 1 (provided, "Receive routes" is on)                   → OpenVPN 1
 ```
 
 **One service through a specific port only**

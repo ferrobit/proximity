@@ -2,7 +2,18 @@ import { reactive } from 'vue'
 
 export const metrics = reactive({ total: 0, server: 0 })
 export const session = reactive({ user: '', role: 'anonymous', level: 0, version: '', anonymous_dashboard: true, setup: false, host_network: false, loaded: false })
-export const events = { unauthorized: () => {} }
+export const events = { unauthorized: () => {}, restarted: () => {} }
+
+let instance = ''
+
+// NOTE: The server sends a new value after every start; a change means that the page is stale.
+function checkInstance(response) {
+  const current = response.headers.get('X-Proximity-Instance') || ''
+  if (current && instance && current !== instance) {
+    events.restarted()
+  }
+  instance = current || instance
+}
 
 async function request(method, path, body, quiet) {
   const started = performance.now()
@@ -12,6 +23,7 @@ async function request(method, path, body, quiet) {
     options.body = JSON.stringify(body)
   }
   const response = await fetch(path, options)
+  checkInstance(response)
   let data = null
   try {
     data = await response.json()

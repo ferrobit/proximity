@@ -6,6 +6,7 @@ import (
 	"crypto/x509"
 	"encoding/json"
 	"encoding/pem"
+	"fmt"
 	"io/fs"
 	"net/http"
 	"net/http/httptest"
@@ -327,7 +328,7 @@ func TestServer_Backup(t *testing.T) {
 	code, exported, _ := call(t, server, admin, http.MethodGet, "/api/backup", nil)
 	require.Equal(t, http.StatusOK, code)
 	require.Equal(t, config.BackupFormat, exported["format"])
-	require.Equal(t, 7.0, exported["version"])
+	require.Equal(t, 8.0, exported["version"])
 	require.Len(t, exported["inbounds"], 1)
 	require.Len(t, exported["outbounds"], 1)
 	require.Len(t, exported["routes"], 1)
@@ -410,7 +411,7 @@ func TestServer_Inbounds(t *testing.T) {
 	require.Equal(t, "OpenVPN 1", body["id"])
 	require.Equal(t, 7801.0, body["port"])
 	created := body["openvpn"].(map[string]any)
-	require.Equal(t, "10.77.2.0/24", created["network"])
+	require.Regexp(t, `^10\.(6[4-9]|[7-9]\d|1[0-8]\d|19[01])\.2\.0/24$`, created["network"])
 	code, body, _ = call(t, server, admin, http.MethodPost, "/api/inbounds", config.Inbound{
 		Type: config.TypeSocks5, Port: 7800})
 	require.Equal(t, http.StatusBadRequest, code)
@@ -730,32 +731,117 @@ func TestServer_Outbounds(t *testing.T) {
 	}
 }
 
+func TestServer_Problems(t *testing.T) {
+	server := makeServer(t)
+	path := filepath.Join(server.options.ConfigPath, "proximity.json")
+	data, err := os.ReadFile(path)
+	require.NoError(t, err)
+	fields := map[string]any{}
+	require.NoError(t, json.Unmarshal(data, &fields))
+	fields["outbounds"] = []any{map[string]any{"id": "Broken", "type": "socks5", "slot": 1}}
+	data, err = json.Marshal(fields)
+	require.NoError(t, err)
+	require.NoError(t, os.WriteFile(path, data, 0o600))
+	server.manager.Close()
+	messages := []string{}
+	options := server.options
+	options.Logf = func(format string, arguments ...any) {
+		messages = append(messages, fmt.Sprintf(format, arguments...))
+	}
+	server, err = New(options)
+	require.NoError(t, err)
+	t.Cleanup(server.manager.Close)
+	require.Regexp(t, `configuration has 1 problems, the damaged file is kept as `+
+		`'proximity\.invalid-\d+\.json'`, strings.Join(messages, "\n"))
+	require.Contains(t, messages, "configuration problem: outbound 'Broken': failed to check "+
+		"outbound 'Broken': invalid server address ''")
+	admin := login(t, server, "admin", "secret123")
+	code, _, _ := call(t, server, nil, http.MethodGet, "/api/problems", nil)
+	require.Equal(t, http.StatusUnauthorized, code)
+	code, body, _ := call(t, server, admin, http.MethodGet, "/api/problems", nil)
+	require.Equal(t, http.StatusOK, code)
+	require.Equal(t, []any{map[string]any{"kind": "outbound", "id": "Broken", "kept": false,
+		"reason": "failed to check outbound 'Broken': invalid server address ''"}},
+		body["items"])
+	require.FileExists(t, filepath.Join(server.options.ConfigPath, body["backup"].(string)))
+	{
+		code, _, _ = call(t, server, admin, http.MethodPost, "/api/users", userRequest{
+			Name: "olivia", Role: config.RoleOperator, Password: "operator1", Confirm: "operator1"})
+		require.Equal(t, http.StatusOK, code)
+		operator := login(t, server, "olivia", "operator1")
+		code, _, _ = call(t, server, operator, http.MethodDelete, "/api/problems", nil)
+		require.Equal(t, http.StatusForbidden, code)
+		report := filepath.Join(server.options.ConfigPath, "proximity.problems.json")
+		require.NoError(t, os.Remove(report))
+		require.NoError(t, os.MkdirAll(filepath.Join(report, "folder"), 0o700))
+		code, body, _ = call(t, server, admin, http.MethodDelete, "/api/problems", nil)
+		require.Equal(t, http.StatusBadRequest, code)
+		require.Contains(t, body["error"], "failed to remove file")
+		require.NoError(t, os.RemoveAll(report))
+	}
+	code, _, _ = call(t, server, admin, http.MethodDelete, "/api/problems", nil)
+	require.Equal(t, http.StatusOK, code)
+	code, body, _ = call(t, server, admin, http.MethodGet, "/api/problems", nil)
+	require.Equal(t, http.StatusOK, code)
+	require.Empty(t, body["items"])
+}
+
 func TestServer_ProvidedRoutes(t *testing.T) {
 	server := makeServer(t)
 	admin := login(t, server, "admin", "secret123")
 	code, _, _ := call(t, server, admin, http.MethodPost, "/api/outbounds", config.Outbound{
 		Type: config.TypeAmneziaWG, Enabled: true, AmneziaWG: &config.AmneziaWGOptions{
-			Config: sampleTunnel + "AllowedIPs = 10.55.0.0/16\n"}})
+			Config: sampleTunnel + "AllowedIPs = 10.55.0.0/16\n", UseRoutes: true}})
+	require.Equal(t, http.StatusOK, code)
+	code, _, _ = call(t, server, admin, http.MethodPost, "/api/routes", config.Route{
+		Directive: "DOMAIN", Target: "DIRECT", Enabled: true, Params: []string{"a.test"}})
 	require.Equal(t, http.StatusOK, code)
 	require.NoError(t, server.store.Update(func(config *config.Config) error {
-		_, err := config.SetRoutes("AmneziaWG 1", []string{"10.55.0.0/16"})
+		_, err := config.SetRoutes("AmneziaWG 1", true, true, []string{"10.55.0.0/16"})
 		return err
 	}))
 	snapshot := server.store.Snapshot()
-	require.Len(t, snapshot.Routes, 1)
+	require.Len(t, snapshot.Routes, 2)
 	require.Equal(t, "AmneziaWG 1", snapshot.Routes[0].Provided)
-	require.False(t, snapshot.Routes[0].Enabled)
+	require.True(t, snapshot.Routes[0].Enabled)
 	key := url.PathEscape(snapshot.Routes[0].Key)
 	{
-		code, _, _ := call(t, server, admin, http.MethodPut, "/api/routes/"+key,
-			config.Route{Enabled: true, Directive: "DOMAIN", Params: []string{"ignored.test"}})
-		require.Equal(t, http.StatusOK, code)
-		snapshot := server.store.Snapshot()
-		require.True(t, snapshot.Routes[0].Enabled)
-		require.Equal(t, []string{"10.55.0.0/16"}, snapshot.Routes[0].Params)
-		code, body, _ := call(t, server, admin, http.MethodDelete, "/api/routes/"+key, nil)
+		code, body, _ := call(t, server, admin, http.MethodPut, "/api/routes/"+key,
+			config.Route{Enabled: false, Directive: "DOMAIN", Params: []string{"ignored.test"}})
+		require.Equal(t, http.StatusBadRequest, code)
+		require.Equal(t, "provided route follows its VPN connection", body["error"])
+		code, body, _ = call(t, server, admin, http.MethodDelete, "/api/routes/"+key, nil)
 		require.Equal(t, http.StatusBadRequest, code)
 		require.Equal(t, "provided route is read-only", body["error"])
+		code, _, _ = call(t, server, admin, http.MethodPost, "/api/routes/"+key+"/move",
+			map[string]int{"delta": 1})
+		require.Equal(t, http.StatusOK, code)
+		require.Equal(t, "AmneziaWG 1", server.store.Snapshot().Routes[1].Provided)
+	}
+	{
+		server.synchronize()
+		snapshot := server.store.Snapshot()
+		require.Len(t, snapshot.Routes, 2)
+		require.False(t, snapshot.Routes[1].Enabled)
+		require.Equal(t, []string{"10.55.0.0/16"}, snapshot.Routes[1].Params)
+		outbound := snapshot.Outbounds[0]
+		outbound.AmneziaWG.UseRoutes = false
+		code, _, _ := call(t, server, admin, http.MethodPut, "/api/outbounds/AmneziaWG%201",
+			outbound)
+		require.Equal(t, http.StatusOK, code)
+		server.synchronize()
+		require.Len(t, server.store.Snapshot().Routes, 1)
+	}
+	{
+		code, _, cookie := call(t, server, nil, http.MethodGet, "/api/session", nil)
+		require.Equal(t, http.StatusOK, code)
+		require.Nil(t, cookie)
+		first := fetch(server, "/api/session").Header().Get(instanceHeader)
+		require.NotEmpty(t, first)
+		require.Equal(t, first, fetch(server, "/api/dashboard").Header().Get(instanceHeader))
+		time.Sleep(time.Millisecond)
+		other := makeServer(t)
+		require.NotEqual(t, first, fetch(other, "/api/session").Header().Get(instanceHeader))
 	}
 }
 

@@ -86,11 +86,13 @@ type OpenVPNOptions struct {
 	OTPMode     string `json:"otp_mode"`
 	KeyPassword string `json:"key_password"`
 	UseDNS      bool   `json:"use_dns"`
+	UseRoutes   bool   `json:"use_routes"`
 }
 
 type AmneziaWGOptions struct {
-	Config string `json:"config"`
-	UseDNS bool   `json:"use_dns"`
+	Config    string `json:"config"`
+	UseDNS    bool   `json:"use_dns"`
+	UseRoutes bool   `json:"use_routes"`
 }
 
 type Monitoring struct {
@@ -195,11 +197,12 @@ const (
 	OTPAppend    = "append"
 )
 
-const currentVersion = 7
+const currentVersion = 8
 const inboundVersion = 4
 const autostartVersion = 5
 const serviceVersion = 6
 const attemptsVersion = 7
+const routesVersion = 8
 const maxSlot = 9999
 const defaultAttempts = 3
 const defaultReconnectTimeout = 10
@@ -479,6 +482,11 @@ func (outbound *Outbound) normalize() {
 
 func (outbound *Outbound) IsTunnel() bool {
 	return outbound.Type == TypeOpenVPN || outbound.Type == TypeAmneziaWG
+}
+
+func (outbound *Outbound) UsesRoutes() bool {
+	return (outbound.OpenVPN != nil && outbound.OpenVPN.UseRoutes) ||
+		(outbound.AmneziaWG != nil && outbound.AmneziaWG.UseRoutes)
 }
 
 func (outbound *Outbound) IsSplit() bool {

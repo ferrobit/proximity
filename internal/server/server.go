@@ -10,6 +10,7 @@ import (
 	"net/netip"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -45,6 +46,7 @@ type Server struct {
 	tracker   *router.Tracker
 	dirty     chan struct{}
 	started   time.Time
+	instance  string
 	mutex     sync.Mutex
 	warnings  []string
 	failure   string
@@ -98,6 +100,7 @@ const failedLoginDelay = 700 * time.Millisecond
 const controlTimeout = 30 * time.Second
 const controlPoll = 50 * time.Millisecond
 const routerStateName = "router.json"
+const instanceHeader = "X-Proximity-Instance"
 
 var geodataFiles = []string{"geoip.metadb", "geosite.dat", "geoip.dat"}
 
@@ -114,6 +117,13 @@ func internalNew(options Options) (*Server, error) {
 	if err != nil {
 		return nil, err
 	}
+	if problems := store.Problems(); len(problems.Items) != 0 {
+		options.Logf("configuration has %v problems, the damaged file is kept as '%v'",
+			len(problems.Items), problems.Backup)
+		for _, item := range problems.Items {
+			options.Logf("configuration problem: %v '%v': %v", item.Kind, item.ID, item.Reason)
+		}
+	}
 	if message, err := auth.Bootstrap(store); err != nil {
 		return nil, err
 	} else if message != "" {
@@ -125,6 +135,9 @@ func internalNew(options Options) (*Server, error) {
 	if server.clock == nil {
 		server.clock = clock.New(filepath.Join(options.RunPath, "clock.json"))
 	}
+	// NOTE: An open page compares this value with the one it saw first and reloads itself
+	// after a restart or an update.
+	server.instance = strconv.FormatInt(server.started.UnixNano(), 36)
 	home := filepath.Join(options.ConfigPath, "mihomo")
 	server.tracker = router.NewTracker(filepath.Join(options.ConfigPath, "state.json"))
 	if server.manager, err = link.NewManager(link.Options{Directory: options.RunPath,
@@ -402,18 +415,20 @@ func (server *Server) synchronize() {
 	links := server.manager.Status()
 	for _, outbound := range snapshot.Outbounds {
 		status, found := links[outbound.ID]
-		if !found || !outbound.IsTunnel() || status.State != link.StateUp {
+		wanted, active := outbound.UsesRoutes(), found && status.State == link.StateUp
+		if !outbound.IsTunnel() {
 			continue
-		}
-		if changed, err := snapshot.SetRoutes(outbound.ID, status.Routes); err != nil || !changed {
+		} else if changed, err := snapshot.SetRoutes(outbound.ID, wanted, active,
+			status.Routes); err != nil || !changed {
 			continue
 		} else if err = server.store.Update(func(config *config.Config) error {
-			_, err := config.SetRoutes(outbound.ID, status.Routes)
+			_, err := config.SetRoutes(outbound.ID, wanted, active, status.Routes)
 			return err
 		}); err != nil {
 			server.options.Logf("failed to save routes of '%v': %v", outbound.ID, err)
 		} else {
-			server.options.Logf("routes of '%v' changed (%v)", outbound.ID, len(status.Routes))
+			server.options.Logf("routes of '%v' changed (%v), active: %v", outbound.ID,
+				len(status.Routes), wanted && active)
 		}
 	}
 	snapshot = server.store.Snapshot()
@@ -482,6 +497,7 @@ func (server *Server) handle(pattern string, level int, action action) {
 		}
 		writer.Header().Set("Content-Type", "application/json")
 		writer.Header().Set("Cache-Control", "no-store")
+		writer.Header().Set(instanceHeader, server.instance)
 		writer.Header().Set("X-Proximity-Time", fmt.Sprintf("%.2f",
 			float64(time.Since(started).Microseconds())/1000))
 		writer.WriteHeader(code)

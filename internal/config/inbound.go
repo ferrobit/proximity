@@ -1,6 +1,7 @@
 package config
 
 import (
+	"crypto/sha256"
 	"encoding/base32"
 	"errors"
 	"fmt"
@@ -94,12 +95,13 @@ const defaultKeepaliveInterval = 10
 const defaultKeepaliveTimeout = 60
 const defaultRenegotiation = 3600
 const minRenegotiation = 120 // NOTE: OpenVPN requires token renewal time >= 2 * hand-window.
-const defaultMTU = 1500
+const defaultMTU = 1420      // NOTE: With the transport headers a packet still fits 1500 bytes.
 const defaultVerbosity = 3
 const defaultCiphers = "AES-256-GCM:AES-128-GCM:CHACHA20-POLY1305"
 const defaultDigest = "SHA256"
 const defaultTLSVersion = "1.2"
-const networkTemplate = "10.77.%v.0/24"
+const networkTemplate = "10.%v.%v.0/24"
+const networkBase = 77
 const networkLimit = 255
 const reservedNetwork = "198.18.0.0/15"
 
@@ -209,6 +211,16 @@ func (config *Config) InboundProblem(inbound Inbound) string {
 	return ""
 }
 
+// NOTE: Default tunnel networks differ between instances, so two of them can be linked
+// without editing the network; the number is taken from the secret of the instance.
+func (config *Config) networkBase() int {
+	if config.Secret == "" {
+		return networkBase
+	}
+	sum := sha256.Sum256([]byte(config.Secret))
+	return 64 + int(sum[0])%128
+}
+
 func (config *Config) prepareInbound(inbound *Inbound, index int, now time.Time) error {
 	taken := []netip.Prefix{}
 	for position, other := range config.Inbounds {
@@ -226,7 +238,7 @@ func (config *Config) prepareInbound(inbound *Inbound, index int, now time.Time)
 	} else if !inbound.Direct() && inbound.Outbound != ViaRouter &&
 		config.findOutbound(inbound.Outbound) < 0 {
 		return fmt.Errorf("outbound '%v' does not exist", inbound.Outbound)
-	} else if err := inbound.complete(taken, now); err != nil {
+	} else if err := inbound.complete(taken, config.networkBase(), now); err != nil {
 		return err
 	} else if err = inbound.validate(); err != nil {
 		return err
@@ -350,7 +362,7 @@ func (inbound *Inbound) normalize() {
 	}
 }
 
-func (inbound *Inbound) complete(taken []netip.Prefix, now time.Time) error {
+func (inbound *Inbound) complete(taken []netip.Prefix, base int, now time.Time) error {
 	if socks := inbound.Socks5; socks != nil && socks.TLS && socks.Certificate == "" &&
 		socks.Key == "" {
 		material, err := GenerateMaterial(MaterialTLS, Material{}, now)
@@ -360,7 +372,7 @@ func (inbound *Inbound) complete(taken []netip.Prefix, now time.Time) error {
 		socks.Certificate, socks.Key = material.Certificate, material.Key
 	}
 	if inbound.OpenVPN != nil {
-		return inbound.OpenVPN.complete(inbound.Slot(), taken, now)
+		return inbound.OpenVPN.complete(inbound.Slot(), base, taken, now)
 	}
 	return nil
 }
@@ -476,9 +488,10 @@ func (server *OpenVPNServer) normalize() {
 	server.TLSCrypt = normalizePEM(server.TLSCrypt)
 }
 
-func (server *OpenVPNServer) complete(slot int, taken []netip.Prefix, now time.Time) error {
+func (server *OpenVPNServer) complete(slot int, base int, taken []netip.Prefix,
+	now time.Time) error {
 	for offset := 0; server.Network == "" && offset < networkLimit; offset++ {
-		candidate := netip.MustParsePrefix(fmt.Sprintf(networkTemplate,
+		candidate := netip.MustParsePrefix(fmt.Sprintf(networkTemplate, base,
 			(slot+offset)%networkLimit))
 		if !slices.ContainsFunc(taken, candidate.Overlaps) {
 			server.Network = candidate.String()

@@ -73,22 +73,33 @@ document `proximity-openvpn-test-report.md`.
 
 ### Open issues found by the tests
 
-- [ ] **TOTP code can be reused**
-  - The same code is accepted again within its ±30 s window, also for
-    another user of the inbound (the key is shared).
-  - Strict single use would reject a quick reconnect of a Proximity
-    outbound in the same window; consider binding a used code to
-    user + client address.
+- [x] **TOTP code can be reused**
+  - Done: a code works once. It is accepted again only from the same
+    user at the same address (a quick reconnect); another user or
+    another address is refused and uses the next code. A Proximity
+    outbound whose code was refused waits for the next code itself.
+  - Left as it is: a second login of the same user from the same
+    address (behind one NAT) in the same 30 seconds is accepted.
 
-- [ ] **No certificate revocation**
-  - After *Regenerate* of the client certificate the old one is still
-    accepted, as is any certificate signed by the CA; only a new CA revokes.
-  - Options: CRL (`crl-verify`) or pinning the current client certificate
-    (`peer-fingerprint`).
+- [x] **No certificate revocation**
+  - Done: the server accepts only the current client certificate
+    (`peer-fingerprint`). *Regenerate* of the client certificate revokes
+    the old one; other certificates of the CA are rejected too.
+  - All users of an inbound share one client certificate, so one user
+    cannot be revoked by certificate: disable the user instead.
 
-- [ ] **ICMP bypasses outbounds**
-  - `ping` to a destination routed to a tunnel or proxy leaves through
-    the default route in clear text and gets no reply.
+- [x] **ICMP bypasses outbounds**
+  - Done for clients of an OpenVPN inbound: a ping to another host is
+    rejected at once (*Packet filtered*) instead of leaving through the
+    host connection; an inbound that goes straight to the host is not
+    limited.
+
+- [ ] **ICMP of the host in transparent mode**
+  - Not checked: `ping` from the host itself when all host traffic is
+    captured (Linux, host network). It probably leaves directly, past
+    the routes, like the ping of inbound clients did. Check it on a
+    stand with the host network and decide: reject, or route ICMP of
+    IP routes into tunnels.
 
 - [x] **No self-recovery of a `failed` service**
   - Done: *Restore lost connections* on the Monitoring tab of every
@@ -97,23 +108,36 @@ document `proximity-openvpn-test-report.md`.
     start and a busy inbound port; errors that need a user action
     and `authentication failed` still end as `failed`.
 
-- [ ] **Default inbound networks collide between instances**
-  - Every instance uses `10.77.<N>.0/24`, so two default instances cannot
-    be linked (now reported as an overlap error). Consider a random
-    default network.
+- [x] **Default inbound networks collide between instances**
+  - Done: a new inbound gets `10.<X>.<N>.0/24`, where `<X>` (64–191) comes
+    from the secret of the installation, so two installations get
+    different networks in 127 cases of 128. Existing inbounds keep
+    `10.77.<N>.0/24`.
 
-- [ ] **Fragmentation with `tun-mtu 1500`**
-  - UDP datagrams above about 1430 bytes are fragmented on the wire;
-    consider a lower default MTU.
+- [x] **Fragmentation with `tun-mtu 1500`**
+  - Done: the default MTU of a new inbound is 1420 (1420 + 52 bytes of
+    UDP and OpenVPN headers = 1472, below 1500). Existing inbounds keep
+    their value.
+  - Not measured on the wire, only calculated; see *Hint for inbounds
+    with the old defaults* below.
 
-- [ ] **Killed session is not announced to the client**
-  - After a user is disabled the server drops the session at once, the
-    client notices only after 60 s (`ping-restart`); consider
-    `client-kill <CID> HALT`.
+- [x] **Killed session is not announced to the client**
+  - Done: `client-kill <CID> HALT`; on the stand the client of a disabled
+    user stops after 2 seconds instead of 60.
 
-- [ ] **Auth token does not survive an inbound restart**
-  - The token key is random per server start, so every client must enter
-    a new one-time code after a restart.
+- [x] **Auth token does not survive an inbound restart**
+  - Done: the key of the tokens is derived from the server key and the
+    TOTP key, so a client comes back without a new code after a restart
+    of the inbound or of the container.
+  - Found and fixed on the way: a disabled user who kept a token could
+    connect again without a password. A login with a token now checks
+    that the user is still enabled (`auth-gen-token 0 external-auth`).
+
+- [ ] **Hint for inbounds with the old defaults**
+  - Inbounds created earlier keep the network `10.77.<N>.0/24` and the
+    MTU 1500. Show a hint in the inbound dialog, or offer to switch.
+  - Measure the fragmentation on the wire (`tcpdump` on the stand
+    `pair`) with 1420 and with 1500 and write the numbers down.
 
 - [ ] **Slow or misleading connection errors through the router**
   - TCP `connect` always succeeds at once; a closed port is reported
@@ -130,10 +154,16 @@ document `proximity-openvpn-test-report.md`.
 
 ## VPN routes
 
-- [ ] **Take the routes of a VPN connection automatically**
-  - Now: the routes pushed by an OpenVPN server appear as a read-only
-    *provided* route at the end of the list, switched off; the user
-    enables it by hand.
+- [x] **Take the routes of a VPN connection automatically**
+  - Done: the switch "Receive routes" of an OpenVPN or AmneziaWG outbound
+    (off by default). The route appears at the top, is on only while the
+    connection is up and has given its routes, cannot be edited, switched
+    or deleted, can be moved, keeps its place after a restart, and is
+    removed when the switch is off. After an upgrade a provided route that
+    was on keeps working, one that was off is removed.
+  - Checked on the stand `pair` with OpenVPN (`make stand-tunnel`);
+    AmneziaWG only by unit tests, see *Stand with AmneziaWG* below.
+  - Original task:
   - Add the checkbox "Receive routes" to a VPN outbound, right beside
     "Use DNS servers pushed by VPN". The routes are what the VPN server
     announces: networks and single IP addresses.
@@ -152,7 +182,12 @@ document `proximity-openvpn-test-report.md`.
 
 ## Configuration
 
-- [ ] **Start with a partly invalid configuration**
+- [x] **Start with a partly invalid configuration**
+  - Done: a block that cannot be read or checked is dropped, the rest
+    starts. The message at the top of the page lists what was dropped
+    and why; the file as it was is kept as
+    `proximity.invalid-<time>.json`. A route or an inbound that points
+    to a dropped element is kept and reported. Original task:
   - When Proximity starts and finds something wrong in the configuration,
     it must still start with what is valid.
   - A block of settings with incorrect data (an outbound, inbound, route,
@@ -166,7 +201,12 @@ document `proximity-openvpn-test-report.md`.
 
 ## Web UI
 
-- [ ] **Reload the open web UI when Proximity behind it was updated or restarted**
+- [x] **Reload the open web UI when Proximity behind it was updated or restarted**
+  - Done: every answer carries `X-Proximity-Instance`, a mark that is new
+    after every start. The page reloads itself when the mark changes;
+    with an open dialog it shows a notice with "Reload now" and reloads
+    when the dialog is closed. Checked in a browser: `make stand-reload`.
+  - Original task:
   - An open page keeps running the old JavaScript after the container was
     rebuilt (a new version) or just restarted; it must notice this and
     reload itself.
@@ -182,9 +222,23 @@ document `proximity-openvpn-test-report.md`.
     an open dialog that has unsaved changes and with the time when the
     server does not answer (the container is still starting).
 
+- [ ] **Reload with unsaved input outside dialogs**
+  - The automatic reload waits only for dialogs. Values typed on the
+    Settings page (it is a form, not a dialog) are lost when Proximity
+    restarts at that moment. Track changed forms and show the notice
+    instead of reloading.
+
 ## Test stands
 
 - [ ] **Prepare ready stands for the usual tests**
+  - Done so far: `scripts/stands/pair` (two linked instances: security
+    checks of the OpenVPN inbound, checks of the link — routes, token,
+    disabled user), `scripts/stands/reload` (an open page in a browser),
+    `scripts/stands/broken-config` (start with a damaged configuration),
+    the time server for a network without Internet (`STAND_OFFLINE=1`)
+    and the stand of the screenshots. Still to do: an external OpenVPN
+    client and an external OpenVPN server (not Proximity), latency,
+    recovery of lost connections.
   - A stand is a ready environment (containers, networks, sample data,
     helper scripts) that a test or a task starts with one command, so
     nobody has to work out again how it is built.
@@ -204,6 +258,12 @@ document `proximity-openvpn-test-report.md`.
     its own ready stand in `scripts/stands/` and its line in `AGENTS.md`.
   - The stand of the screenshots (`scripts/screenshots.sh`) already
     exists; decide whether to move it under `scripts/stands/`.
+
+- [ ] **Stand with AmneziaWG**
+  - No stand has an AmneziaWG server: "Receive routes" of an AmneziaWG
+    outbound (the networks of `AllowedIPs`) is covered only by unit
+    tests. Add an AmneziaWG peer to the stand `pair` or a stand of its
+    own.
 
 ## Performance
 

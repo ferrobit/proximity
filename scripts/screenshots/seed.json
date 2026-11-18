@@ -1,187 +1,530 @@
 {
-  "outbounds": [
-    {
-      "id": "Home ISP",
-      "type": "host",
-      "enabled": true,
-      "autostart": true,
-      "attempts": 3,
-      "reconnect_timeout": 10,
-      "statistics": true,
-      "verbose": false,
-      "host": {
-        "mode": "default",
-        "interface": "",
-        "gateway": ""
-      },
-      "recovery": {
-        "enabled": true,
-        "delay": 60,
-        "attempts": 0
-      }
-    },
-    {
-      "id": "Proxy DE",
-      "type": "socks5",
-      "enabled": true,
-      "autostart": true,
-      "attempts": 3,
-      "reconnect_timeout": 10,
-      "statistics": true,
-      "verbose": true,
-      "socks5": {
-        "server": "de.proxy.example",
-        "port": 1080,
-        "username": "",
-        "password": "",
-        "tls": false,
-        "skip_cert_verify": false,
-        "udp": true
-      },
-      "recovery": {
-        "enabled": true,
-        "delay": 60,
-        "attempts": 0
-      }
-    },
-    {
-      "id": "Proxy US",
-      "type": "http",
-      "enabled": true,
-      "autostart": true,
-      "attempts": 3,
-      "reconnect_timeout": 10,
-      "statistics": true,
-      "verbose": false,
-      "http": {
-        "server": "us.proxy.example",
-        "port": 3128,
-        "single": true,
-        "https_server": "",
-        "https_port": 0,
-        "ftp_server": "",
-        "ftp_port": 0,
-        "username": "",
-        "password": "",
-        "tls": false,
-        "skip_cert_verify": false
-      },
-      "recovery": {
-        "enabled": true,
-        "delay": 60,
-        "attempts": 0
-      }
-    },
-    {
-      "id": "Corp VPN",
-      "type": "openvpn",
-      "enabled": false,
-      "autostart": true,
-      "attempts": 3,
-      "reconnect_timeout": 10,
-      "statistics": true,
-      "verbose": false,
-      "openvpn": {
-        "config": "client\ndev tun\nproto udp\nremote vpn.corp.example 1194\nresolv-retry infinite\nnobind\npersist-key\npersist-tun\nremote-cert-tls server\nverify-x509-name proximity-server name\nauth SHA256\ndata-ciphers AES-256-GCM:AES-128-GCM:CHACHA20-POLY1305\ntls-version-min 1.2\ntun-mtu 1500\nauth-user-pass\nverb 3\n",
-        "username": "alice",
-        "password": "wonderland",
-        "otp_key": "",
-        "otp_mode": "challenge",
-        "key_password": "",
-        "use_dns": true
-      },
-      "monitoring": {
-        "enabled": true,
-        "interval": 20,
-        "timeout": 5,
-        "retries": 3,
-        "target": "1.1.1.1:443"
-      },
-      "recovery": {
-        "enabled": true,
-        "delay": 60,
-        "attempts": 0
-      }
-    },
-    {
-      "id": "AWG NL",
-      "type": "amneziawg",
-      "enabled": false,
-      "autostart": true,
-      "attempts": 3,
-      "reconnect_timeout": 10,
-      "statistics": true,
-      "verbose": false,
-      "amneziawg": {
-        "config": "[Interface]\nPrivateKey = 8Jx5j0vGOhUq3Zs4oQx3qtkzFZkkqZJMmY4m3cO5nVY=\nAddress = 10.8.1.2/32\nDNS = 1.1.1.1\nJc = 4\nJmin = 40\nJmax = 70\nS1 = 52\nS2 = 31\nH1 = 1194212345\nH2 = 1286653123\nH3 = 1597654321\nH4 = 1774412345\n\n[Peer]\nPublicKey = mN3pQ7rS9tUvWxYz1A2b3C4d5E6f7G8h9I0jKlMnOpQ=\nEndpoint = nl.vpn.example:51820\nAllowedIPs = 0.0.0.0/0\nPersistentKeepalive = 25\n",
-        "use_dns": true
-      },
-      "monitoring": {
-        "enabled": false,
-        "interval": 30,
-        "timeout": 5,
-        "retries": 3,
-        "target": "1.1.1.1:443"
-      },
-      "recovery": {
-        "enabled": true,
-        "delay": 60,
-        "attempts": 0
-      }
-    }
+  "hosts": [
+    "de.proxy.example",
+    "us.proxy.example",
+    "vpn.corp.example",
+    "jira.corp.example",
+    "portal.corp.example",
+    "speed.cloudflare.com",
+    "youtube.com",
+    "github.com",
+    "golang.org",
+    "pypi.org",
+    "example.org",
+    "example.net"
   ],
-  "inbounds": [
-    {
-      "id": "Office VPN",
-      "type": "openvpn",
-      "enabled": true,
-      "autostart": true,
-      "attempts": 3,
-      "reconnect_timeout": 10,
-      "recovery": {
-        "enabled": true,
-        "delay": 60,
-        "attempts": 0
+  "traffic": {
+    "flows": [
+      {
+        "host": "example.org",
+        "large": true,
+        "pause": [
+          0.4,
+          2.6
+        ]
       },
-      "statistics": true,
-      "verbose": false,
-      "port": 7800,
-      "outbound": "@router",
-      "anonymous": false,
-      "users": [
-        {
-          "enabled": true,
-          "name": "alice",
-          "password": "wonderland"
-        },
-        {
-          "enabled": true,
-          "name": "bob",
-          "password": "builder1"
-        }
-      ],
-      "openvpn": {
-        "server": "vpn.corp.example",
-        "public_port": 0,
-        "listen": "*",
-        "protocol": "udp",
-        "network": "10.77.1.0/24",
-        "redirect_gateway": true,
-        "routes": [],
-        "dns": [],
-        "client_to_client": false,
-        "max_clients": 32,
-        "keepalive_interval": 10,
-        "keepalive_timeout": 60,
-        "renegotiation": 3600,
-        "mtu": 1500,
-        "ciphers": "AES-256-GCM:AES-128-GCM:CHACHA20-POLY1305",
-        "digest": "SHA256",
-        "tls_version": "1.2",
-        "verbosity": 3,
-        "otp": false,
-        "otp_key": ""
+      {
+        "host": "example.net",
+        "large": false,
+        "pause": [
+          1,
+          5
+        ]
+      },
+      {
+        "host": "jira.corp.example",
+        "large": true,
+        "pause": [
+          3,
+          9
+        ]
+      },
+      {
+        "host": "speed.cloudflare.com",
+        "large": false,
+        "pause": [
+          5,
+          20
+        ]
+      },
+      {
+        "host": "github.com",
+        "large": true,
+        "pause": [
+          6,
+          13
+        ]
+      },
+      {
+        "host": "youtube.com",
+        "large": true,
+        "pause": [
+          7,
+          16
+        ],
+        "socks": true
+      },
+      {
+        "host": "pypi.org",
+        "large": false,
+        "pause": [
+          15,
+          40
+        ]
       }
-    }
-  ]
+    ],
+    "held": [
+      "example.org",
+      "portal.corp.example",
+      "golang.org",
+      "example.net"
+    ],
+    "unreachable": [
+      "jira.corp.example:81",
+      "10.213.77.200:80",
+      "example.org:82"
+    ]
+  },
+  "main": {
+    "outbounds": [
+      {
+        "id": "Home ISP",
+        "type": "host",
+        "enabled": true,
+        "autostart": true,
+        "attempts": 3,
+        "reconnect_timeout": 10,
+        "statistics": true,
+        "verbose": false,
+        "host": {
+          "mode": "default",
+          "interface": "",
+          "gateway": ""
+        },
+        "recovery": {
+          "enabled": true,
+          "delay": 60,
+          "attempts": 0
+        }
+      },
+      {
+        "id": "Proxy DE",
+        "type": "socks5",
+        "enabled": true,
+        "autostart": true,
+        "attempts": 3,
+        "reconnect_timeout": 10,
+        "statistics": true,
+        "verbose": true,
+        "socks5": {
+          "server": "de.proxy.example",
+          "port": 1080,
+          "username": "",
+          "password": "",
+          "tls": false,
+          "skip_cert_verify": false,
+          "udp": true
+        },
+        "recovery": {
+          "enabled": true,
+          "delay": 60,
+          "attempts": 0
+        }
+      },
+      {
+        "id": "Proxy US",
+        "type": "http",
+        "enabled": true,
+        "autostart": true,
+        "attempts": 3,
+        "reconnect_timeout": 10,
+        "statistics": true,
+        "verbose": false,
+        "http": {
+          "server": "us.proxy.example",
+          "port": 3128,
+          "single": true,
+          "https_server": "",
+          "https_port": 0,
+          "ftp_server": "",
+          "ftp_port": 0,
+          "username": "",
+          "password": "",
+          "tls": false,
+          "skip_cert_verify": false
+        },
+        "recovery": {
+          "enabled": true,
+          "delay": 60,
+          "attempts": 0
+        }
+      },
+      {
+        "id": "Corp VPN",
+        "type": "openvpn",
+        "enabled": true,
+        "autostart": true,
+        "attempts": 3,
+        "reconnect_timeout": 10,
+        "statistics": true,
+        "verbose": true,
+        "openvpn": {
+          "config": "",
+          "username": "alice",
+          "password": "wonderland",
+          "otp_key": "",
+          "otp_mode": "challenge",
+          "key_password": "",
+          "use_dns": true,
+          "use_routes": true
+        },
+        "monitoring": {
+          "enabled": true,
+          "interval": 20,
+          "timeout": 5,
+          "retries": 3,
+          "target": "1.1.1.1:443"
+        },
+        "recovery": {
+          "enabled": true,
+          "delay": 60,
+          "attempts": 0
+        }
+      },
+      {
+        "id": "AWG NL",
+        "type": "amneziawg",
+        "enabled": true,
+        "autostart": false,
+        "attempts": 3,
+        "reconnect_timeout": 10,
+        "statistics": true,
+        "verbose": false,
+        "amneziawg": {
+          "config": "[Interface]\nPrivateKey = 8Jx5j0vGOhUq3Zs4oQx3qtkzFZkkqZJMmY4m3cO5nVY=\nAddress = 10.8.1.2/32\nDNS = 1.1.1.1\nJc = 4\nJmin = 40\nJmax = 70\nS1 = 52\nS2 = 31\nH1 = 1194212345\nH2 = 1286653123\nH3 = 1597654321\nH4 = 1774412345\n\n[Peer]\nPublicKey = mN3pQ7rS9tUvWxYz1A2b3C4d5E6f7G8h9I0jKlMnOpQ=\nEndpoint = nl.vpn.example:51820\nAllowedIPs = 0.0.0.0/0\nPersistentKeepalive = 25\n",
+          "use_dns": true
+        },
+        "monitoring": {
+          "enabled": false,
+          "interval": 30,
+          "timeout": 5,
+          "retries": 3,
+          "target": "1.1.1.1:443"
+        },
+        "recovery": {
+          "enabled": true,
+          "delay": 60,
+          "attempts": 0
+        }
+      }
+    ],
+    "fallbacks": [
+      {
+        "id": "Streaming",
+        "enabled": true,
+        "outbounds": [
+          "Proxy DE",
+          "Proxy US",
+          "Home ISP"
+        ],
+        "health_check": false,
+        "url": "",
+        "interval": 0
+      }
+    ],
+    "routes": [
+      {
+        "id": "Corporate",
+        "directive": "DOMAIN-SUFFIX",
+        "target": "Corp VPN",
+        "params": [
+          "# Intranet and internal tools",
+          "corp.example",
+          "intranet.example",
+          "jira.corp.example",
+          "wiki.eu.corp.example",
+          "build.corp.example",
+          "portal.corp.example",
+          "docs.intranet.example"
+        ],
+        "enabled": true
+      },
+      {
+        "id": "Speed tests",
+        "directive": "DOMAIN-SUFFIX",
+        "target": "Corp VPN",
+        "params": [
+          "speed.cloudflare.com"
+        ],
+        "enabled": true
+      },
+      {
+        "id": "Video",
+        "directive": "DOMAIN-SUFFIX",
+        "target": "Streaming",
+        "params": [
+          "youtube.com",
+          "googlevideo.com",
+          "ytimg.com",
+          "vimeo.com"
+        ],
+        "enabled": true
+      },
+      {
+        "id": "Developer sites",
+        "directive": "DOMAIN-SUFFIX",
+        "target": "Proxy DE",
+        "params": [
+          "github.com",
+          "githubusercontent.com",
+          "golang.org",
+          "go.dev"
+        ],
+        "enabled": true
+      },
+      {
+        "id": "Package mirrors",
+        "directive": "DOMAIN-SUFFIX",
+        "target": "Proxy US",
+        "params": [
+          "pypi.org",
+          "pythonhosted.org",
+          "npmjs.org"
+        ],
+        "enabled": true
+      },
+      {
+        "id": "Ads and trackers",
+        "directive": "DOMAIN-KEYWORD",
+        "target": "REJECT",
+        "params": [
+          "doubleclick",
+          "adservice",
+          "tracker"
+        ],
+        "enabled": true
+      },
+      {
+        "id": "Local networks",
+        "directive": "IP-CIDR",
+        "target": "DIRECT",
+        "params": [
+          "192.168.0.0/16",
+          "172.16.0.0/12",
+          "169.254.0.0/16"
+        ],
+        "enabled": true
+      },
+      {
+        "id": "Netherlands",
+        "directive": "DOMAIN-SUFFIX",
+        "target": "AWG NL",
+        "params": [
+          "nl"
+        ],
+        "enabled": false
+      },
+      {
+        "id": "Office networks",
+        "directive": "IP-CIDR",
+        "target": "Corp VPN",
+        "params": [
+          "# Head office",
+          "10.20.0.0/16",
+          "10.20.5.17/32",
+          "# Branch offices",
+          "172.31.0.0/16",
+          "192.168.40.0/24",
+          "# Build server, HTTPS only",
+          "10.20.8.4/32:443",
+          "# Public mirror, no DNS lookup",
+          "203.0.113.10/32,no-resolve",
+          "2001:db8:20::/48"
+        ],
+        "enabled": true
+      }
+    ],
+    "default_target": "Home ISP",
+    "inbounds": [
+      {
+        "id": "Office VPN",
+        "type": "openvpn",
+        "enabled": true,
+        "autostart": true,
+        "attempts": 3,
+        "reconnect_timeout": 10,
+        "recovery": {
+          "enabled": true,
+          "delay": 60,
+          "attempts": 0
+        },
+        "statistics": true,
+        "verbose": true,
+        "port": 7800,
+        "outbound": "Home ISP",
+        "anonymous": false,
+        "users": [
+          {
+            "enabled": true,
+            "name": "alice",
+            "password": "wonderland"
+          },
+          {
+            "enabled": true,
+            "name": "bob",
+            "password": "builder1"
+          }
+        ],
+        "openvpn": {
+          "server": "vpn.corp.example",
+          "public_port": 0,
+          "listen": "*",
+          "protocol": "udp",
+          "network": "10.77.1.0/24",
+          "redirect_gateway": true,
+          "routes": [],
+          "dns": [],
+          "client_to_client": false,
+          "max_clients": 32,
+          "keepalive_interval": 10,
+          "keepalive_timeout": 60,
+          "renegotiation": 3600,
+          "mtu": 1500,
+          "ciphers": "AES-256-GCM:AES-128-GCM:CHACHA20-POLY1305",
+          "digest": "SHA256",
+          "tls_version": "1.2",
+          "verbosity": 3,
+          "otp": false,
+          "otp_key": ""
+        }
+      },
+      {
+        "id": "Team SOCKS",
+        "type": "socks5",
+        "enabled": true,
+        "autostart": true,
+        "attempts": 3,
+        "reconnect_timeout": 10,
+        "recovery": {
+          "enabled": true,
+          "delay": 60,
+          "attempts": 0
+        },
+        "statistics": true,
+        "verbose": true,
+        "port": 7801,
+        "outbound": "@router",
+        "anonymous": false,
+        "users": [
+          {
+            "enabled": true,
+            "name": "carol",
+            "password": "looking-glass"
+          },
+          {
+            "enabled": true,
+            "name": "dave",
+            "password": "crocodile1"
+          },
+          {
+            "enabled": false,
+            "name": "erin",
+            "password": "chessboard"
+          }
+        ]
+      }
+    ],
+    "users": [
+      {
+        "name": "olivia",
+        "role": "operator",
+        "password": "Operator-pass-1"
+      },
+      {
+        "name": "victor",
+        "role": "user",
+        "password": "Viewer-pass-1"
+      }
+    ]
+  },
+  "peer": {
+    "inbounds": [
+      {
+        "id": "VPN",
+        "type": "openvpn",
+        "enabled": true,
+        "autostart": true,
+        "attempts": 3,
+        "reconnect_timeout": 10,
+        "recovery": {
+          "enabled": true,
+          "delay": 60,
+          "attempts": 0
+        },
+        "statistics": true,
+        "verbose": false,
+        "port": 7800,
+        "outbound": "@router",
+        "anonymous": false,
+        "users": [
+          {
+            "enabled": true,
+            "name": "alice",
+            "password": "wonderland"
+          }
+        ],
+        "openvpn": {
+          "server": "vpn.corp.example",
+          "public_port": 1194,
+          "listen": "*",
+          "protocol": "udp",
+          "network": "10.66.0.0/24",
+          "redirect_gateway": false,
+          "routes": [
+            "10.20.0.0/16",
+            "10.30.0.0/16"
+          ],
+          "dns": [],
+          "client_to_client": false,
+          "max_clients": 32,
+          "keepalive_interval": 10,
+          "keepalive_timeout": 60,
+          "renegotiation": 3600,
+          "mtu": 1500,
+          "ciphers": "AES-256-GCM:AES-128-GCM:CHACHA20-POLY1305",
+          "digest": "SHA256",
+          "tls_version": "1.2",
+          "verbosity": 3,
+          "otp": false,
+          "otp_key": "",
+          "ca_certificate": "-----BEGIN CERTIFICATE-----\nMIIBbjCCARSgAwIBAgIQFVPCuOa3ixaxF5W2UpsdXzAKBggqhkjOPQQDAjAXMRUw\nEwYDVQQDEwxQcm94aW1pdHkgQ0EwHhcNMjYxMTE4MDcyODU5WhcNMzYxMTE1MDgy\nODU5WjAXMRUwEwYDVQQDEwxQcm94aW1pdHkgQ0EwWTATBgcqhkjOPQIBBggqhkjO\nPQMBBwNCAARPCXJmgKUOW/RsBHYtyTW9sZ8PVJ4SeMcQ0xsShwwwSPIvA1V+UjXO\nso2/MrUF2S3m6dnPIVjf3FTUfS5GlF7yo0IwQDAOBgNVHQ8BAf8EBAMCAQYwDwYD\nVR0TAQH/BAUwAwEB/zAdBgNVHQ4EFgQU9nTocq0o1AfjbUT58EU283pm6H4wCgYI\nKoZIzj0EAwIDSAAwRQIhALUcg4P8LejksmjGB6rd3nJ9yHdRYTbPgXkgKA5z1rRX\nAiBCBLdr0LHTkjWAnDqATgSKRkxYkgRygBlV4pmEDzyjpQ==\n-----END CERTIFICATE-----\n",
+          "ca_key": "-----BEGIN PRIVATE KEY-----\nMIGHAgEAMBMGByqGSM49AgEGCCqGSM49AwEHBG0wawIBAQQgynZn4GOxwxscLjIN\nZT3AcdrVidAdCRitLtOcQWC+RSihRANCAARPCXJmgKUOW/RsBHYtyTW9sZ8PVJ4S\neMcQ0xsShwwwSPIvA1V+UjXOso2/MrUF2S3m6dnPIVjf3FTUfS5GlF7y\n-----END PRIVATE KEY-----\n",
+          "certificate": "-----BEGIN CERTIFICATE-----\nMIIBhjCCASygAwIBAgIQDoe9dmoTxLj3I/hklVO3VjAKBggqhkjOPQQDAjAXMRUw\nEwYDVQQDEwxQcm94aW1pdHkgQ0EwHhcNMjYxMTE4MDcyODU5WhcNMzYxMTE1MDgy\nODU5WjAbMRkwFwYDVQQDExBwcm94aW1pdHktc2VydmVyMFkwEwYHKoZIzj0CAQYI\nKoZIzj0DAQcDQgAEJHc4j0fYnf07mKvMj3EEg5TwpZi2m71bfaN5r/V0qQjqMfy9\nfL5WpbdmQW55HR7BG4g1Cm0n3tz5IHSdpHThyKNWMFQwDgYDVR0PAQH/BAQDAgeA\nMBMGA1UdJQQMMAoGCCsGAQUFBwMBMAwGA1UdEwEB/wQCMAAwHwYDVR0jBBgwFoAU\n9nTocq0o1AfjbUT58EU283pm6H4wCgYIKoZIzj0EAwIDSAAwRQIhAPAPSAMw43tD\nQE+3q/MRdY3xEMij+vWFh+N3a3OKHJxiAiBfaC6G6Vv+/OV2h5bHPPPkNkWFRCQ1\nh2ERRKCZBphpAw==\n-----END CERTIFICATE-----\n",
+          "key": "-----BEGIN PRIVATE KEY-----\nMIGHAgEAMBMGByqGSM49AgEGCCqGSM49AwEHBG0wawIBAQQgA1cC+cnT7pcVo97D\nxa9Lb/pcdzl2OHAuVtnHljXuQnWhRANCAAQkdziPR9id/TuYq8yPcQSDlPClmLab\nvVt9o3mv9XSpCOox/L18vlalt2ZBbnkdHsEbiDUKbSfe3PkgdJ2kdOHI\n-----END PRIVATE KEY-----\n",
+          "client_certificate": "-----BEGIN CERTIFICATE-----\nMIIBhzCCASygAwIBAgIQCYYAQZPsyFHzpEjBUoQ04zAKBggqhkjOPQQDAjAXMRUw\nEwYDVQQDEwxQcm94aW1pdHkgQ0EwHhcNMjYxMTE4MDcyODU5WhcNMzYxMTE1MDgy\nODU5WjAbMRkwFwYDVQQDExBwcm94aW1pdHktY2xpZW50MFkwEwYHKoZIzj0CAQYI\nKoZIzj0DAQcDQgAEOa3RZ9Gq9+A4v9lkPeNcceBCHuiv8MFgflDD8GCZGe7v4+uH\nGAJccTACxVifBjf9Dawjwz5b/uZb8wMkK9+T8aNWMFQwDgYDVR0PAQH/BAQDAgeA\nMBMGA1UdJQQMMAoGCCsGAQUFBwMCMAwGA1UdEwEB/wQCMAAwHwYDVR0jBBgwFoAU\n9nTocq0o1AfjbUT58EU283pm6H4wCgYIKoZIzj0EAwIDSQAwRgIhAP+1Z6u3pWWV\n+TkeBPqdDJAA0Hx1+fHy/wz+QV7Fz/91AiEA3qk39rIclXL67Q5WSoBaXH80Kppj\nkrwQ9l0DMX92gV8=\n-----END CERTIFICATE-----\n",
+          "client_key": "-----BEGIN PRIVATE KEY-----\nMIGHAgEAMBMGByqGSM49AgEGCCqGSM49AwEHBG0wawIBAQQghKiqkF73Nje2K4RT\nzH+1aqfnih7z+0d3JRAblUm4x4+hRANCAAQ5rdFn0ar34Di/2WQ941xx4EIe6K/w\nwWB+UMPwYJkZ7u/j64cYAlxxMALFWJ8GN/0NrCPDPlv+5lvzAyQr35Px\n-----END PRIVATE KEY-----\n",
+          "tls_crypt": "-----BEGIN OpenVPN Static key V1-----\nd0869e8e38b3cfc836843a6f5f6fc23a\nef7683ba517779c0f46922346b79fbac\nf849a023438364841d36a4ac356b7d0d\nf8e53569d640a1f4358b8284ad19f8ba\n7e9e527120b5a29249f250c2bdf57cd8\n59033c3091fa8739db01c7fcfc2dcd3e\n2020f40a0d2b9ba43e6032c3421b11a4\n5aa170ffcae3a1d6b246b09cb4abf6a4\na350fa6bfe3eb6b5314ee1d594ca4794\n9ad012e33b1d0ce32648ff7019106c5e\n2bcef153a08d98e6af59ac4229cccd6a\n4d12902969dce2f6946ff1f0e9682f21\n441f2b4535403b2843e396a2ebe49b1b\nc232b7084b5b36d89445d8b785c9d73c\ne552a2c6e07017807f7faf7f02bab413\n2f8ac3df121b22afa6723115bf2b203a\n-----END OpenVPN Static key V1-----\n"
+        }
+      },
+      {
+        "id": "SOCKS",
+        "type": "socks5",
+        "enabled": true,
+        "autostart": true,
+        "attempts": 3,
+        "reconnect_timeout": 10,
+        "recovery": {
+          "enabled": true,
+          "delay": 60,
+          "attempts": 0
+        },
+        "statistics": true,
+        "verbose": false,
+        "port": 7801,
+        "outbound": "@router",
+        "anonymous": true,
+        "users": []
+      }
+    ]
+  }
 }

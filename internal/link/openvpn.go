@@ -31,6 +31,7 @@ type openvpnDriver struct {
 	mutex     sync.Mutex
 	ready     chan struct{}
 	failure   error
+	rejected  int64
 	attempts  int
 	values    map[string]string
 }
@@ -41,6 +42,7 @@ type deviceNetwork struct {
 }
 
 const openvpnTimeout = 60 * time.Second
+const codeMargin = time.Second
 const openvpnVerbosity = 3
 const openvpnDebugVerbosity = 6
 const openvpnReady = "Initialization Sequence Completed"
@@ -149,6 +151,14 @@ func findOverlap(values map[string]string, networks []deviceNetwork) error {
 	return nil
 }
 
+func codeDelay(rejected int64, now time.Time) time.Duration {
+	next := time.Unix((rejected+1)*int64(otpStep/time.Second), 0)
+	if rejected == 0 || !now.Before(next) {
+		return 0
+	}
+	return next.Sub(now) + codeMargin
+}
+
 func makeOpenVPNDriver(runner *runner) *openvpnDriver {
 	slot := runner.outbound.Slot
 	return &openvpnDriver{runner: runner, tools: runner.manager.options.Tools,
@@ -161,6 +171,17 @@ func (driver *openvpnDriver) start(ctx context.Context) error {
 	environment, err := driver.runner.manager.synchronize(ctx, driver.runner.logf)
 	if err != nil {
 		return err
+	}
+	driver.mutex.Lock()
+	rejected := driver.rejected
+	driver.mutex.Unlock()
+	if delay := codeDelay(rejected, driver.runner.manager.options.Clock.Now()); delay > 0 {
+		// NOTE: A server accepts a one-time code once: the code that was rejected is not
+		// sent again, the next attempt waits for a new one.
+		driver.runner.logf("waiting %v for a new one-time code", delay.Round(time.Second))
+		if sleep(ctx, delay); ctx.Err() != nil {
+			return ctx.Err()
+		}
 	}
 	hook := filepath.Join(driver.directory, "environment.json")
 	path := filepath.Join(driver.directory, "client.ovpn")
@@ -319,7 +340,7 @@ func (driver *openvpnDriver) output(line string) {
 	driver.mutex.Lock()
 	defer driver.mutex.Unlock()
 	if strings.Contains(line, openvpnReady) {
-		if driver.attempts = 0; driver.ready != nil {
+		if driver.attempts, driver.rejected = 0, 0; driver.ready != nil {
 			close(driver.ready)
 			driver.ready = nil
 		}
@@ -328,6 +349,9 @@ func (driver *openvpnDriver) output(line string) {
 		driver.failure = &deniedError{errors.New("authentication failed")}
 		if driver.options.OTPKey == "" {
 			driver.failure = &fatalError{driver.failure}
+		} else {
+			moment := driver.runner.manager.options.Clock.Now()
+			driver.rejected = moment.Unix() / int64(otpStep/time.Second)
 		}
 		driver.terminal.signal(syscall.SIGTERM)
 	} else if strings.Contains(line, openvpnBadKey) && driver.failure == nil {

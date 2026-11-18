@@ -17,6 +17,9 @@ use it for scripting: provisioning outbounds, toggling routes, exporting backups
 - Errors: HTTP status `4xx` and `{"error": "message"}`.
 - IDs in paths are URL-encoded: `OpenVPN 1` → `OpenVPN%201`.
 - Each response carries `X-Proximity-Time` — server processing time in milliseconds.
+- Each response carries `X-Proximity-Instance` — a mark of the running process, new after
+  every start. The web UI compares it with the first value it saw and reloads the page
+  when it changes (after an update or a restart).
 
 ## Authentication
 
@@ -105,8 +108,8 @@ Outbound object (fields depend on `type`):
 | `host` | `host: {mode: "default" \| "interface", interface, gateway}` |
 | `socks5` | `socks5: {server, port, username, password, tls, skip_cert_verify, udp}` |
 | `http` | `http: {server, port, single, https_server, https_port, ftp_server, ftp_port, username, password, tls, skip_cert_verify}` |
-| `openvpn` | `openvpn: {config, username, password, otp_key, otp_mode: "challenge" \| "append", key_password, use_dns}` |
-| `amneziawg` | `amneziawg: {config, use_dns}` |
+| `openvpn` | `openvpn: {config, username, password, otp_key, otp_mode: "challenge" \| "append", key_password, use_dns, use_routes}` |
+| `amneziawg` | `amneziawg: {config, use_dns, use_routes}` |
 
 Tunnels also take `monitoring: {enabled, interval, timeout, retries, target}`.
 
@@ -178,7 +181,7 @@ Empty key and certificate fields are generated on save.
 | `POST /api/routes` | 2 | `{id, directive, target, params: [...], enabled}` |
 | `POST /api/routes/preview` | 1 | Same body → `{params, lines}` (normalized parameters and mihomo rules) or an error with the line number |
 | `PUT /api/routes/default` | 2 | `{target}` — target for everything else |
-| `PUT /api/routes/{key}` | 2 | Replace (routes are addressed by their internal `key`) |
+| `PUT /api/routes/{key}` | 2 | Replace (routes are addressed by their internal `key`). A *provided* route (`provided` holds the ID of its VPN outbound) answers `400 provided route follows its VPN connection`: it exists while `use_routes` of the outbound is on and is switched by the state of the connection; it can only be moved |
 | `DELETE /api/routes/{key}` | 2 | Delete |
 | `POST /api/routes/{key}/move` | 2 | `{delta}` |
 | `GET /api/router/config` | 2 | `{config}` — current mihomo configuration |
@@ -201,6 +204,8 @@ failure).
 | `PUT /api/settings` | 3 | Replace settings |
 | `GET /api/time` | 1 | Time synchronization state (see below) |
 | `POST /api/time/check` | 2 | Check the time now → the new state |
+| `GET /api/problems` | 1 | Problems found in the settings file at start: `{time, backup, items: [{kind, id, reason, kept}]}`. `kind` is `file`, `settings`, `user`, `outbound`, `fallback`, `route` or `inbound`; `kept: false` — the element was dropped, `kept: true` — a route or an inbound that stays but points to a dropped element; `backup` is the name of the copy of the damaged file in the settings folder. Empty `items` — no problems |
+| `DELETE /api/problems` | 3 | Dismiss the report (the copy of the file stays) |
 | `GET /api/backup` | 2 | Export the configuration (without users) |
 | `POST /api/backup` | 2 | Import; an Operator's import keeps the current settings |
 

@@ -83,7 +83,9 @@ it:
 1. Any change through the API is validated and saved to `proximity.json`.
 2. The store notifies the server, which **synchronizes**:
    - outbound drivers are started, restarted (only when their settings changed) or stopped;
-   - routes reported by VPNs are saved as *provided* routes;
+   - for a VPN outbound with *Receive routes* (`use_routes`) the *provided* route is kept:
+     created at the top and switched on when the tunnel is up and has reported its routes,
+     switched off while it is down, removed when the option is off;
    - a new mihomo configuration is generated from outbounds, fallbacks, routes and the
      current outbound states;
    - the configuration is checked with `mihomo -t` and applied through mihomo's unix
@@ -244,7 +246,7 @@ of the signals that start reconnection.
   password (*OTP code usage*).
 - The hook reports the interface address, gateway, pushed DNS servers, domains and routes.
   Routes are not installed into the main table; they are stored in the tunnel's table and
-  shown as the *provided* route.
+  fill the *provided* route when *Receive routes* is on.
 - `AUTH_FAILED` without an OTP key stops the outbound as `failed` at once, without
   retrying, to avoid locking the account. With an OTP key the next attempt uses a fresh
   code.
@@ -326,9 +328,26 @@ on every change. Its port (7800…7898) is also its key: slot = port − 7799.
   flag and the TOTP key; it is replaced atomically when users change, so the server keeps
   running. The code is accepted appended to the password or as a `static-challenge`
   response (`SCRV1:…`), for the current and the neighbouring 30-second windows. With TOTP
-  the server issues `auth-gen-token`, so renegotiation does not ask for a new code.
+  the server issues `auth-gen-token 0 external-auth`, so renegotiation and a reconnect do
+  not ask for a new code. The key of the tokens (`auth-gen-token-secret`, file `token.key`)
+  is derived from the server key and the TOTP key, so a token outlives a restart of the
+  inbound and of the container. A login with a token still calls `proximity verify`
+  (`session_state` is `Authenticated`): the password is not checked again, but the user
+  must still be enabled.
+- A code is used once: `codes.json` beside `auth.json` remembers who used the code of
+  which 30-second window (user and client address, taken from `untrusted_ip`). The same
+  user at the same address may repeat it, anybody else is refused. An outbound whose code
+  was refused waits for the next window before the next attempt.
+- `peer-fingerprint` holds the SHA-256 of the current client certificate: a regenerated
+  certificate replaces the old one, other certificates of the CA are rejected.
+- The clients' traffic goes to the router device, which carries TCP and UDP only. ICMP of
+  clients to other hosts is rejected in `FORWARD` (`-i proximity_i<N> -p icmp -j REJECT
+  --reject-with icmp-admin-prohibited`, above the accepting rules) unless the inbound
+  goes straight to the host.
 - Sessions of changed, disabled or deleted users are closed through the management unix
-  socket (`kill <name>`); the same socket gives the list of connected clients (`status 2`,
+  socket with `client-kill <CID> HALT` (the client is told to stop and notices it at once;
+  `kill <name>` when the session is not in the list); the same socket gives the list of
+  connected clients (`status 2`,
   entries without a virtual address are unfinished handshakes and are skipped).
 - Client traffic is forwarded by the kernel into the mihomo TUN device and terminated
   there, so no NAT is needed: table `61000 + slot` holds `<network> dev proximity_i<slot>`,
@@ -388,6 +407,8 @@ All persistent data lives in the settings folder mounted as `/config`:
 | File | Written | Contents |
 |---|---|---|
 | `proximity.json` | on every change (atomic replace) | users, outbounds, inbounds, fallbacks, routes, settings, token secret |
+| `proximity.invalid-<time>.json` | at a start with a damaged `proximity.json` | the file as it was; the valid part is written back to `proximity.json` |
+| `proximity.problems.json` | with the copy above; removed by `DELETE /api/problems` | what was dropped and why (`GET /api/problems`) |
 | `state.json` | every 30 s and on shutdown | traffic totals of outbounds and inbounds, unreachable routes |
 | `router.json` | on start, stop and restart of the router, and at startup | requested router state (`running`) |
 | `services.json` | on every service state change | state of tunnels and inbounds: `running`, `stopped`, `failed` with message |

@@ -3,9 +3,12 @@ package link
 import (
 	"bufio"
 	"context"
+	"crypto/sha256"
+	"crypto/sha512"
 	"crypto/subtle"
 	"encoding/base64"
 	"encoding/json"
+	"encoding/pem"
 	"errors"
 	"fmt"
 	"io"
@@ -37,6 +40,11 @@ type authUser struct {
 	Password string `json:"password"`
 }
 
+type usedCode struct {
+	Name    string `json:"name"`
+	Address string `json:"address"`
+}
+
 type authState struct {
 	Anonymous bool       `json:"anonymous"`
 	OTPKey    string     `json:"otp_key"`
@@ -57,6 +65,7 @@ type openvpnAcceptor struct {
 	clients   []InboundClient
 	index     int
 	managed   bool
+	direct    bool
 	mutex     sync.Mutex
 	ready     chan struct{}
 	reason    string
@@ -68,6 +77,9 @@ const serverTimeout = 60 * time.Second
 const managementTimeout = 3 * time.Second
 const otpStep = 30 * time.Second
 const otpDigits = 6
+const usedSteps = 2
+const usedFile = "codes.json"
+const addressVariable = "untrusted_ip"
 const challengePrefix = "SCRV1:"
 const challengeText = "Enter one-time code"
 const clientListPrefix = "CLIENT_LIST,"
@@ -78,8 +90,15 @@ const managementPrefix = "MANAGEMENT: "
 const managementKill = managementPrefix + "CMD 'kill"
 const optionsMarker = "Options error:"
 const fatalMarker = "ERROR:"
+const pinMarker = "certificate hash verification failed"
+const tokenFile = "token.key"
+const tokenBlock = "OpenVPN auth-token server key"
+const tokenLabel = "proximity auth-token "
+const sessionVariable = "session_state"
+const clientIDField = 10
 
 var commonNamePattern = regexp.MustCompile(`^[A-Za-z0-9_.@-]{1,64}$`)
+var sessionStates = []string{"Authenticated", "AuthenticatedEmptyUser"}
 
 func ClientConfig(inbound config.Inbound, options ExportOptions) (string, error) {
 	server := inbound.OpenVPN
@@ -137,7 +156,8 @@ func ClientConfig(inbound config.Inbound, options ExportOptions) (string, error)
 	return strings.Join(lines, "\n") + "\n", nil
 }
 
-func RunVerify(path string, credentials string, now time.Time) error {
+func RunVerify(path string, credentials string, address string, session string,
+	now time.Time) error {
 	state := authState{}
 	if data, err := os.ReadFile(path); err != nil {
 		return fmt.Errorf("failed to read file '%v': %w", path, err)
@@ -156,11 +176,72 @@ func RunVerify(path string, credentials string, now time.Time) error {
 			now = now.Add(offset)
 		}
 	}
-	return state.verify(name, password, now)
+	if slices.Contains(sessionStates, session) {
+		return state.allow(name)
+	} else if err = state.verify(name, password, now); err != nil || state.OTPKey == "" ||
+		name == "" {
+		return err
+	}
+	_, code := splitChallenge(password)
+	step, _ := state.matchCode(code, now)
+	return claimCode(filepath.Join(filepath.Dir(path), usedFile), step, name, address, now)
+}
+
+func VerifyAddress() string {
+	return os.Getenv(addressVariable)
+}
+
+func VerifySession() string {
+	return os.Getenv(sessionVariable)
+}
+
+// NOTE: The key of the tokens comes from the secrets of the inbound, so it is the same after
+// every start and changes together with the server key or the key of one-time codes.
+func tokenKey(secret string) string {
+	first := sha512.Sum512([]byte(tokenLabel + "1\n" + secret))
+	second := sha512.Sum512([]byte(tokenLabel + "2\n" + secret))
+	return string(pem.EncodeToMemory(&pem.Block{Type: tokenBlock,
+		Bytes: append(first[:], second[:]...)}))
 }
 
 func block(name string, text string) string {
 	return "<" + name + ">\n" + strings.TrimRight(text, "\n") + "\n</" + name + ">"
+}
+
+func certificateFingerprint(text string) string {
+	decoded, _ := pem.Decode([]byte(text))
+	if decoded == nil {
+		return ""
+	}
+	parts := []string{}
+	for _, value := range sha256.Sum256(decoded.Bytes) {
+		parts = append(parts, fmt.Sprintf("%02X", value))
+	}
+	return strings.Join(parts, ":")
+}
+
+// NOTE: A code is used once: it is accepted again only from the same user at the same
+// address, which is a quick reconnect of the same client.
+func claimCode(path string, step int64, name string, address string, now time.Time) error {
+	used, current := map[int64]usedCode{}, now.Unix()/int64(otpStep/time.Second)
+	if data, err := os.ReadFile(path); err == nil && json.Unmarshal(data, &used) != nil {
+		used = map[int64]usedCode{}
+	}
+	for key := range used {
+		if key < current-usedSteps {
+			delete(used, key)
+		}
+	}
+	owner := usedCode{Name: name, Address: address}
+	if previous, found := used[step]; found && (previous != owner || address == "") {
+		return fmt.Errorf("one-time code of user '%v' is already used", name)
+	}
+	used[step] = owner
+	data, err := json.Marshal(used)
+	if err != nil {
+		return fmt.Errorf("failed to encode used codes: %w", err)
+	}
+	return config.WriteFile(path, data)
 }
 
 func makeAuthState(inbound config.Inbound) authState {
@@ -199,6 +280,18 @@ func splitChallenge(password string) (string, string) {
 	return password, ""
 }
 
+func clientIDs(lines []string, name string) []string {
+	result := []string{}
+	for _, line := range lines {
+		fields := strings.Split(line, ",")
+		if strings.HasPrefix(line, clientListPrefix) && len(fields) > clientIDField &&
+			fields[clientIDField-1] == name && fields[clientIDField] != "" {
+			result = append(result, fields[clientIDField])
+		}
+	}
+	return result
+}
+
 func parseClients(lines []string) []InboundClient {
 	result := []InboundClient{}
 	for _, line := range lines {
@@ -218,6 +311,19 @@ func parseClients(lines []string) []InboundClient {
 		result = append(result, client)
 	}
 	return result
+}
+
+// NOTE: A client that shows a valid token has given its password and one-time code before;
+// only the right to connect is checked again, so a disabled user does not come back.
+func (state authState) allow(name string) error {
+	if name == "" && !state.Anonymous {
+		return errors.New("anonymous connections are not allowed")
+	} else if name != "" && !slices.ContainsFunc(state.Users, func(user authUser) bool {
+		return user.Name == name
+	}) {
+		return fmt.Errorf("unexpected user '%v'", name)
+	}
+	return nil
 }
 
 func (state authState) verify(name string, password string, now time.Time) error {
@@ -241,13 +347,21 @@ func (state authState) verify(name string, password string, now time.Time) error
 	} else if state.OTPKey == "" {
 		return nil
 	}
-	for _, shift := range []time.Duration{0, -otpStep, otpStep} {
-		if expected, err := computeOTP(state.OTPKey, now.Add(shift)); err == nil &&
-			subtle.ConstantTimeCompare([]byte(expected), []byte(code)) == 1 {
-			return nil
-		}
+	if _, found := state.matchCode(code, now); found {
+		return nil
 	}
 	return fmt.Errorf("invalid one-time code of user '%v'", name)
+}
+
+func (state authState) matchCode(code string, now time.Time) (int64, bool) {
+	for _, shift := range []time.Duration{0, -otpStep, otpStep} {
+		moment := now.Add(shift)
+		if expected, err := computeOTP(state.OTPKey, moment); err == nil &&
+			subtle.ConstantTimeCompare([]byte(expected), []byte(code)) == 1 {
+			return moment.Unix() / int64(otpStep/time.Second), true
+		}
+	}
+	return 0, false
 }
 
 func (state authState) revoked(current authState) []string {
@@ -277,6 +391,8 @@ func (acceptor *openvpnAcceptor) start(ctx context.Context) error {
 	} else if err = acceptor.tools.enableForwarding(); err != nil {
 		return err
 	} else if err = acceptor.store(state); err != nil {
+		return err
+	} else if err = acceptor.storeToken(); err != nil {
 		return err
 	} else if err = os.WriteFile(path, []byte(acceptor.render()), 0o600); err != nil {
 		return fmt.Errorf("failed to write file '%v': %w", path, err)
@@ -337,6 +453,7 @@ func (acceptor *openvpnAcceptor) start(ctx context.Context) error {
 		acceptor.runner.logf("forwarding rules are not installed: %v", err)
 	}
 	acceptor.index, acceptor.managed = 0, true
+	acceptor.filterPing(acceptor.runner.inbound.Outbound == config.ViaHost)
 	acceptor.attach()
 	return nil
 }
@@ -360,7 +477,22 @@ func (acceptor *openvpnAcceptor) describe(status *InboundStatus) {
 	status.Clients = append([]InboundClient{}, acceptor.clients...)
 }
 
+// NOTE: The router carries only TCP and UDP: a ping of a client would leave through the
+// host connection past the routes and the outbound, so it is rejected.
+func (acceptor *openvpnAcceptor) filterPing(direct bool) {
+	if err := acceptor.tools.filterPing(acceptor.device, !direct); err != nil {
+		acceptor.runner.logf("ping rule is not installed: %v", err)
+	} else if !direct {
+		acceptor.runner.logf("ping of clients to other hosts is rejected: " +
+			"it cannot follow the routes")
+	}
+	acceptor.direct = direct
+}
+
 func (acceptor *openvpnAcceptor) reload(inbound config.Inbound) {
+	if direct := inbound.Outbound == config.ViaHost; acceptor.managed && direct != acceptor.direct {
+		acceptor.filterPing(direct)
+	}
 	current := makeAuthState(inbound)
 	acceptor.mutex.Lock()
 	previous := acceptor.state
@@ -374,11 +506,39 @@ func (acceptor *openvpnAcceptor) reload(inbound config.Inbound) {
 	}
 	acceptor.runner.logf("users are updated: %v enabled, anonymous connections allowed: %v",
 		len(current.Users), current.Anonymous)
+	status, _ := acceptor.manage("status 2")
 	for _, name := range previous.revoked(current) {
-		if lines, err := acceptor.manage("kill " + name); err == nil && len(lines) != 0 {
+		acceptor.revoke(name, clientIDs(status, name))
+	}
+}
+
+// NOTE: A client that is told to halt stops at once; a session that is only dropped is
+// noticed by the client after its keepalive timeout.
+func (acceptor *openvpnAcceptor) revoke(name string, ids []string) {
+	commands := []string{}
+	for _, id := range ids {
+		commands = append(commands, "client-kill "+id+" HALT")
+	}
+	if len(commands) == 0 {
+		commands = append(commands, "kill "+name)
+	}
+	for _, command := range commands {
+		if lines, err := acceptor.manage(command); err == nil && len(lines) != 0 {
 			acceptor.runner.logf("sessions of '%v': %v", name, lines[len(lines)-1])
 		}
 	}
+}
+
+func (acceptor *openvpnAcceptor) storeToken() error {
+	server := acceptor.runner.inbound.OpenVPN
+	if !server.OTP {
+		return nil
+	}
+	path := filepath.Join(acceptor.directory, tokenFile)
+	if err := os.WriteFile(path, []byte(tokenKey(server.Key+"\n"+server.OTPKey)), 0o600); err != nil {
+		return fmt.Errorf("failed to write file '%v': %w", path, err)
+	}
+	return nil
 }
 
 func (acceptor *openvpnAcceptor) stop() {
@@ -391,9 +551,10 @@ func (acceptor *openvpnAcceptor) stop() {
 			<-acceptor.finished
 		}
 		acceptor.tools.denyForward(acceptor.device)
+		_ = acceptor.tools.filterPing(acceptor.device, false)
 		acceptor.tools.teardownTable(acceptor.table)
 	}
-	acceptor.command, acceptor.clients = nil, nil
+	acceptor.command, acceptor.clients, acceptor.managed = nil, nil, false
 	acceptor.tools.removeDevice(acceptor.device)
 }
 
@@ -445,7 +606,10 @@ func (acceptor *openvpnAcceptor) render() string {
 		lines = append(lines, "local "+server.Listen)
 	}
 	if server.OTP {
-		lines = append(lines, "auth-gen-token")
+		// NOTE: The key of the tokens is kept, so a restart of the server does not ask the
+		// clients for a new one-time code.
+		lines = append(lines, "auth-gen-token 0 external-auth",
+			"auth-gen-token-secret "+filepath.Join(acceptor.directory, tokenFile))
 	}
 	if server.Protocol == config.ProtocolUDP {
 		lines = append(lines, "explicit-exit-notify 1")
@@ -472,6 +636,11 @@ func (acceptor *openvpnAcceptor) render() string {
 	for _, address := range servers {
 		lines = append(lines, `push "dhcp-option DNS `+address+`"`)
 	}
+	if fingerprint := certificateFingerprint(server.ClientCertificate); fingerprint != "" {
+		// NOTE: Only the current client certificate is accepted: a regenerated one and any
+		// other certificate of the same CA are rejected.
+		lines = append(lines, "peer-fingerprint "+fingerprint)
+	}
 	lines = append(lines, block("ca", server.CACertificate), block("cert", server.Certificate),
 		block("key", server.Key), block("tls-crypt", server.TLSCrypt))
 	return strings.Join(lines, "\n") + "\n"
@@ -497,7 +666,10 @@ func (acceptor *openvpnAcceptor) output(line string) {
 		(strings.HasPrefix(line, managementPrefix) && !strings.HasPrefix(line, managementKill)) {
 		return
 	}
-	acceptor.runner.logf("%v", line)
+	if acceptor.runner.logf("%v", line); strings.Contains(line, pinMarker) {
+		acceptor.runner.logf("client certificate is rejected: it is not the current client " +
+			"certificate of this inbound, export the client configuration again")
+	}
 	acceptor.mutex.Lock()
 	defer acceptor.mutex.Unlock()
 	if strings.Contains(line, optionsMarker) || strings.Contains(line, fatalMarker) {

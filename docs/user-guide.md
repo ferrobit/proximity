@@ -32,7 +32,19 @@ A tour of every page of the Proximity web UI (<http://localhost:8899>).
 | **Center** | The selected section. The URL keeps the section (`#/routes`), so you can bookmark it |
 | **Footer** | Version, copyright, page generation time (total and server) |
 
-All lists refresh themselves; the **Refresh** buttons force an immediate reload.
+All lists refresh themselves; the **Refresh** buttons force an immediate reload. When
+Proximity itself was updated or restarted, the open page notices it within 3 seconds and
+reloads itself; with an open dialog it shows a notice with **Reload now** instead and
+reloads when the dialog is closed, so typed values are not lost.
+
+When the settings file was damaged at start, a yellow message *Proximity started with a
+damaged configuration* stands above every section for signed-in users. Proximity starts
+anyway with everything that is valid: a block that cannot be read or checked (an outbound,
+a fallback, a route, an inbound, a user, the settings) is dropped, the rest works. The
+message lists every dropped element with the reason, and the routes and inbounds that
+are kept but point to a dropped element. The file as it was before the start is kept in
+the settings folder as `proximity.invalid-<time>.json`. An Administrator closes the
+message; until then it also survives restarts.
 
 ## Dashboard
 
@@ -230,6 +242,9 @@ Tabs: **General**, **OpenVPN**, **Authentication**, **Monitoring**.
   static keys and the password of `<auth-user-pass>` are shown in red.
 - **Use DNS servers pushed by VPN** — resolve the domains of routes that target this
   outbound through the VPN's DNS.
+- **Receive routes** — keep a route with the networks announced by the VPN; it is on only
+  while the connection is up (see [Routes provided by a VPN](routes.md#routes-provided-by-a-vpn)).
+  AmneziaWG has the same switch: its networks are the `AllowedIPs`.
 
 **Authentication** tab:
 
@@ -241,8 +256,8 @@ Tabs: **General**, **OpenVPN**, **Authentication**, **Monitoring**.
 - **Private key password** — if the client key is encrypted.
 
 Directives that would break Proximity's control (`dev`, `up`, `script-security`, `daemon`,
-`management` …) are removed automatically. Routes pushed by the server appear in Routes
-as **Routes of OpenVPN N**.
+`management` …) are removed automatically. With **Receive routes** on, the routes pushed by
+the server appear in Routes as **Routes of OpenVPN N**.
 
 ### AmneziaWG
 
@@ -346,8 +361,9 @@ when the route is off. The states refresh every 3 seconds.
   way, numbered, and has a **Copy** button. The colors are listed in
   [Routes](routes.md#fields-of-a-route).
 
-- 🔒 **provided** routes come from a VPN; they are read-only (👁 to view) but can be
-  enabled and moved.
+- 🔒 **provided** routes come from a VPN outbound with *Receive routes* on; they are
+  read-only (👁 to view) and switch themselves on and off with the connection, but can be
+  moved.
 - **Router configuration** — the complete generated mihomo configuration, read-only, with
   numbered lines and highlighting: keys, strings, numbers and `true` / `false`, IP addresses
   and masks, domains, ports, outbound and fallback names; the `rules` list is highlighted
@@ -435,7 +451,7 @@ The OpenVPN inbound dialog has the tabs **General**, **Server**, **Clients**, **
 
 | Tab | Fields |
 |---|---|
-| Server | *Public address* and *Public port* (what clients connect to; written to exported configurations), *Protocol* UDP/TCP, *Listen address*, *VPN network* (`10.77.<N>.0/24` when empty), *Maximum clients*, *Tunnel MTU*, *Log verbosity* |
+| Server | *Public address* and *Public port* (what clients connect to; written to exported configurations), *Protocol* UDP/TCP, *Listen address*, *VPN network* (when empty: `10.<X>.<N>.0/24`, where `<X>` is 64–191 and fixed for this installation, so two installations rarely collide), *Maximum clients*, *Tunnel MTU* (1420 for a new inbound: packets of the tunnel fit a 1500-byte link without fragments), *Log verbosity* |
 | Clients | *Route all client traffic through the VPN*, *Clients can reach each other*, *Additional routes* (one IPv4 network per line, up to 64; addresses and masks are highlighted, an invalid line is underlined in red and blocks saving), *DNS servers* (empty: the Proximity resolver, so domain routes work for VPN clients) |
 | Security | *Data ciphers*, *HMAC digest*, *Minimum TLS version*, *Renegotiation*, *Keepalive*, *Require one-time code (TOTP)* with the *TOTP key* |
 | Keys and certificates | CA certificate and key, server certificate and key, client certificate and key, TLS-crypt key. The fields highlight the `BEGIN` / `END` lines; the body of private and static keys is red |
@@ -445,10 +461,35 @@ the dialog opens. Every field can be edited (paste your own PEM text) or regener
 its **Regenerate** button; *Regenerate CA and all certificates* replaces the whole chain.
 After regeneration clients need new configuration files.
 
+The server accepts only the current client certificate. **Regenerate** of the client
+certificate is therefore the way to take access away from everybody who has an old
+configuration file: after **Save** the old certificate (and any other certificate of the
+same CA) is rejected, the inbound log says `client certificate is rejected: it is not the
+current client certificate of this inbound`. Export the configuration again for those
+who stay.
+
 All users of an inbound share the client certificate and the TOTP key; they differ by user
 name and password. With TOTP on, clients are asked for the code together with the password
 (`static-challenge`); a client that cannot show a prompt may append the code to the
 password.
+
+A one-time code works once. The same code is accepted again only from the same user at
+the same address — that is a quick reconnect of the same client. Another user or
+another address gets `AUTH_FAILED` (inbound log: `one-time code of user '…' is already
+used`) and connects with the next code, at most 30 seconds later. A Proximity outbound
+with an OTP key waits for the next code by itself.
+
+After a login the client holds a token and is not asked for a code again: not when the
+keys are renewed, and not after a restart of the inbound or of Proximity. The token is
+tied to the server key and the TOTP key (regenerate one of them and every client enters
+a new code), and a client with a token is still refused when its user is disabled or
+deleted.
+
+`ping` of clients: the router carries only TCP and UDP, so a ping to another host could
+not follow the routes and would leave through the host connection. It is rejected at
+once (*Packet filtered*); `ping` of the server's tunnel address works. An inbound whose
+*Outbound* is **Host** sends everything straight to the host connection, and its clients
+may ping.
 
 ### Users
 
@@ -463,7 +504,8 @@ password.
 ![Client configuration](images/inbound-export.png)
 
 Disabling or deleting an OpenVPN user, or changing the password, disconnects the sessions
-of that user at once.
+of that user at once: the client is told to stop and does not wait for its keepalive
+timeout.
 
 ## Settings
 

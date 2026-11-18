@@ -197,6 +197,8 @@ func (server *Server) register() {
 	server.handle("DELETE /api/users/{name}", 3, server.removeUser)
 	server.handle("GET /api/router/config", 2, server.getRouterConfig)
 	server.handle("POST /api/router/{action}", 2, server.controlRouter)
+	server.handle("GET /api/problems", 1, server.getProblems)
+	server.handle("DELETE /api/problems", 3, server.clearProblems)
 	server.handle("GET /api/backup", 2, server.exportBackup)
 	server.handle("POST /api/backup", 2, server.importBackup)
 	server.mux.Handle("/", server.static(web.Dist))
@@ -722,6 +724,17 @@ func (server *Server) exportInbound(request *http.Request, _ session) (any, erro
 		name = anonymousName
 	}
 	return map[string]string{"config": text, "file": inbound.ID + "-" + name + ".conf"}, nil
+}
+
+func (server *Server) getProblems(_ *http.Request, _ session) (any, error) {
+	return server.store.Problems(), nil
+}
+
+func (server *Server) clearProblems(_ *http.Request, _ session) (any, error) {
+	if err := server.store.ClearProblems(); err != nil {
+		return nil, err
+	}
+	return map[string]bool{"ok": true}, nil
 }
 
 func (server *Server) getTime(_ *http.Request, _ session) (any, error) {

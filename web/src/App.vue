@@ -63,6 +63,16 @@
         </a-layout-sider>
         <a-layout>
           <a-layout-content class="content">
+            <a-alert v-if="problems.items.length" type="warning" show-icon :closable="isAdmin()" class="problems" @close="dismissProblems">
+              <template #message>Proximity started with a damaged configuration: {{ problems.items.length }} {{ problems.items.length === 1 ? 'problem' : 'problems' }}</template>
+              <template #description>
+                <div v-for="(item, index) in problems.items" :key="index">
+                  <b>{{ item.kind }} '{{ item.id }}'</b> — {{ item.kept ? 'kept, but does not work' : 'dropped' }}: {{ item.reason }}
+                </div>
+                <div class="muted">The file as it was before the start is kept in the settings folder as {{ problems.backup }}.
+                  <template v-if="isAdmin()">Close this message when you have read it.</template></div>
+              </template>
+            </a-alert>
             <a-result v-if="locked" status="403" title="Sign in required" sub-title="This instance does not allow anonymous access.">
               <template #extra>
                 <div style="max-width: 320px; margin: 0 auto; text-align: left"><LoginForm @done="afterLogin" /></div>
@@ -115,13 +125,13 @@
 </template>
 
 <script setup>
-import { computed, onMounted, onUnmounted, reactive, ref } from 'vue'
-import { message, theme as antTheme } from 'ant-design-vue'
+import { computed, h, onMounted, onUnmounted, reactive, ref, watch } from 'vue'
+import { Button, message, notification, theme as antTheme } from 'ant-design-vue'
 import {
   ArrowDownOutlined, ArrowUpOutlined, BulbOutlined, DashboardOutlined, ExportOutlined, GatewayOutlined,
   ImportOutlined, KeyOutlined, LoginOutlined, LogoutOutlined, SettingOutlined, SwapOutlined, UserOutlined
 } from '@ant-design/icons-vue'
-import { api, events, loadSession, metrics, session } from './api'
+import { api, events, isAdmin, loadSession, metrics, session } from './api'
 import { rate } from './format'
 import Logo from './components/Logo.vue'
 import TonePalette from './components/TonePalette.vue'
@@ -146,6 +156,8 @@ const dark = ref(localStorage.getItem('proximity-theme') === 'dark')
 const collapsed = ref(false)
 const section = ref('dashboard')
 const overview = ref(null)
+const problems = ref({ items: [], backup: '' })
+const stale = ref(false)
 const loginOpen = ref(false)
 const passwordOpen = ref(false)
 const busy = ref(false)
@@ -187,7 +199,33 @@ function toggleTheme() {
   localStorage.setItem('proximity-theme', dark.value ? 'dark' : 'light')
 }
 
+const reloadPage = () => window.location.reload()
+
+// NOTE: A dialog may hold unsaved input, so the page waits until it is closed.
+function dialogOpen() {
+  return Array.from(document.querySelectorAll('.ant-modal-wrap, .ant-drawer-open'))
+    .some((element) => getComputedStyle(element).display !== 'none')
+}
+
+function reloadStale() {
+  if (stale.value && !dialogOpen()) {
+    reloadPage()
+  }
+}
+
+// NOTE: The notice lies above an open dialog, so its button can be pressed.
+function markStale() {
+  if (!stale.value && dialogOpen()) {
+    notification.info({ key: 'stale', duration: 0, message: 'Proximity was restarted or updated',
+      description: 'The page reloads itself as soon as the open dialog is closed.',
+      btn: () => h(Button, { type: 'primary', size: 'small', onClick: reloadPage }, () => 'Reload now') })
+  }
+  stale.value = true
+  reloadStale()
+}
+
 async function refreshOverview() {
+  reloadStale()
   if (locked.value) {
     overview.value = null
     return
@@ -197,6 +235,23 @@ async function refreshOverview() {
   } catch (error) {
     overview.value = overview.value || null
   }
+}
+
+async function loadProblems() {
+  try {
+    problems.value = session.level > 0 ? await api.get('/api/problems', true) : { items: [], backup: '' }
+  } catch (error) {
+    problems.value = { items: [], backup: '' }
+  }
+}
+
+async function dismissProblems() {
+  try {
+    await api.remove('/api/problems')
+  } catch (error) {
+    message.error(error.message)
+  }
+  await loadProblems()
 }
 
 async function afterLogin() {
@@ -267,11 +322,14 @@ async function changePassword() {
   }
 }
 
+watch(() => session.level, loadProblems)
+
 onMounted(async () => {
   events.unauthorized = async () => {
     await loadSession()
     readHash()
   }
+  events.restarted = markStale
   await loadSession()
   readHash()
   window.addEventListener('hashchange', readHash)
@@ -296,5 +354,6 @@ onUnmounted(() => {
 .header-user { display: flex; align-items: center; gap: 8px; margin-left: auto; }
 .header-button { color: #e6f4f3 !important; }
 .content { padding: 24px; }
+.problems { margin-bottom: 16px; }
 .footer { display: flex; justify-content: space-between; flex-wrap: wrap; gap: 8px; padding: 12px 24px; font-size: 12px; opacity: .75; }
 </style>

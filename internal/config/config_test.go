@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"encoding/pem"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -122,7 +123,7 @@ func TestAddInbound_Defaults(t *testing.T) {
 	require.Equal(t, []string{"192.168.10.0/24"}, options.Routes)
 	require.Equal(t, "AES-256-GCM", options.Ciphers)
 	require.Equal(t, "GEZDGNBVGY3T", options.OTPKey)
-	require.Equal(t, [8]any{ListenAny, ProtocolUDP, 32, 10, 60, 3600, 1500, 3},
+	require.Equal(t, [8]any{ListenAny, ProtocolUDP, 32, 10, 60, 3600, 1420, 3},
 		[8]any{options.Listen, options.Protocol, options.MaxClients, options.KeepaliveInterval,
 			options.KeepaliveTimeout, options.Renegotiation, options.MTU, options.Verbosity})
 	require.Equal(t, "SHA256 1.2", options.Digest+" "+options.TLSVersion)
@@ -412,14 +413,14 @@ func TestAddRoute_Identifiers(t *testing.T) {
 		require.EqualError(t, config.Validate(), "duplicate route ID 'Work sites'")
 		config.Routes[2].ID = ""
 		require.ErrorContains(t, config.Validate(), "invalid route ID length (0)")
-		_, err := config.SetRoutes("OpenVPN 1", []string{"10.0.0.0/8"})
+		_, err := config.SetRoutes("OpenVPN 1", true, true, []string{"10.0.0.0/8"})
 		require.NoError(t, err)
-		config.Routes[2].ID = "Routes of AmneziaWG 1"
-		_, err = config.SetRoutes("AmneziaWG 1", []string{"10.1.0.0/16"})
+		config.Routes[3].ID = "Routes of AmneziaWG 1"
+		_, err = config.SetRoutes("AmneziaWG 1", true, true, []string{"10.1.0.0/16"})
 		require.NoError(t, err)
-		require.Equal(t, "Routes of OpenVPN 1", config.Routes[3].ID)
-		require.Equal(t, "Route 2", config.Routes[4].ID)
-		require.Equal(t, "AmneziaWG 1", config.Routes[4].Provided)
+		require.Equal(t, "Routes of OpenVPN 1", config.Routes[1].ID)
+		require.Equal(t, "Route 2", config.Routes[0].ID)
+		require.Equal(t, "AmneziaWG 1", config.Routes[0].Provided)
 	}
 }
 
@@ -780,15 +781,12 @@ func TestOpen_CreatesAndReloads(t *testing.T) {
 		require.Equal(t, os.FileMode(0o600), information.Mode().Perm())
 	}
 	{
-		require.NoError(t, os.WriteFile(filepath.Join(directory, fileName), []byte("{"), 0o600))
-		_, err := Open(directory)
-		require.ErrorContains(t, err, "config.Open failed: failed to decode file")
-		require.NoError(t, os.WriteFile(filepath.Join(directory, fileName),
-			[]byte(`{"settings":{"log_level":"loud"}}`), 0o600))
-		_, err = Open(directory)
-		require.ErrorContains(t, err, "unexpected log level 'loud'")
-		_, err = Open(filepath.Join(directory, fileName, "sub"))
+		_, err := Open(filepath.Join(directory, fileName, "sub"))
 		require.ErrorContains(t, err, "failed to create directory")
+		require.NoError(t, os.Mkdir(filepath.Join(directory, "folder"), 0o700))
+		require.NoError(t, os.Mkdir(filepath.Join(directory, "folder", fileName), 0o700))
+		_, err = Open(filepath.Join(directory, "folder"))
+		require.ErrorContains(t, err, "config.Open failed: failed to read file")
 	}
 }
 
@@ -881,11 +879,213 @@ func TestOpen_Migrates(t *testing.T) {
 	}
 }
 
+func TestOpen_Repairs(t *testing.T) {
+	directory := t.TempDir()
+	path, report := filepath.Join(directory, fileName), filepath.Join(directory, problemsName)
+	{
+		require.NoError(t, os.WriteFile(path, []byte("{"), 0o600))
+		store, err := Open(directory)
+		require.NoError(t, err)
+		problems := store.Problems()
+		require.Equal(t, []Problem{{Kind: KindFile, ID: fileName,
+			Reason: "unexpected end of JSON input"}}, problems.Items)
+		require.Regexp(t, `^proximity\.invalid-\d+\.json$`, problems.Backup)
+		data, err := os.ReadFile(filepath.Join(directory, problems.Backup))
+		require.NoError(t, err)
+		require.Equal(t, "{", string(data))
+		snapshot := store.Snapshot()
+		require.NotEmpty(t, snapshot.Secret)
+		require.Empty(t, snapshot.Outbounds)
+		store, err = Open(directory)
+		require.NoError(t, err)
+		require.Equal(t, problems, store.Problems())
+		require.Equal(t, snapshot.Secret, store.Snapshot().Secret)
+		require.NoError(t, store.ClearProblems())
+		require.Empty(t, store.Problems().Items)
+		require.NoFileExists(t, report)
+		require.NoError(t, store.ClearProblems())
+		store, err = Open(directory)
+		require.NoError(t, err)
+		require.Equal(t, Problems{Items: []Problem{}}, store.Problems())
+	}
+	{
+		require.NoError(t, os.WriteFile(path, []byte(`{"secret":7,"settings":{"log_level":"loud"},`+
+			`"routes":5,"users":[{"role":1},7]}`), 0o600))
+		store, err := Open(directory)
+		require.NoError(t, err)
+		require.Equal(t, []Problem{
+			{Kind: KindUser, ID: "#1", Reason: "json: cannot unmarshal number into Go struct " +
+				"field User.role of type string"},
+			{Kind: KindUser, ID: "#2", Reason: "json: cannot unmarshal number into Go value of " +
+				"type config.User"},
+			{Kind: KindRoute, ID: "*", Reason: "json: cannot unmarshal number into Go value of " +
+				"type []json.RawMessage"},
+			{Kind: KindSettings, ID: KindSettings, Reason: "failed to check settings: unexpected " +
+				"log level 'loud'"}}, store.Problems().Items)
+		require.Equal(t, Default().Settings, store.Snapshot().Settings)
+		require.NotEmpty(t, store.Snapshot().Secret)
+		require.NoError(t, os.WriteFile(path, []byte(`{"settings":7}`), 0o600))
+		store, err = Open(directory)
+		require.NoError(t, err)
+		require.Len(t, store.Problems().Items, 5)
+		require.Equal(t, Problem{Kind: KindSettings, ID: KindSettings, Reason: "json: cannot " +
+			"unmarshal number into Go value of type config.Settings"}, store.Problems().Items[4])
+		require.NoError(t, os.WriteFile(report, []byte("{"), 0o600))
+		require.NoError(t, os.WriteFile(path, []byte(`{"version":7,"version":"x"}`), 0o600))
+		store, err = Open(directory)
+		require.NoError(t, err)
+		require.Len(t, store.Problems().Items, 1)
+		require.NoError(t, store.ClearProblems())
+	}
+	{
+		config := makeConfig(t)
+		for _, members := range [][]string{{"SOCKS5 1", "HOST 1"}, {"OpenVPN 1"}} {
+			_, err := config.AddFallback(Fallback{Enabled: true, Outbounds: members})
+			require.NoError(t, err)
+		}
+		for _, target := range []string{"SOCKS5 1", "Fallback 1", "OpenVPN 1", "HOST 1"} {
+			_, err := config.AddRoute(Route{Directive: "DOMAIN-SUFFIX", Target: target,
+				Params: []string{"example.org"}, Enabled: true})
+			require.NoError(t, err)
+		}
+		for _, outbound := range []string{ViaRouter, ViaRouter, "HTTP 1"} {
+			_, err := config.AddInbound(Inbound{Type: TypeSocks5, Anonymous: true, Enabled: true,
+				Outbound: outbound}, time.Now())
+			require.NoError(t, err)
+		}
+		config.Users = []User{{Name: "admin", Role: RoleAdministrator, PasswordHash: "x"},
+			{Name: "king", Role: "king", PasswordHash: "x"}}
+		config.Settings.DefaultTarget, config.Secret = "SOCKS5 1", "c2VjcmV0"
+		data, err := json.Marshal(config)
+		require.NoError(t, err)
+		fields := map[string]any{}
+		require.NoError(t, json.Unmarshal(data, &fields))
+		outbounds := fields["outbounds"].([]any)
+		outbounds[1].(map[string]any)["socks5"].(map[string]any)["port"] = "abc"
+		outbounds[2].(map[string]any)["http"].(map[string]any)["port"] = 0
+		fields["outbounds"] = append(outbounds, outbounds[0])
+		fields["routes"].([]any)[3].(map[string]any)["directive"] = "BOGUS"
+		fields["inbounds"].([]any)[1].(map[string]any)["port"] = 1
+		fields["version"] = "seven"
+		data, err = json.Marshal(fields)
+		require.NoError(t, err)
+		require.NoError(t, os.WriteFile(path, data, 0o600))
+		store, err := Open(directory)
+		require.NoError(t, err)
+		require.Equal(t, []Problem{
+			{Kind: KindSettings, ID: "version", Reason: "json: cannot unmarshal string into Go " +
+				"value of type int"},
+			{Kind: KindOutbound, ID: "SOCKS5 1", Reason: "json: cannot unmarshal string into Go " +
+				"struct field Socks5Options.socks5.port of type int"},
+			{Kind: KindUser, ID: "king", Reason: "unexpected role 'king'"},
+			{Kind: KindOutbound, ID: "HTTP 1", Reason: "failed to check outbound 'HTTP 1': " +
+				"invalid port (0)"},
+			{Kind: KindOutbound, ID: "HOST 1", Reason: "duplicate outbound ID 'HOST 1'"},
+			{Kind: KindFallback, ID: "Fallback 1", Reason: "failed to check fallback " +
+				"'Fallback 1': outbound 'SOCKS5 1' does not exist"},
+			{Kind: KindRoute, ID: "Route 4", Reason: "failed to check route 4: failed to check " +
+				"rule parameters: unexpected directive 'BOGUS'"},
+			{Kind: KindInbound, ID: "SOCKS5 2", Reason: "failed to check inbound 'SOCKS5 2': " +
+				"invalid port (1), expected 7800..7898"},
+			{Kind: KindSettings, ID: "default target", Reason: "failed to check settings: " +
+				"default target 'SOCKS5 1' does not exist"},
+			{Kind: KindRoute, ID: "Route 1", Reason: "target 'SOCKS5 1' does not exist", Kept: true},
+			{Kind: KindRoute, ID: "Route 2", Reason: "target 'Fallback 1' does not exist",
+				Kept: true},
+			{Kind: KindInbound, ID: "SOCKS5 3", Reason: "outbound 'HTTP 1' does not exist",
+				Kept: true}}, store.Problems().Items)
+		snapshot := store.Snapshot()
+		ids := func(count int, nameFunc func(index int) string) []string {
+			result := []string{}
+			for index := range count {
+				result = append(result, nameFunc(index))
+			}
+			return result
+		}
+		require.Equal(t, []string{"HOST 1", "OpenVPN 1", "AmneziaWG 1"}, ids(len(snapshot.Outbounds),
+			func(index int) string {
+				return snapshot.Outbounds[index].ID
+			}))
+		require.Equal(t, []string{"Fallback 2"}, ids(len(snapshot.Fallbacks), func(index int) string {
+			return snapshot.Fallbacks[index].ID
+		}))
+		require.Equal(t, []string{"Route 1", "Route 2", "Route 3"}, ids(len(snapshot.Routes),
+			func(index int) string {
+				return snapshot.Routes[index].ID
+			}))
+		require.Equal(t, []string{"SOCKS5 1", "SOCKS5 3"}, ids(len(snapshot.Inbounds),
+			func(index int) string {
+				return snapshot.Inbounds[index].ID
+			}))
+		require.Equal(t, []string{"admin"}, ids(len(snapshot.Users), func(index int) string {
+			return snapshot.Users[index].Name
+		}))
+		require.Equal(t, TargetDirect, snapshot.Settings.DefaultTarget)
+		require.Equal(t, currentVersion, snapshot.Version)
+		require.Equal(t, config.Secret, snapshot.Secret)
+		saved, err := os.ReadFile(filepath.Join(directory, store.Problems().Backup))
+		require.NoError(t, err)
+		require.Equal(t, data, saved)
+		store, err = Open(directory)
+		require.NoError(t, err)
+		require.Len(t, store.Problems().Items, 12)
+		require.Equal(t, snapshot, store.Snapshot())
+	}
+	{
+		require.NoError(t, os.Remove(report))
+		require.NoError(t, os.Mkdir(report, 0o700))
+		store, err := Open(directory)
+		require.NoError(t, err)
+		require.Empty(t, store.Problems().Items)
+		require.NoError(t, os.WriteFile(filepath.Join(report, "file"), []byte("x"), 0o600))
+		require.ErrorContains(t, store.ClearProblems(), "failed to remove file")
+		require.NoError(t, os.WriteFile(path, []byte("{"), 0o600))
+		_, err = Open(directory)
+		require.ErrorContains(t, err, "config.Open failed: failed to repair file")
+	}
+}
+
+func TestOpen_RoutesMigration(t *testing.T) {
+	directory := t.TempDir()
+	config := makeConfig(t)
+	second, err := config.AddOutbound(Outbound{Type: TypeOpenVPN, Enabled: true,
+		OpenVPN: &OpenVPNOptions{Config: sampleOpenVPN}})
+	require.NoError(t, err)
+	for _, id := range []string{"OpenVPN 1", second.ID, "AmneziaWG 1"} {
+		_, err := config.SetRoutes(id, true, true, []string{"10.0.0.0/8"})
+		require.NoError(t, err)
+	}
+	config.Routes[1].Enabled, config.Version, config.Secret = false, routesVersion-1, "c2VjcmV0"
+	data, err := json.Marshal(config)
+	require.NoError(t, err)
+	require.NoError(t, os.WriteFile(filepath.Join(directory, fileName), data, 0o600))
+	store, err := Open(directory)
+	require.NoError(t, err)
+	snapshot := store.Snapshot()
+	require.Equal(t, currentVersion, snapshot.Version)
+	require.True(t, snapshot.Outbounds[3].OpenVPN.UseRoutes)
+	require.False(t, snapshot.Outbounds[5].OpenVPN.UseRoutes)
+	require.True(t, snapshot.Outbounds[4].AmneziaWG.UseRoutes)
+	require.Empty(t, store.Problems().Items)
+	{
+		config.Secret = ""
+		require.Equal(t, networkBase, config.networkBase())
+		config.Secret = "c2VjcmV0"
+		base := config.networkBase()
+		require.GreaterOrEqual(t, base, 64)
+		require.Less(t, base, 192)
+		created, err := config.AddInbound(Inbound{Type: TypeOpenVPN, Outbound: ViaHost},
+			time.Unix(1700000000, 0))
+		require.NoError(t, err)
+		require.Equal(t, fmt.Sprintf("10.%v.1.0/24", base), created.OpenVPN.Network)
+	}
+}
+
 func TestRemoveOutbound_Cascade(t *testing.T) {
 	config := makeConfig(t)
 	_, err := config.AddFallback(Fallback{Outbounds: []string{"SOCKS5 1", "OpenVPN 1"}})
 	require.NoError(t, err)
-	changed, err := config.SetRoutes("OpenVPN 1", []string{"10.0.0.0/8"})
+	changed, err := config.SetRoutes("OpenVPN 1", true, true, []string{"10.0.0.0/8"})
 	require.NoError(t, err)
 	require.True(t, changed)
 	config.Settings.DefaultTarget = "OpenVPN 1"
@@ -899,42 +1099,74 @@ func TestRemoveOutbound_Cascade(t *testing.T) {
 
 func TestSetRoutes_Lifecycle(t *testing.T) {
 	config := makeConfig(t)
+	_, err := config.AddRoute(Route{Directive: "DOMAIN", Target: "HOST 1", Enabled: true,
+		Params: []string{"a.test"}})
+	require.NoError(t, err)
+	networks := []string{"10.0.0.0/8", "172.16.0.0/12"}
 	{
-		changed, err := config.SetRoutes("OpenVPN 1", nil)
+		for _, item := range [][2]bool{{false, true}, {true, false}} {
+			changed, err := config.SetRoutes("OpenVPN 1", item[0], item[1], networks)
+			require.NoError(t, err)
+			require.False(t, changed)
+		}
+		changed, err := config.SetRoutes("OpenVPN 1", true, true, nil)
 		require.NoError(t, err)
 		require.False(t, changed)
+		require.Len(t, config.Routes, 1)
 	}
 	{
-		changed, err := config.SetRoutes("OpenVPN 1", []string{"10.0.0.0/8", "172.16.0.0/12"})
+		changed, err := config.SetRoutes("OpenVPN 1", true, true, networks)
 		require.NoError(t, err)
 		require.True(t, changed)
 		require.Equal(t, Route{Key: config.Routes[0].Key, ID: "Routes of OpenVPN 1",
-			Directive: "IP-CIDR", Target: "OpenVPN 1", Provided: "OpenVPN 1",
-			Params: []string{"10.0.0.0/8", "172.16.0.0/12"}}, config.Routes[0])
+			Directive: "IP-CIDR", Target: "OpenVPN 1", Provided: "OpenVPN 1", Enabled: true,
+			Params: networks}, config.Routes[0])
+		require.Equal(t, "Route 1", config.Routes[1].ID)
 		require.NoError(t, config.Validate())
 	}
 	{
 		key := config.Routes[0].Key
-		require.NoError(t, config.UpdateRoute(key, Route{Enabled: true, Target: "REJECT",
-			Params: []string{"1.1.1.1"}}))
-		require.True(t, config.Routes[0].Enabled)
-		require.Equal(t, "OpenVPN 1", config.Routes[0].Target)
-		require.Len(t, config.Routes[0].Params, 2)
+		require.EqualError(t, config.UpdateRoute(key, Route{Target: "REJECT",
+			Params: []string{"1.1.1.1"}}), "provided route follows its VPN connection")
 		require.ErrorContains(t, config.RemoveRoute(key), "provided route is read-only")
+		require.NoError(t, config.MoveRoute(key, 1))
+		require.Equal(t, "Routes of OpenVPN 1", config.Routes[1].ID)
 	}
 	{
-		changed, err := config.SetRoutes("OpenVPN 1", []string{"10.0.0.0/8", "172.16.0.0/12"})
+		changed, err := config.SetRoutes("OpenVPN 1", true, true, networks)
 		require.NoError(t, err)
 		require.False(t, changed)
-		changed, err = config.SetRoutes("OpenVPN 1", []string{"10.0.0.0/8"})
+		changed, err = config.SetRoutes("OpenVPN 1", true, true, []string{"10.0.0.0/8"})
 		require.NoError(t, err)
 		require.True(t, changed)
-		require.True(t, config.Routes[0].Enabled)
-		require.Equal(t, []string{"10.0.0.0/8"}, config.Routes[0].Params)
-		changed, err = config.SetRoutes("OpenVPN 1", []string{})
+		require.Equal(t, []string{"10.0.0.0/8"}, config.Routes[1].Params)
+		changed, err = config.SetRoutes("OpenVPN 1", true, false, nil)
 		require.NoError(t, err)
 		require.True(t, changed)
-		require.Empty(t, config.Routes)
+		require.False(t, config.Routes[1].Enabled)
+		require.Equal(t, []string{"10.0.0.0/8"}, config.Routes[1].Params)
+		changed, err = config.SetRoutes("OpenVPN 1", true, true, []string{})
+		require.NoError(t, err)
+		require.False(t, changed)
+		changed, err = config.SetRoutes("OpenVPN 1", true, true, networks)
+		require.NoError(t, err)
+		require.True(t, changed)
+		require.True(t, config.Routes[1].Enabled)
+		require.Equal(t, networks, config.Routes[1].Params)
+		require.Equal(t, "Routes of OpenVPN 1", config.Routes[1].ID)
+	}
+	{
+		changed, err := config.SetRoutes("OpenVPN 1", false, true, networks)
+		require.NoError(t, err)
+		require.True(t, changed)
+		require.Len(t, config.Routes, 1)
+		require.Equal(t, "Route 1", config.Routes[0].ID)
+	}
+	{
+		require.False(t, config.Outbounds[0].UsesRoutes())
+		config.Outbounds[3].OpenVPN.UseRoutes, config.Outbounds[4].AmneziaWG.UseRoutes = true, true
+		require.True(t, config.Outbounds[3].UsesRoutes())
+		require.True(t, config.Outbounds[4].UsesRoutes())
 	}
 }
 
@@ -1030,7 +1262,7 @@ func TestUpdateOutbound_Rename(t *testing.T) {
 	_, err = config.AddRoute(Route{Directive: "DOMAIN", Target: "Fallback 1",
 		Params: []string{"b.test"}})
 	require.NoError(t, err)
-	_, err = config.SetRoutes("OpenVPN 1", []string{"10.0.0.0/8"})
+	_, err = config.SetRoutes("OpenVPN 1", true, true, []string{"10.0.0.0/8"})
 	require.NoError(t, err)
 	config.Settings.DefaultTarget = "OpenVPN 1"
 	outbound, _ := config.FindOutbound("OpenVPN 1")
@@ -1038,11 +1270,11 @@ func TestUpdateOutbound_Rename(t *testing.T) {
 	require.NoError(t, config.UpdateOutbound("OpenVPN 1", outbound))
 	require.NoError(t, config.Validate())
 	require.Equal(t, []string{"HOST 1", "Office VPN"}, config.Fallbacks[0].Outbounds)
-	require.Equal(t, "Office VPN", config.Routes[0].Target)
-	require.Equal(t, "Fallback 1", config.Routes[1].Target)
-	require.Equal(t, Route{Key: config.Routes[2].Key, ID: "Routes of Office VPN",
+	require.Equal(t, "Office VPN", config.Routes[1].Target)
+	require.Equal(t, "Fallback 1", config.Routes[2].Target)
+	require.Equal(t, Route{Key: config.Routes[0].Key, ID: "Routes of Office VPN",
 		Directive: "IP-CIDR", Target: "Office VPN", Params: []string{"10.0.0.0/8"},
-		Provided: "Office VPN"}, config.Routes[2])
+		Provided: "Office VPN", Enabled: true}, config.Routes[0])
 	require.Equal(t, "Office VPN", config.Settings.DefaultTarget)
 	require.False(t, config.TargetExists("OpenVPN 1"))
 	{
@@ -1052,17 +1284,17 @@ func TestUpdateOutbound_Rename(t *testing.T) {
 		require.NoError(t, config.Validate())
 		require.Equal(t, "Main chain", config.Fallbacks[0].ID)
 		require.True(t, config.Fallbacks[0].HealthCheck)
-		require.Equal(t, "Main chain", config.Routes[1].Target)
+		require.Equal(t, "Main chain", config.Routes[2].Target)
 		require.Equal(t, "Main chain", config.Settings.DefaultTarget)
 	}
 	{
-		key := config.Routes[2].Key
-		config.Routes[2].ID = "custom"
+		key := config.Routes[0].Key
+		config.Routes[0].ID = "custom"
 		outbound.ID = "VPN 2"
 		require.NoError(t, config.UpdateOutbound("Office VPN", outbound))
-		require.Equal(t, "custom", config.Routes[2].ID)
-		require.Equal(t, "VPN 2", config.Routes[2].Provided)
-		require.Equal(t, key, config.Routes[2].Key)
+		require.Equal(t, "custom", config.Routes[0].ID)
+		require.Equal(t, "VPN 2", config.Routes[0].Provided)
+		require.Equal(t, key, config.Routes[0].Key)
 	}
 }
 

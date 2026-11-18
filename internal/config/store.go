@@ -17,6 +17,7 @@ type Store struct {
 	mutex     sync.Mutex
 	path      string
 	config    Config
+	problems  Problems
 	listeners []Listener
 }
 
@@ -44,24 +45,39 @@ func internalOpen(directory string) (*Store, error) {
 	if err := os.MkdirAll(directory, 0o700); err != nil {
 		return nil, fmt.Errorf("failed to create directory '%v': %w", directory, err)
 	}
-	store := &Store{path: filepath.Join(directory, fileName), config: Default()}
+	store := &Store{path: filepath.Join(directory, fileName), config: Default(),
+		problems: Problems{Items: []Problem{}}}
 	if data, err := os.ReadFile(store.path); errors.Is(err, os.ErrNotExist) {
-		secret := make([]byte, 32)
-		if _, err = rand.Read(secret); err != nil {
-			return nil, fmt.Errorf("failed to read random data: %w", err)
-		}
-		store.config.Secret = base64.StdEncoding.EncodeToString(secret)
-		if err = store.save(store.config); err != nil {
+		if store.config.Secret, err = makeSecret(); err != nil {
+			return nil, err
+		} else if err = store.save(store.config); err != nil {
 			return nil, err
 		}
 	} else if err != nil {
 		return nil, fmt.Errorf("failed to read file '%v': %w", store.path, err)
-	} else if err = json.Unmarshal(data, &store.config); err != nil {
-		return nil, fmt.Errorf("failed to decode file '%v': %w", store.path, err)
-	} else if err = store.config.upgrade(); err != nil {
-		return nil, fmt.Errorf("failed to check file '%v': %w", store.path, err)
+	} else if err = store.load(data, store.decode(data)); err != nil {
+		return nil, fmt.Errorf("failed to repair file '%v': %w", store.path, err)
 	}
 	return store, nil
+}
+
+func makeSecret() (string, error) {
+	secret := make([]byte, 32)
+	if _, err := rand.Read(secret); err != nil {
+		return "", fmt.Errorf("failed to read random data: %w", err)
+	}
+	return base64.StdEncoding.EncodeToString(secret), nil
+}
+
+func (store *Store) decode(data []byte) error {
+	config := Default()
+	if err := json.Unmarshal(data, &config); err != nil {
+		return fmt.Errorf("failed to decode file '%v': %w", store.path, err)
+	} else if err = config.upgrade(); err != nil {
+		return fmt.Errorf("failed to check file '%v': %w", store.path, err)
+	}
+	store.config = config
+	return nil
 }
 
 func (store *Store) Snapshot() Config {

@@ -324,7 +324,7 @@ function defaults(kind) {
   } else {
     result.openvpn = {
       server: window.location.hostname, public_port: null, listen: '*', protocol: 'udp', network: '', redirect_gateway: true, routes: [], dns: [],
-      client_to_client: false, max_clients: 32, keepalive_interval: 10, keepalive_timeout: 60, renegotiation: 3600, mtu: 1500,
+      client_to_client: false, max_clients: 32, keepalive_interval: 10, keepalive_timeout: 60, renegotiation: 3600, mtu: 1420,
       ciphers: 'AES-256-GCM:AES-128-GCM:CHACHA20-POLY1305', digest: 'SHA256', tls_version: '1.2', verbosity: 3, otp: false, otp_key: '',
       ca_certificate: '', ca_key: '', certificate: '', key: '', client_certificate: '', client_key: '', tls_crypt: ''
     }

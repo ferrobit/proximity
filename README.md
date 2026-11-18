@@ -20,6 +20,13 @@
 </p>
 
 <p align="center">
+  <img alt="Tests" src="https://img.shields.io/badge/tests-127%20passing-brightgreen">
+  <img alt="Coverage" src="https://img.shields.io/badge/coverage-94.0%25-brightgreen"><br>
+  <sub><b>127</b> Go tests, <b>94.0%</b> statement coverage, 64 end-to-end checks on
+  <a href="docs/development.md#test-stands">ready stands</a></sub>
+</p>
+
+<p align="center">
   <img src="docs/images/connection-map.png" alt="Proximity connection map: sources, router, routes, fallbacks and outbounds with live state and traffic" width="100%">
 </p>
 
@@ -75,7 +82,7 @@ port **8899**.
 | 🔀 **Fallbacks** | Proxy groups of outbounds in priority order (bottom of the Routes page): either "first outbound that Proximity sees as good" or a mihomo health check by URL |
 | 🧭 **Routes** | 15 mihomo directives, editor with syntax highlighting (domains, subdomains, IPs, masks, ports, comments), load/save/sort of the lists, automatic normalization (URLs → domains, IDN → punycode, `IP:port` → `AND` rule, masks), `#` comments, overlap and duplicate warnings, up/down ordering |
 | 📥 **Inbounds** | SOCKS5 proxy servers and OpenVPN servers on ports 7800–7898 with their own users, optional anonymous access, TLS / TOTP, generated keys and certificates, one-click client configuration export; traffic goes to the host connection, to the routes or to a chosen outbound |
-| 📡 **VPN routes** | Routes pushed by OpenVPN appear as a read-only *provided* route you can enable with one switch |
+| 📡 **VPN routes** | With *Receive routes* the networks announced by a VPN become a *provided* route that is on only while the connection is up |
 | 🩺 **Monitoring** | Link state, latency, configurable checks, retries and reconnects; states `good` / `connecting` / `reconnecting` / `failed` / `stopped`; start, stop and restart of outbounds and inbounds with state and logs kept across restarts; per-outbound connection log with auto-scroll; a *Verbose* switch per connection for debug logs (settings, checks, traced connections, OpenVPN `--verb 6`, AmneziaWG `LOG_LEVEL=verbose`); log sizes for both modes are set in Settings |
 | 🕒 **Time** | OpenVPN clients and servers start only with synchronized time: the host clock is checked against NTP servers and never changed; when it is wrong, Proximity keeps its own time for OpenVPN certificates and one-time codes |
 | 🗺️ **Connection map** | Live diagram of sources, router, routes, fallbacks and outbounds with state colors and animated traffic; hover to trace a path, click to edit settings; zoom, fit to screen and full screen |
@@ -310,6 +317,7 @@ Settings stay unchanged.
 make web      # build the UI (Node.js 22)
 make build    # build ../proximity-build/bin/proximity
 make cover    # run tests with coverage
+make coverage-docs   # the same, and write the numbers into README.md and the docs
 make up       # build the image and start the container
 ```
 
@@ -319,14 +327,17 @@ repository itself is not changed. Component versions are Docker build arguments 
 
 ## Project status
 
-Version **1.2.0**. 116 Go tests pass, total statement coverage 93.7% (81.4–99.1% per
+Version **1.2.0**. 127 Go tests pass, total statement coverage 94.0% (81.4–99.1% per
 package). Transparent capture has been verified in isolated network namespaces and in a
 real Docker image: DIRECT, REJECT, domain → OpenVPN / AmneziaWG, LAN and inbound
 connections untouched, `rp_filter=1`, container stop and kill. Inbounds have been verified
 with real mihomo 1.19.34 and OpenVPN 2.6 in network namespaces: SOCKS5 authentication and
 TLS, an OpenVPN client with password + TOTP (appended and `static-challenge`), anonymous
 clients, token renegotiation, session kill on user change, traffic through the router,
-DNS hijack, traffic counters. The web UI, including the connection map, has been checked in
+DNS hijack, traffic counters. Four ready stands run 64 end-to-end checks with the real
+image (`make stand-security`, `stand-tunnel`, `stand-reload`, `stand-config`): one-time
+codes, certificates, tokens, received routes, a damaged configuration, the reload of an
+open page. The web UI, including the connection map, has been checked in
 Chrome in the light and dark themes with a live OpenVPN tunnel, SOCKS5 and HTTP proxies and
 both inbound types.
 

@@ -1,0 +1,34 @@
+{
+  "version": 7,
+  "secret": "c3RhbmQtc2VjcmV0LXN0YW5kLXNlY3JldC1zdGFuZC0xMjM=",
+  "settings": {
+    "mixed_port": 7899,
+    "bind_address": "*",
+    "default_target": "Broken proxy",
+    "log_level": "warning",
+    "connectivity_checks": true,
+    "probe_target": "1.1.1.1:443",
+    "check_interval": 30,
+    "autostart": true
+  },
+  "users": [],
+  "outbounds": [
+    {"id": "Home", "type": "host", "enabled": true, "autostart": true, "slot": 1, "host": {"mode": "default"}},
+    {"id": "Broken proxy", "type": "socks5", "enabled": true, "autostart": true, "slot": 2,
+      "socks5": {"server": "proxy.example", "port": "not a number"}},
+    {"id": "No server", "type": "http", "enabled": true, "autostart": true, "slot": 3, "http": {"server": "", "port": 3128}},
+    {"id": "Home", "type": "host", "enabled": true, "autostart": true, "slot": 4, "host": {"mode": "default"}}
+  ],
+  "fallbacks": [
+    {"id": "Group", "enabled": true, "outbounds": ["Broken proxy", "Home"], "url": "https://www.gstatic.com/generate_204", "interval": 60}
+  ],
+  "routes": [
+    {"key": "r1", "id": "Through proxy", "directive": "DOMAIN-SUFFIX", "target": "Broken proxy", "params": ["example.org"], "enabled": true},
+    {"key": "r2", "id": "Bad directive", "directive": "NO-SUCH-RULE", "target": "Home", "params": ["example.net"], "enabled": true},
+    {"key": "r3", "id": "Good", "directive": "DOMAIN-SUFFIX", "target": "Home", "params": ["example.com"], "enabled": true}
+  ],
+  "inbounds": [
+    {"id": "Bad port", "type": "socks5", "enabled": true, "autostart": true, "port": 80, "outbound": "@router", "anonymous": true, "users": []},
+    {"id": "Good", "type": "socks5", "enabled": true, "autostart": true, "port": 7800, "outbound": "@router", "anonymous": true, "users": []}
+  ]
+}

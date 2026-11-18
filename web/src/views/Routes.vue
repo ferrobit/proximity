@@ -30,11 +30,14 @@
         </template>
         <template v-else-if="column.key === 'number'">{{ index + 1 }}</template>
         <template v-else-if="column.key === 'enabled'">
-          <a-switch size="small" :checked="record.enabled" :disabled="!canEdit()" @change="toggle(record, $event)" />
+          <a-tooltip v-if="record.provided" title="Follows the VPN connection: on while it is up and has given its routes">
+            <a-switch size="small" :checked="record.enabled" disabled />
+          </a-tooltip>
+          <a-switch v-else size="small" :checked="record.enabled" :disabled="!canEdit()" @change="toggle(record, $event)" />
         </template>
         <template v-else-if="column.key === 'id'">
           <b>{{ record.id }}</b>
-          <a-tooltip v-if="record.provided" title="Read-only routes provided by the VPN connection. Enable to send them to this outbound.">
+          <a-tooltip v-if="record.provided" title="Filled with the routes of the VPN connection. Remove it with 'Receive routes' of the outbound.">
             <a-tag color="gold" style="margin-left: 6px"><LockOutlined /> provided</a-tag>
           </a-tooltip>
           <a-tooltip v-if="warned.has(record.key)" title="See warnings above"><WarningOutlined style="margin-left: 6px; color: var(--tone-warn)" /></a-tooltip>

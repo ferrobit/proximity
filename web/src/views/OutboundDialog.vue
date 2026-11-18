@@ -93,6 +93,7 @@
               <CodeEditor v-model:value="form.openvpn.config" language="openvpn" :height="280" placeholder="client&#10;dev tun&#10;remote vpn.example.com 1194 udp&#10;…" />
             </a-form-item>
             <a-form-item label="Use DNS servers pushed by VPN" extra="For domains routed to this outbound"><a-switch v-model:checked="form.openvpn.use_dns" /></a-form-item>
+            <a-form-item label="Receive routes" extra="Keep a route with the networks pushed by VPN, on while the connection is up"><a-switch v-model:checked="form.openvpn.use_routes" /></a-form-item>
           </template>
           <template v-else>
             <a-form-item label="AmneziaWG configuration" :name="['amneziawg', 'config']" :rules="[{ required: true, message: 'Paste configuration or import it' }]">
@@ -108,6 +109,7 @@
               <CodeEditor v-model:value="form.amneziawg.config" language="amneziawg" :height="300" placeholder="[Interface]&#10;PrivateKey = …&#10;Address = 10.8.1.2/32&#10;Jc = 4&#10;…&#10;[Peer]&#10;PublicKey = …&#10;Endpoint = host:port&#10;AllowedIPs = 0.0.0.0/0" />
             </a-form-item>
             <a-form-item label="Use DNS servers from configuration" extra="For domains routed to this outbound"><a-switch v-model:checked="form.amneziawg.use_dns" /></a-form-item>
+            <a-form-item label="Receive routes" extra="Keep a route with the networks of AllowedIPs, on while the connection is up"><a-switch v-model:checked="form.amneziawg.use_routes" /></a-form-item>
           </template>
         </a-tab-pane>
         <a-tab-pane v-if="kind === 'openvpn'" key="authentication" force-render>
@@ -226,8 +228,8 @@ function defaults(kind) {
     host: { mode: 'default', interface: undefined, gateway: '' },
     socks5: { server: '', port: 1080, username: '', password: '', tls: false, skip_cert_verify: false, udp: true },
     http: { server: '', port: 3128, single: true, https_server: '', https_port: 3128, ftp_server: '', ftp_port: 3128, username: '', password: '', tls: false, skip_cert_verify: false },
-    openvpn: { config: '', username: '', password: '', otp_key: '', otp_mode: 'challenge', key_password: '', use_dns: true },
-    amneziawg: { config: '', use_dns: true },
+    openvpn: { config: '', username: '', password: '', otp_key: '', otp_mode: 'challenge', key_password: '', use_dns: true, use_routes: false },
+    amneziawg: { config: '', use_dns: true, use_routes: false },
     monitoring: { enabled: true, interval: 30, timeout: 5, retries: 3, target: '1.1.1.1:443' },
     recovery: { enabled: true, delay: 60, attempts: 0 }
   }

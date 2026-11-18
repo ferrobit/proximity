@@ -267,8 +267,7 @@ func (config *Config) UpdateRoute(key string, route Route) error {
 	if index < 0 {
 		return fmt.Errorf("route '%v' does not exist", key)
 	} else if current := config.Routes[index]; current.Provided != "" {
-		config.Routes[index].Enabled = route.Enabled
-		return nil
+		return errors.New("provided route follows its VPN connection")
 	}
 	route.Key, route.Provided = key, ""
 	if err := config.prepareRoute(&route, index); err != nil {
@@ -293,31 +292,38 @@ func (config *Config) MoveRoute(key string, delta int) error {
 	return moveItem(config.Routes, config.findRoute(key), delta)
 }
 
-func (config *Config) SetRoutes(id string, networks []string) (bool, error) {
+// NOTE: The route of a VPN connection exists while the outbound receives routes. It is on
+// while the connection is up and has given its routes, and keeps its place in the list and
+// its last networks while the connection is down.
+func (config *Config) SetRoutes(id string, wanted bool, active bool, networks []string) (bool,
+	error) {
 	index := slices.IndexFunc(config.Routes, func(route Route) bool {
 		return route.Provided == id
 	})
-	if len(networks) == 0 && index < 0 {
+	enabled := wanted && active && len(networks) != 0
+	if !wanted && index < 0 || index < 0 && !enabled {
 		return false, nil
-	} else if len(networks) == 0 {
+	} else if !wanted {
 		config.Routes = slices.Delete(config.Routes, index, index+1)
 		return true, nil
-	} else if index >= 0 && slices.Equal(config.Routes[index].Params, networks) {
-		return false, nil
 	} else if index >= 0 {
-		config.Routes[index].Params = slices.Clone(networks)
-		return true, nil
+		route := &config.Routes[index]
+		changed := route.Enabled != enabled || (enabled && !slices.Equal(route.Params, networks))
+		if route.Enabled = enabled; enabled {
+			route.Params = slices.Clone(networks)
+		}
+		return changed, nil
 	}
 	key, err := makeKey()
 	if err != nil {
 		return false, err
 	}
 	route := Route{Key: key, ID: providedPrefix + id, Directive: rules.IPCIDR, Target: id,
-		Params: slices.Clone(networks), Provided: id}
+		Params: slices.Clone(networks), Provided: id, Enabled: true}
 	if config.findRouteID(route.ID) >= 0 {
 		route.ID = config.NextRouteID()
 	}
-	config.Routes = append(config.Routes, route)
+	config.Routes = slices.Insert(config.Routes, 0, route)
 	return true, nil
 }
 
@@ -466,6 +472,17 @@ func (config *Config) migrate() {
 	for index := range config.Inbounds {
 		config.Inbounds[index].Autostart = config.Inbounds[index].Autostart ||
 			config.Version < serviceVersion
+	}
+	for _, route := range config.Routes {
+		// NOTE: A provided route that was switched on by hand becomes "receive routes".
+		index := config.findOutbound(route.Provided)
+		if route.Provided == "" || !route.Enabled || index < 0 || config.Version >= routesVersion {
+			continue
+		} else if options := config.Outbounds[index].OpenVPN; options != nil {
+			options.UseRoutes = true
+		} else if tunnel := config.Outbounds[index].AmneziaWG; tunnel != nil {
+			tunnel.UseRoutes = true
+		}
 	}
 	for index := range config.Routes {
 		route := &config.Routes[index]

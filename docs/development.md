@@ -7,6 +7,7 @@
 - [UI development](#ui-development)
 - [Screenshots](#screenshots)
 - [Tests](#tests)
+- [Test stands](#test-stands)
 - [Code style](#code-style)
 - [Updating bundled components](#updating-bundled-components)
 - [Release checklist](#release-checklist)
@@ -31,6 +32,7 @@ proximity/
 │   ├── proximity.ps1       compose wrapper for Windows
 │   ├── screenshots.sh      retakes the pictures of docs/images (make screenshots)
 │   ├── screenshots/        its stand, sample data, headless browser script and npm packages list
+│   ├── stands/             ready stands for end-to-end checks (see Test stands)
 │   └── githooks/pre-commit make vet build before commit
 ├── docs/                   documentation and screenshots
 ├── AGENTS.md               notes for AI agents: what failed and what to do instead
@@ -84,6 +86,8 @@ make up       # build image and start the container
 make logs     # follow container logs
 make screenshots   # retake the pictures in docs/images
 make screenshot <picture>   # retake one picture
+make stand-security   # end-to-end checks of the OpenVPN inbound security
+make stand-config     # end-to-end check of a start with a damaged configuration
 make down     # stop
 ```
 
@@ -236,27 +240,62 @@ browser before the image build. Any other browser on the Chromium engine works t
 ```bash
 make test     # go test ./...
 make cover    # with coverage per package; profile in ../proximity-build/coverage.out
+make coverage-docs    # the same, then scripts/coverage.sh writes the numbers into the documents
 go test -race ./...   # by hand: uses the default Go caches
 ```
 
-Current state (version 1.2.0): **116 tests, all passing, 93.7% total statement coverage.**
+The header of `README.md` (two badges and a line), its *Project status* and the table
+below show the number of tests and the coverage. Run `make coverage-docs` after every
+change of the Go code: it replaces these numbers and changes nothing else.
+
+Current state (version 1.2.0): **127 tests, all passing, 94.0% total statement coverage.**
 
 | Package | Coverage |
 |---|---|
 | `cmd/proximity` | 81.4% |
 | `internal/auth` | 94.1% |
-| `internal/clock` | 97.4% |
-| `internal/config` | 95.9% |
-| `internal/link` | 89.8% |
+| `internal/clock` | 97.0% |
+| `internal/config` | 96.0% |
+| `internal/link` | 90.3% |
 | `internal/router` | 96.6% |
 | `internal/rules` | 99.1% |
-| `internal/server` | 94.1% |
+| `internal/server` | 95.0% |
 | `internal/wgconf` | 97.9% |
 
 Tests use fake tools (`ip`, `openvpn`, `iptables`, `ping` …) and a fake mihomo, so they run
 without root and without network access. `TestManager_Inbounds` binds one free TCP port in
 7800…7898 on the loopback address. `TestManager_Capture` expects that the machine has no
 `proximity_tun` interface, so stop a locally running Proximity before `make test`. Assertions use `testify/require`.
+
+## Test stands
+
+A stand is a ready environment for end-to-end checks: throwaway containers in their own
+Docker network (`10.213.78.0/24`), started with one command and removed at the end. A
+stand does not use the host network and does not touch a running Proximity.
+
+```bash
+make stand-security                     # stand "pair": 16 checks, about 1 minute
+make stand-tunnel                       # stand "pair": 24 checks, about 20 seconds
+make stand-reload                       # stand "reload": 7 checks, about 20 seconds, needs a browser
+make stand-config                       # stand "broken-config": 17 checks, about 5 seconds
+bash scripts/stands/pair/stand.sh up    # only start the stand; "down" removes it
+```
+
+| Stand | What it is | Checks |
+|---|---|---|
+| `pair` | two linked instances: `proximity-stand-a` (client side) and `proximity-stand-b` (server side, also answers for `1.1.1.1:443`) | `make stand-security` (`security.sh`): single use of one-time codes, rejection of an old client certificate, ping of clients. `make stand-tunnel` (`tunnel.sh`): default network and MTU of a new inbound, the route of *Receive routes* (appears, follows the connection, can be moved, keeps its place after a restart), the token after a restart of the inbound, a disabled user, the instance mark |
+| `reload` | one instance on the fixed port `127.0.0.1:18899` (`STAND_PORT`) and a headless browser with its page open; uses the browser and the node modules of the screenshots | `make stand-reload` (`check.sh`): the page reloads itself after a restart of the container; with an open dialog it shows a notice, keeps the input and reloads when the dialog is closed |
+| `broken-config` | one instance started with the damaged `config.json` of the stand | `make stand-config` (`check.sh`): what is dropped, what is kept, the copy of the file, the report and its dismissal |
+| screenshots | two linked instances with sample data and traffic, see [Screenshots](#screenshots) | — |
+
+`scripts/stands/lib.sh` holds the common parts (image, network, instance, removal),
+`lib.mjs` the helpers of the check scripts (API client, `docker`, `PASS` / `FAIL` lines;
+the exit code is 0 only when all checks passed). Variables: `PROXIMITY_IMAGE` (use a
+ready image instead of building `proximity-stand`), `STAND_SUBNET`, `STAND_KEEP=1` (leave
+the stand running, the UI addresses are printed), `STAND_OFFLINE=1` (no Internet: a small
+time server, `time/server.py`, answers for the default NTP servers, because OpenVPN
+starts only with checked time). A new kind of check gets its own stand in
+`scripts/stands/<stand>/` and a line in `AGENTS.md`.
 
 ## Code style
 

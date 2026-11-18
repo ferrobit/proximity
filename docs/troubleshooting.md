@@ -49,7 +49,7 @@ they are used only when there are no users.
 | `… is required by server` | The server asked for something not configured (user name, password, private key password). The outbound fails at once and is not retried |
 | `invalid private key password` (OpenVPN) | The client key in the configuration is encrypted and *Private key password* does not open it |
 | `server certificate is rejected: …` (OpenVPN) | The certificate of the server does not pass the check against `<ca>` of the configuration (wrong or old CA, expired certificate, another server name); the text is the reason printed by OpenVPN. Not retried |
-| `tunnel address '…' overlaps network '…' of inbound device 'proximity_i<N>'` (OpenVPN) | The VPN server gave an address from the *VPN network* of one of your OpenVPN inbounds, so the kernel drops the tunnel packets. Typical for two Proximity instances connected to each other: both use `10.77.<N>.0/24` by default. Change *VPN network* of the inbound on one side. An outbound connected to an inbound of the same instance always fails this way |
+| `tunnel address '…' overlaps network '…' of inbound device 'proximity_i<N>'` (OpenVPN) | The VPN server gave an address from the *VPN network* of one of your OpenVPN inbounds, so the kernel drops the tunnel packets. Typical for two Proximity instances connected to each other when their inbounds still have the old default `10.77.<N>.0/24` (a new inbound gets `10.<X>.<N>.0/24` with its own `<X>` per installation). Change *VPN network* of the inbound on one side. An outbound connected to an inbound of the same instance always fails this way |
 | `device 'proximity_a<N>' is not ready` (AmneziaWG) | `amneziawg-go` did not create its interface and control socket within 10 s; see the log for its own error |
 | `connection timed out` (OpenVPN) | The server is not reachable or the configuration is wrong; OpenVPN did not finish within 60 s |
 | `monitoring failed after N attempts: failed to ping gateway …` | The tunnel is up but the gateway does not answer ping. Some servers block ICMP — disable *Enable monitoring* for this outbound |
@@ -136,8 +136,10 @@ Hover the state or open the inbound log (📄).
 3. The client must reach the *Public address* and port (UDP by default) from outside:
    check port forwarding on your router for 7800–7898.
 4. IPv6 is not tunnelled: a dual-stack client keeps using its own IPv6 route.
-5. `ping` to an address that a route sends to a tunnel or a proxy does not work: the
-   router forwards ICMP directly, outside the outbound. Check with TCP (`curl`) instead.
+5. `ping` from a client to another host answers *Packet filtered*: the router carries
+   only TCP and UDP, a ping could not follow the routes, so the server rejects it. Check
+   with TCP (`curl`) instead; `ping` of the server's tunnel address works, and so does
+   any `ping` when the inbound's *Outbound* is **Host**.
 
 ## An OpenVPN client gets `AUTH_FAILED`
 
@@ -145,6 +147,28 @@ The inbound log shows the reason printed by the check: `unexpected user`, `inval
 password`, `invalid one-time code` (the clocks of the server and the phone must agree
 within 30 seconds), `anonymous connections are not allowed`. Export the configuration
 again after regenerating keys or the TOTP key.
+
+`one-time code of user '…' is already used`: a code works once; another user or another
+address must use the next code (wait up to 30 seconds). A Proximity outbound waits by
+itself: its log says `waiting … for a new one-time code`.
+
+## An OpenVPN client stopped connecting after *Regenerate*
+
+The inbound accepts only its current client certificate. The inbound log shows
+`client certificate is rejected: it is not the current client certificate of this
+inbound`; the client waits and reports a TLS handshake timeout. Export the client
+configuration again and give it to the client.
+
+## "Proximity started with a damaged configuration"
+
+`proximity.json` had blocks that could not be read or checked (edited by hand, damaged
+disk, a file of another version). Proximity dropped only those blocks and started with
+the rest; the message and the container log (`configuration problem: …`) list them with
+the reasons. The file as it was is kept beside it as `proximity.invalid-<time>.json`:
+take the lost blocks from there, fix them and add them again in the UI (a route or an
+inbound that pointed to a dropped outbound works again when the outbound is back under
+the same ID). A file that is not JSON at all gives an empty configuration and the
+first-run dialog. Close the message as Administrator when you are done.
 
 ## Inbound traffic counters stay at zero
 
