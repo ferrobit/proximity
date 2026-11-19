@@ -97,6 +97,90 @@
     their own servers too (mihomo cannot match a source in `fake-ip-filter`). Exclude the
     networks of the inbounds from the hijack, if mihomo gets a way.
 
+## UI review 2026-11-19
+
+From the screenshots of every page and dialog. Most important first.
+
+- [ ] **Settings: two Save buttons lose edits**
+  - *Router* and *Miscellaneous* have their own **Save settings**, each sends only its
+    fields (`save`, `saveMisc` in `Settings.vue`): an edit in one block is silently lost
+    when the other button is pressed. One sticky save bar for the page (with "unsaved
+    changes" mark and a leave warning), or save each control on change.
+
+- [ ] **Six icon buttons in every row**
+  - Outbounds and inbounds show edit, start, stop, restart, log and delete as bare icons;
+    start or stop is always grey (one of them can never be pressed). Keep one state button
+    (▶ Start / ⏸ Stop by the state), **Log** with a label; restart and delete into a `⋯`
+    menu; edit by a click on the name.
+
+- [ ] **Enabled, Start/Stop and autostart are three switches for one idea**
+  - A row can be *enabled* but *stopped* ("manual start"), *enabled* but *unused*, or
+    *disabled*. Users read **Enabled** as "running". Proposal: the table shows one state
+    (running / stopped / failed / off); **Enabled** moves into the dialog as "Use in the
+    router", autostart stays next to it.
+
+- [ ] **Reconnection settings are spread over two tabs**
+  - *Connection attempts* and *Reconnection timeout* are on **General**, *Restore lost
+    connections*, *Restore after*, *Recovery attempts* and the checks on **Monitoring**:
+    seven numbers for one behaviour. One tab "Health and reconnect" with a preset (normal
+    / fast / patient) and the numbers under **Advanced**.
+
+- [ ] **Inbound dialog has seven tabs**
+  - General, Server, Clients, Security, Keys and certificates, Users, Monitoring. Most users
+    need address, port, users and the target. Keep **General** (incl. target), **Users**,
+    **Clients**; put MTU, log verbosity, ciphers, keys and certificates under **Advanced**.
+    *Log verbosity* (OpenVPN `verb`) duplicates the **Verbose** switch.
+
+- [ ] **Routes page: the table is below the fold**
+  - Warnings box (12 lines) and the **Route hits** chart push the routes down. Collapse
+    the warnings into a badge "12 warnings" that opens them, and let the chart be folded
+    (remember it per browser). Fallbacks at the very bottom are hard to find: a tab
+    "Routes | Fallbacks".
+
+- [ ] **Words that mean the same or nearly the same**
+  - `good` (state) vs `up` (link) vs *enabled*; dashboard column *Status* holds
+    enabled/unused while *Operation* holds the state; the target **Router** of an inbound
+    vs the router service; `DIRECT` vs a HOST outbound (both "directly"); *Unreachable
+    routes* lists failed connections, not routes. A short glossary and one word per idea:
+    e.g. state *running* everywhere, target **Routes** for an inbound, tab **Failed
+    connections**.
+
+- [ ] **Small things in tables**
+  - A column with a bar-chart icon and no header (= statistics on): unclear, move to a
+    tooltip of the name or drop. Latency `0 ms` for proxies and HOST reads like an error:
+    show `<1 ms`. "verbose log" under the name wraps into two lines in Inbounds. Up / down
+    arrows of outbounds and inbounds change only the order of the list (not routing):
+    say so in a tooltip, or replace them by sorting.
+
+- [ ] **Header numbers without words**
+  - `4/5`, `↑ 232 B/s`, `↓ 3.8 MB/s`, `⇋ 3` have only icons: tooltips "outbounds good of
+    enabled", "connections now", and a click to the matching page.
+
+- [ ] **Settings is one long page**
+  - Router service, proxy, DNS, checks, unreachable list, time, logs, users, backup on one
+    scroll (5700 px on the screenshot). Anchor menu on the side or tabs (Router, DNS,
+    Logs and time, Users, Backup). *Router log level* sits in *Proxy*; it belongs to logs.
+
+- [ ] **Connection map needs a key**
+  - The numbered circles `1 2 3` on the edges of a fallback (priority) and the dashed
+    lines (traffic) are explained nowhere on the map; add them to the legend. With 10+
+    routes the map is dense: a filter "only routes with traffic".
+
+- [ ] **First run: empty pages**
+  - After the administrator is created every page is an empty table. A checklist on the
+    dashboard ("1 add an outbound → 2 write a route → 3 choose the default target → 4
+    check with Tools") until the steps are done.
+
+- [ ] **Tools: two forms for one address**
+  - Address check and Ping each have their own input: one address field with two buttons
+    (**Check**, **Ping**), results below. *accepted by the proxy* needs the tooltip text
+    visible (an info icon), users miss it.
+
+- [ ] **DNS tab: show what is in effect**
+  - The tab lists only the servers typed there; the servers pushed by the VPN and the
+    default ones that apply when the list is empty are visible only in the table
+    (`DNS …`). Show the effective list read-only under the field.
+
 ## Review 2026-11-19
 
 Found by a review of the whole project (code, tests, build, security), not by a bug report.
