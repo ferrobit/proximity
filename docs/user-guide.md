@@ -54,7 +54,7 @@ The dashboard has four tabs; the selected one is remembered in the browser:
 
 | Tab | Contents |
 |---|---|
-| **Overview** | Summary cards, the throughput and connections charts |
+| **Overview** | Summary cards, the throughput and connections charts, the route hits (signed-in users) |
 | **Connection map** | A live diagram of sources, routes, fallbacks and outbounds, see [Connection map](#connection-map) (signed-in users) |
 | **Outbounds** | State, latency and traffic of every outbound; the tab shows *good / total* |
 | **Unreachable routes** | Connections that failed, with the reason and the matched rule (signed-in users); the tab shows their number |
@@ -79,6 +79,10 @@ that collects statistics, plus a dashed **Total** line.
 active connections over the same time window, with the current, peak and average values.
 Hover to see the exact count at a moment in time. On narrow screens it moves below the
 throughput chart.
+
+**Route hits** — below them, for signed-in users: the same chart as on the
+[Routes](#routes) page, matches per interval by route, with its own *5m* / *15m* / *1h*
+and, for Operators and Administrators, **Reset**.
 
 **Outbounds** tab — a table: status (enabled / disabled / unused — not referenced by any route or
 fallback), operation state (`good`, `connecting`, `reconnecting`, `failed`), tunnel link

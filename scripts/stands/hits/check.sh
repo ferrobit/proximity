@@ -2,8 +2,8 @@
 # Stand "hits": one instance with its proxy port published and a headless browser. Sends
 # requests through the router and checks the hit counters of the routes: the count per route
 # and for "Everything else", the history samples, no loss and no double count across a reload
-# of the router configuration, the counters after a restart of the container, the chart and
-# the column of the Routes page, the reset.
+# of the router configuration, the counters after a restart of the container, the chart on
+# the dashboard, the chart and the column of the Routes page, the reset.
 # Usage: make stand-hits, or bash scripts/stands/hits/check.sh   (about 30 seconds)
 # Needs the browser and the node modules of the screenshots (see scripts/screenshots.sh).
 # Variables: CHROME, SCREENSHOT_TOOLS and those of ../lib.sh.

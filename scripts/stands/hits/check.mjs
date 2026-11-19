@@ -92,6 +92,16 @@ async function run() {
         body: JSON.stringify(account) })
     }, { username: 'admin', password: 'Stand-admin-1' })
     await visitAll('one.test', 2)
+    await page.evaluate(() => localStorage.setItem('proximity-dashboard-tab', 'overview'))
+    await page.goto(`${address()}/#/dashboard`, { waitUntil: 'networkidle0' })
+    await page.reload({ waitUntil: 'networkidle0' })
+    const dashboard = await waitFor(() => page.evaluate(() => {
+      const card = document.querySelector('.dashboard-hits')
+      const bars = card ? [...card.querySelectorAll('svg path')].filter((item) => item.getAttribute('d')).length : 0
+      const legend = card ? card.querySelector('.chart-legend')?.innerText || '' : ''
+      return bars > 0 && legend.includes('One') ? { bars, legend } : null
+    }), 20)
+    check('dashboard overview draws the route hits', Boolean(dashboard), JSON.stringify(dashboard))
     await page.goto(`${address()}/#/routes`, { waitUntil: 'networkidle0' })
     await page.reload({ waitUntil: 'networkidle0' })
     const chart = await waitFor(() => page.evaluate(() => {

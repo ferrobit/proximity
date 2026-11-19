@@ -22,7 +22,7 @@
 <p align="center">
   <img alt="Tests" src="https://img.shields.io/badge/tests-167%20passing-brightgreen">
   <img alt="Coverage" src="https://img.shields.io/badge/coverage-94.2%25-brightgreen"><br>
-  <sub><b>167</b> Go tests, <b>94.2%</b> statement coverage, 189 end-to-end checks on
+  <sub><b>167</b> Go tests, <b>94.2%</b> statement coverage, 190 end-to-end checks on
   <a href="docs/development.md#test-stands">ready stands</a></sub>
 </p>
 
@@ -98,7 +98,7 @@ port **8899**.
 
 | | |
 |---|---|
-| ![Dashboard](docs/images/dashboard.png) **Dashboard** — summary cards, live throughput and connections charts | ![Dark theme](docs/images/connection-map-dark.png) **Dark theme** |
+| ![Dashboard](docs/images/dashboard.png) **Dashboard** — summary cards, live throughput, connections and route hits charts | ![Dark theme](docs/images/connection-map-dark.png) **Dark theme** |
 | ![Outbounds](docs/images/outbounds.png) **Outbounds** — every exit with its state, latency and connection details | ![Routes](docs/images/routes.png) **Routes** — ordered rules with comments, overlap warnings and VPN-provided routes |
 | ![Connection map popup](docs/images/connection-map-popover.png) **Connection map** — details, on/off and start/stop of any item; click to edit | ![Connection log](docs/images/outbound-log.png) **Connection log** — live, auto-scrolling log of a tunnel; copy, download or clear it |
 | ![OpenVPN outbound](docs/images/outbound-openvpn.png) **OpenVPN outbound** — upload or edit `.ovpn`, credentials, TOTP | ![Client configuration](docs/images/inbound-export.png) **Client configuration** — preview, copy or download per user |
@@ -342,7 +342,7 @@ connections untouched, `rp_filter=1`, container stop and kill. Inbounds have bee
 with real mihomo 1.19.34 and OpenVPN 2.6 in network namespaces: SOCKS5 authentication and
 TLS, an OpenVPN client with password + TOTP (appended and `static-challenge`), anonymous
 clients, token renegotiation, session kill on user change, traffic through the router,
-DNS hijack, traffic counters. Nine ready stands run 189 end-to-end checks with the real
+DNS hijack, traffic counters. Nine ready stands run 190 end-to-end checks with the real
 image (`make stand-security`, `stand-tunnel`, `stand-reload`, `stand-config`,
 `stand-capture`, `stand-dns`, `stand-logs`): one-time codes, certificates, tokens, received routes, a damaged
 configuration, the reload of an open page, TCP and ping of a host with transparent capture,

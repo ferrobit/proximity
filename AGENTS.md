@@ -105,7 +105,7 @@ it, `STAND_OFFLINE=1` adds a time server. Checks print `PASS`/`FAIL`, exit 0 if 
 | capture | `make stand-capture` (45 s, 29) | host namespace, `rp_filter=1`, SOCKS5/OpenVPN/AWG exits, counting "Internet" |
 | dns | `make stand-dns` (1.5 min, 36, openssl) | per-outbound DNS, loop pins, fake-IP, DoT/DoH (own CA via `SSL_CERT_FILE`), HTTP proxy `proxy.py`, keyword/regex, server names → hosts |
 | broken-config | `make stand-config` (5 s, 17) | damaged `config.json` |
-| hits | `make stand-hits` (30 s, 13, browser) | route hit counters from mihomo `/rules`, reload, restart, Routes chart |
+| hits | `make stand-hits` (30 s, 14, browser) | route hit counters from mihomo `/rules`, reload, restart, Dashboard and Routes charts |
 | tools | `make stand-tools` (40 s, 23, browser) | Tools page: lookup, DNS through outbounds, ping; pictures `tools-*.png` |
 
 ## Faster

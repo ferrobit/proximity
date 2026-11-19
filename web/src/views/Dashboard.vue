@@ -45,6 +45,8 @@
               <TrafficChart v-model:range="range" class="chart-main" :overview="overview" :samples="history.samples.value" :step="history.step.value" />
               <ConnectionsChart class="chart-side" :samples="history.samples.value" :step="history.step.value" :range="range" />
             </div>
+            <HitsChart v-if="session.level > 0" class="dashboard-hits" :samples="history.samples.value" :step="history.step.value"
+              :origins="origins" :can-clear="canEdit()" @clear="clearHits" />
           </div>
         </a-tab-pane>
         <a-tab-pane v-if="session.level > 0" key="map">
@@ -122,7 +124,7 @@
 </template>
 
 <script setup>
-import { computed, ref, watch } from 'vue'
+import { computed, onMounted, ref, watch } from 'vue'
 import { message } from 'ant-design-vue'
 import {
   ApartmentOutlined, ArrowDownOutlined, ArrowUpOutlined, ClearOutlined, DashboardOutlined, DeploymentUnitOutlined, ExportOutlined,
@@ -135,6 +137,7 @@ import StateTag from '../components/StateTag.vue'
 import TrafficChart from '../components/TrafficChart.vue'
 import ConnectionsChart from '../components/ConnectionsChart.vue'
 import ConnectionMap from '../components/ConnectionMap.vue'
+import HitsChart from '../components/HitsChart.vue'
 import { useHistory } from '../components/history'
 
 const props = defineProps({ overview: { type: Object, default: null } })
@@ -146,6 +149,9 @@ const tab = computed({
   set: (value) => { stored.value = value }
 })
 const history = useHistory(() => props.overview)
+const routes = ref([])
+const origins = computed(() => routes.value.map((route, index) => ({ key: route.key, name: route.id || `Route ${index + 1}` }))
+  .concat([{ key: 'default', name: 'Everything else' }]))
 
 const outboundColumns = [
   { title: 'Outbound', key: 'id' },
@@ -169,6 +175,28 @@ const refusedColumns = [
 
 watch(stored, (value) => localStorage.setItem('proximity-dashboard-tab', value))
 
+// NOTE: The chart needs the names of the routes; the overview has only their number.
+async function loadRoutes() {
+  if (session.level < 1) return
+  try {
+    routes.value = (await api.get('/api/routes', true)).routes
+  } catch (error) {
+    routes.value = []
+  }
+}
+
+async function clearHits() {
+  try {
+    await api.remove('/api/routes/hits')
+    emit('refresh')
+  } catch (error) {
+    message.error(error.message)
+  }
+}
+
+onMounted(loadRoutes)
+watch(() => props.overview && props.overview.counts.routes, loadRoutes)
+
 async function clearRefused() {
   try {
     await api.remove('/api/refused')
@@ -184,6 +212,7 @@ async function clearRefused() {
 .tab-count { margin-left: 4px; padding: 0 7px; border-radius: 10px; font-size: 12px; background: rgba(127, 127, 127, .15); }
 .tab-alert { background: color-mix(in srgb, var(--tone-bad) 15%, transparent); color: var(--tone-bad); }
 .charts { display: flex; gap: 16px; align-items: stretch; }
+.dashboard-hits { margin-bottom: 0; }
 .chart-main { flex: 1 1 0; min-width: 0; }
 .chart-side { flex: 0 0 30%; min-width: 0; }
 @media (max-width: 991px) {

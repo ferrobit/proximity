@@ -7,7 +7,7 @@
         <a-radio-group v-model:value="range" size="small">
           <a-radio-button v-for="option in ranges" :key="option.value" :value="option.value">{{ option.label }}</a-radio-button>
         </a-radio-group>
-        <a-popconfirm v-if="canClear" title="Reset all hit counters?" @confirm="$emit('clear')">
+        <a-popconfirm v-if="canClear" title="Reset all hit counters?" @confirm="reset">
           <a-button size="small"><template #icon><ClearOutlined /></template>Reset</a-button>
         </a-popconfirm>
       </div>
@@ -62,7 +62,7 @@ const props = defineProps({
   origins: { type: Array, required: true },
   canClear: { type: Boolean, default: false }
 })
-defineEmits(['clear'])
+const emit = defineEmits(['clear'])
 const { token } = theme.useToken()
 
 const palette = ['#2a78d6', '#eb6834', '#1baf7a', '#eda100', '#e87ba4', '#008300', '#6250d6', '#e34948']
@@ -72,6 +72,7 @@ const height = 220
 const columns = 30
 
 const range = ref(900)
+const cleared = ref(0)
 const hidden = ref(new Set())
 const focused = ref('')
 const hover = ref(null)
@@ -95,7 +96,8 @@ const end = computed(() => {
   return Math.ceil(time / bucket.value) * bucket.value
 })
 const start = computed(() => end.value - range.value)
-const shown = computed(() => props.samples.filter((sample) => sample.time > start.value && sample.time <= end.value))
+const shown = computed(() => props.samples.filter((sample) => sample.time > Math.max(start.value, cleared.value) &&
+  sample.time <= end.value))
 
 const totals = computed(() => {
   const result = {}
@@ -174,6 +176,13 @@ const tooltipStyle = computed(() => {
   return left > width.value / 2 ? { right: `${width.value - left + 16}px`, top: `${margin.top}px` }
     : { left: `${left + 16}px`, top: `${margin.top}px` }
 })
+
+// NOTE: The page keeps the samples it has loaded: after a reset the older ones are hidden here.
+function reset() {
+  const last = props.samples[props.samples.length - 1]
+  cleared.value = last ? last.time : Math.floor(Date.now() / 1000)
+  emit('clear')
+}
 
 function label(key) {
   return key.startsWith('inbound:') ? `Inbound ${key.slice('inbound:'.length)}` : key

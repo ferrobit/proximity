@@ -127,6 +127,8 @@ Found by a review of the whole project (code, tests, build, security), not by a 
     origins of the generated rules; totals in `state.json`, matches per 5 s sample in
     `/api/history`; **Hits** column and **Route hits** chart on the Routes page; reset by
     `DELETE /api/routes/hits`. Stand `hits` (13 checks).
+  - Done too: the chart on the Overview tab of the dashboard; after **Reset** the samples
+    already loaded by the page are hidden (stand `hits`: 14 checks).
 
 - [x] **Page Tools: address check and ping**
   - Done: `POST /api/tools/lookup` and `/api/tools/ping`, probe listener of mihomo with one
