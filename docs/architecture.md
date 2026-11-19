@@ -460,6 +460,35 @@ base32 TOTP key.
   connections are invisible in mihomo's `/connections` snapshots. Without `iptables` the
   counters fall back to those snapshots and miss short connections.
 
+## Tools
+
+The page Tools tests names and addresses through the real router:
+
+- **Probe listener.** The generator adds a mixed listener `proximity-probe` on
+  `127.0.0.1:<free port>` (chosen at start) with one user per active outbound and `DIRECT`
+  (`probe0`, `probe1`, …, one random password per start), and ahead of all other rules
+  `AND,((IN-NAME,proximity-probe),(IN-USER,probeN)),<outbound>` plus a final `REJECT` for
+  the listener. A connection with the user of an outbound leaves through exactly that
+  outbound (`router.Describe` returns the users; their rules have an empty origin, so they
+  never count as route hits).
+- **A test connection** is an HTTP `CONNECT` to the proxy port (the route check) or to the
+  probe listener (one outbound). mihomo answers `CONNECT` at once and dials afterwards, so
+  the result is read from its log line, found by the source port of the test connection:
+  `match <rule> using <chain>` or `dial <chain> (match <rule>) … error: …`. The log stream
+  can lag behind a reload, so a connection seen in `/connections` also counts, and a
+  connection closed without a line is an error. The matched rule is mapped to its route by
+  the first rule of `GET /rules` with the same text and the origins of the generated rules.
+- **Proxies.** A SOCKS5 or HTTP server (mihomo among them) may answer before it reaches
+  the target; the test keeps such a connection open for 5 seconds and reports an error
+  when the far side closes it (a mihomo exit retries a refused dial for about 3 seconds).
+- **DNS of an outbound** — `router.Resolvers` gives `server#exit` for every outbound; the
+  query goes through the probe user of the exit, over TCP for plain servers, TLS for
+  `tls://`, an HTTPS POST for `https://` (`internal/tools`, its own DNS message codec).
+- **Ping** — ICMP with `ping -m <mark>` / `-I <device>` from `link.Manager.Path` (the table
+  of a tunnel or of a host gateway, the capture bypass mark, an interface), timed TCP
+  connections through the probe listener for proxies. The way of a client's ping comes from
+  the same ping rules as the capture (`router.Ping`).
+
 ## Storage
 
 All persistent data lives in the settings folder mounted as `/config`:

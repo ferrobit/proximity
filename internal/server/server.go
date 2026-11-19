@@ -50,7 +50,8 @@ type Server struct {
 	mutex     sync.Mutex
 	warnings  []string
 	failure   string
-	origins   []string
+	layout    router.Layout
+	probe     probeState
 	captured  bool
 	running   bool
 	restart   bool
@@ -132,7 +133,11 @@ func internalNew(options Options) (*Server, error) {
 	}
 	server := &Server{options: options, store: store, dirty: make(chan struct{}, 1),
 		started: time.Now(), warnings: []string{}, mux: http.NewServeMux(),
-		traced: map[string]tracedConnection{}, clock: options.Clock}
+		traced: map[string]tracedConnection{}, clock: options.Clock,
+		probe: probeState{waiters: map[int]chan string{}}}
+	if server.probe.port, server.probe.secret, err = makeProbe(); err != nil {
+		return nil, err
+	}
 	if server.clock == nil {
 		server.clock = clock.NewWith(filepath.Join(options.RunPath, "clock.json"),
 			server.queryTime, clock.KernelSynchronized)
@@ -232,7 +237,7 @@ func (server *Server) Run(ctx context.Context) error {
 		server.loop(ctx)
 		close(finished)
 	}()
-	go server.mihomo.Watch(ctx, server.tracker.Observe)
+	go server.mihomo.Watch(ctx, server.observe)
 	server.notify()
 	var failure error
 	select {
@@ -326,7 +331,7 @@ func (server *Server) loop(ctx context.Context) {
 
 func (server *Server) countHits() {
 	server.mutex.Lock()
-	origins := server.origins
+	origins := server.layout.Origins
 	server.mutex.Unlock()
 	if session, rules, err := server.mihomo.Rules(); err == nil {
 		server.tracker.UpdateHits(session, origins, rules)
@@ -487,12 +492,13 @@ func (server *Server) synchronize() {
 		}
 	}
 	options := router.Options{Socket: server.mihomo.Socket(), ProxyBind: server.options.ProxyBind,
-		Capture: server.options.HostNetwork && snapshot.Settings.Capture}
+		Capture:   server.options.HostNetwork && snapshot.Settings.Capture,
+		ProbePort: server.probe.port, ProbeSecret: server.probe.secret}
 	data, warnings, err := router.Generate(generated, links, options)
 	if err == nil && running {
 		err = server.mihomo.Apply(data)
 	}
-	origins := router.Origins(generated, links, options)
+	layout := router.Describe(generated, links, options)
 	known := map[string]bool{router.OriginDefault: true}
 	for _, route := range snapshot.Routes {
 		known[route.Key] = true
@@ -505,7 +511,7 @@ func (server *Server) synchronize() {
 	server.mutex.Lock()
 	defer server.mutex.Unlock()
 	if server.warnings, server.failure = warnings, ""; err == nil {
-		server.origins = origins
+		server.layout = layout
 	} else {
 		server.failure = err.Error()
 		server.options.Logf("failed to apply router configuration: %v", err)

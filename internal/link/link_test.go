@@ -669,6 +669,30 @@ func TestManager_AmneziaFailure(t *testing.T) {
 	}
 }
 
+func TestManager_Path(t *testing.T) {
+	tools, directory := makeTools(t)
+	manager, err := NewManager(Options{Resolve: sampleResolve, Directory: filepath.Join(directory,
+		"run"), Tools: tools, HostNetwork: true})
+	require.NoError(t, err)
+	defer manager.Close()
+	manager.Apply([]config.Outbound{{ID: "Plain", Type: config.TypeHost, Slot: 1},
+		{ID: "Card", Type: config.TypeHost, Slot: 2, Host: &config.HostOptions{
+			Mode: config.HostInterface, Interface: "eth9"}},
+		{ID: "Gate", Type: config.TypeHost, Slot: 3, Host: &config.HostOptions{
+			Mode: config.HostInterface, Interface: "eth9", Gateway: "192.0.2.1"}},
+		{ID: "Tunnel", Type: config.TypeOpenVPN, Slot: 4},
+		{ID: "Proxy", Type: config.TypeSocks5, Slot: 5}}, config.Settings{Capture: true})
+	for id, expected := range map[string]Path{config.TargetDirect: {Mark: CaptureMark},
+		"Plain": {Mark: CaptureMark}, "Card": {Mark: CaptureMark, Device: "eth9"},
+		"Gate": {Mark: Table(3)}, "Tunnel": {Mark: Table(4)}, "Proxy": {Proxy: true}} {
+		path, err := manager.Path(id)
+		require.NoError(t, err)
+		require.Equal(t, expected, path, id)
+	}
+	_, err = manager.Path("missing")
+	require.EqualError(t, err, "outbound 'missing' does not exist")
+}
+
 func TestManager_ClearLog(t *testing.T) {
 	tools, directory := makeTools(t)
 	state := filepath.Join(directory, "state")

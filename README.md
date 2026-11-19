@@ -20,9 +20,9 @@
 </p>
 
 <p align="center">
-  <img alt="Tests" src="https://img.shields.io/badge/tests-153%20passing-brightgreen">
-  <img alt="Coverage" src="https://img.shields.io/badge/coverage-94.6%25-brightgreen"><br>
-  <sub><b>153</b> Go tests, <b>94.6%</b> statement coverage, 155 end-to-end checks on
+  <img alt="Tests" src="https://img.shields.io/badge/tests-165%20passing-brightgreen">
+  <img alt="Coverage" src="https://img.shields.io/badge/coverage-94.1%25-brightgreen"><br>
+  <sub><b>165</b> Go tests, <b>94.1%</b> statement coverage, 178 end-to-end checks on
   <a href="docs/development.md#test-stands">ready stands</a></sub>
 </p>
 
@@ -84,9 +84,10 @@ port **8899**.
 | 📥 **Inbounds** | SOCKS5 proxy servers and OpenVPN servers on ports 7800–7898 with their own users, optional anonymous access, TLS / TOTP, generated keys and certificates, one-click client configuration export; traffic goes to the host connection, to the routes or to a chosen outbound |
 | 🧩 **DNS per outbound** | Every outbound has its own DNS servers (plain, TCP, DoT, DoH, DoQ) and a DNS exit: the domains of a route are asked where the traffic leaves, so the provider does not see them and the answer fits the exit; a proxy without UDP is asked over TCP; default servers and their exit in Settings; names in the settings (proxy server, VPN `remote`, `Endpoint`, time server) follow the same rules and are never asked through their own outbound |
 | 📡 **VPN routes** | With *Receive routes* the networks announced by a VPN become a *provided* route that is on only while the connection is up |
-| 🩺 **Monitoring** | Link state, latency, configurable checks, retries and reconnects; states `good` / `connecting` / `reconnecting` / `failed` / `stopped`; start, stop and restart of outbounds and inbounds with state and logs kept across restarts; per-outbound connection log with auto-scroll; a *Verbose* switch per connection for debug logs (settings, checks, traced connections, OpenVPN `--verb 6`, AmneziaWG `LOG_LEVEL=verbose`); log sizes for both modes are set in Settings |
+| 🩺 **Monitoring** | Link state, latency, configurable checks, retries and reconnects; states `good` / `connecting` / `reconnecting` / `failed` / `stopped`; start, stop and restart of outbounds and inbounds with state and logs kept across restarts; per-outbound connection log with auto-scroll and hit counters of the routes; a *Verbose* switch per connection for debug logs (settings, checks, traced connections, OpenVPN `--verb 6`, AmneziaWG `LOG_LEVEL=verbose`); log sizes for both modes are set in Settings |
 | 🕒 **Time** | OpenVPN clients and servers start only with synchronized time: the host clock is checked against NTP servers and never changed; when it is wrong, Proximity keeps its own time for OpenVPN certificates and one-time codes |
 | 🗺️ **Connection map** | Live diagram of sources, router, routes, fallbacks and outbounds with state colors and animated traffic; hover to trace a path, click to edit settings; zoom, fit to screen and full screen |
+| 🧪 **Tools** | Address check: a real connection through the router shows the route, the matched rule and the outbound, plus the answer of every outbound's DNS servers and a TCP connection through every outbound; Ping: ICMP through the host and the tunnels, timed TCP through the proxies, drawn as a map of the ways out with loss and times |
 | 📈 **Statistics** | Upload/download totals and rates per outbound, interactive throughput chart (5 min / 15 min / 1 h) with an active connections chart beside it, list of unreachable destinations with reason and matched rule |
 | 🛡️ **Transparent mode** | Linux: captures all new outgoing host connections through a TUN device, hijacks DNS (fake-IP), sniffs TLS SNI / HTTP Host / QUIC, leaves LAN, Docker and inbound traffic alone |
 | 👥 **Access control** | Administrator, Operator, User and optional anonymous dashboard; secrets are hidden from read-only users |
@@ -103,6 +104,7 @@ port **8899**.
 | ![OpenVPN outbound](docs/images/outbound-openvpn.png) **OpenVPN outbound** — upload or edit `.ovpn`, credentials, TOTP | ![Client configuration](docs/images/inbound-export.png) **Client configuration** — preview, copy or download per user |
 | ![Inbounds](docs/images/inbounds.png) **Inbounds** — SOCKS5 and OpenVPN servers with users, state and traffic | ![Fallbacks](docs/images/fallbacks.png) **Fallbacks** — proxy groups in priority order, at the bottom of the Routes page |
 | ![Route editor](docs/images/route-dialog.png) **Route editor** — syntax highlighting, load / save / sort, normalized preview | ![Settings](docs/images/settings.png) **Settings** — router service, router, users, backup and restore |
+| ![Address check](docs/images/tools-lookup.png) **Address check** — route, outbound, DNS and connection through every outbound | ![Ping](docs/images/tools-ping.png) **Ping** — every way out with loss and times |
 
 More screenshots with explanations are in the [User guide](docs/user-guide.md).
 
@@ -333,14 +335,14 @@ repository itself is not changed. Component versions are Docker build arguments 
 
 ## Project status
 
-Version **1.2.0**. 153 Go tests pass, total statement coverage 94.6% (81.4–99.1% per
+Version **1.2.0**. 165 Go tests pass, total statement coverage 94.1% (81.4–99.1% per
 package). Transparent capture has been verified in isolated network namespaces and in a
 real Docker image: DIRECT, REJECT, domain → OpenVPN / AmneziaWG, LAN and inbound
 connections untouched, `rp_filter=1`, container stop and kill. Inbounds have been verified
 with real mihomo 1.19.34 and OpenVPN 2.6 in network namespaces: SOCKS5 authentication and
 TLS, an OpenVPN client with password + TOTP (appended and `static-challenge`), anonymous
 clients, token renegotiation, session kill on user change, traffic through the router,
-DNS hijack, traffic counters. Eight ready stands run 155 end-to-end checks with the real
+DNS hijack, traffic counters. Nine ready stands run 178 end-to-end checks with the real
 image (`make stand-security`, `stand-tunnel`, `stand-reload`, `stand-config`,
 `stand-capture`, `stand-dns`, `stand-logs`): one-time codes, certificates, tokens, received routes, a damaged
 configuration, the reload of an open page, TCP and ping of a host with transparent capture,

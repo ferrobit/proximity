@@ -505,6 +505,34 @@ func TestGenerate_CaptureProxyDNS(t *testing.T) {
 	require.Empty(t, result.DNS.Policy)
 }
 
+func TestGenerate_Probe(t *testing.T) {
+	snapshot := makeSnapshot(t)
+	options := Options{Socket: "socket", ProbePort: 17897, ProbeSecret: "secret"}
+	data, _, err := Generate(snapshot, nil, options)
+	require.NoError(t, err)
+	result := document{}
+	require.NoError(t, json.Unmarshal(data, &result))
+	probe := result.Listeners[len(result.Listeners)-1]
+	require.Equal(t, ProbeListener, probe.Name)
+	require.Equal(t, 17897, probe.Port)
+	require.Equal(t, "127.0.0.1", probe.Listen)
+	layout := Describe(snapshot, nil, options)
+	require.Len(t, layout.Origins, len(result.Rules))
+	require.Len(t, probe.Users, len(layout.Probe))
+	require.Equal(t, "probe0", layout.Probe[config.TargetDirect])
+	require.NotContains(t, layout.Probe, "AmneziaWG 1")
+	user := layout.Probe["SOCKS5 1"]
+	require.Contains(t, probe.Users, listenerUser{user, "secret"})
+	require.Contains(t, result.Rules, "AND,((IN-NAME,proximity-probe),(IN-USER,"+user+")),SOCKS5 1")
+	require.Equal(t, "IN-NAME,proximity-probe,REJECT", result.Rules[len(layout.Probe)])
+	require.Equal(t, make([]string, len(layout.Probe)+1), layout.Origins[:len(layout.Probe)+1])
+	{
+		data, _, err := Generate(snapshot, nil, Options{Socket: "socket"})
+		require.NoError(t, err)
+		require.NotContains(t, string(data), ProbeListener)
+	}
+}
+
 func TestGenerate_SelectGroups(t *testing.T) {
 	snapshot := makeSnapshot(t)
 	snapshot.Fallbacks[0].HealthCheck = false
@@ -564,7 +592,7 @@ func TestOrigins_Rules(t *testing.T) {
 	require.NoError(t, err)
 	result := document{}
 	require.NoError(t, json.Unmarshal(data, &result))
-	origins := Origins(snapshot, nil, Options{})
+	origins := Describe(snapshot, nil, Options{}).Origins
 	require.Len(t, origins, len(result.Rules))
 	inbound, split := InboundOrigin("SOCKS5 1"), snapshot.Routes[len(snapshot.Routes)-1].Key
 	fallback := snapshot.Routes[2].Key

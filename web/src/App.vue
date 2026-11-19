@@ -129,7 +129,7 @@ import { computed, h, onMounted, onUnmounted, reactive, ref, watch } from 'vue'
 import { Button, message, notification, theme as antTheme } from 'ant-design-vue'
 import {
   ArrowDownOutlined, ArrowUpOutlined, BulbOutlined, DashboardOutlined, ExportOutlined, GatewayOutlined,
-  ImportOutlined, KeyOutlined, LoginOutlined, LogoutOutlined, SettingOutlined, SwapOutlined, UserOutlined
+  ImportOutlined, KeyOutlined, LoginOutlined, LogoutOutlined, SettingOutlined, SwapOutlined, ToolOutlined, UserOutlined
 } from '@ant-design/icons-vue'
 import { api, events, isAdmin, loadSession, metrics, session } from './api'
 import { rate } from './format'
@@ -141,12 +141,14 @@ import Outbounds from './views/Outbounds.vue'
 import Routes from './views/Routes.vue'
 import Inbounds from './views/Inbounds.vue'
 import Settings from './views/Settings.vue'
+import Tools from './views/Tools.vue'
 
 const sections = [
   { key: 'dashboard', title: 'Dashboard', icon: DashboardOutlined, view: Dashboard, level: 0 },
   { key: 'outbounds', title: 'Outbounds', icon: ExportOutlined, view: Outbounds, level: 1 },
   { key: 'routes', title: 'Routes', icon: SwapOutlined, view: Routes, level: 1 },
   { key: 'inbounds', title: 'Inbounds', icon: ImportOutlined, view: Inbounds, level: 1 },
+  { key: 'tools', title: 'Tools', icon: ToolOutlined, view: Tools, level: 2 },
   { key: 'settings', title: 'Settings', icon: SettingOutlined, view: Settings, level: 1 }
 ]
 const aliases = { endpoints: 'outbounds', filters: 'routes', fallbacks: 'routes', users: 'settings' }

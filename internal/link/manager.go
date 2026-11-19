@@ -33,6 +33,12 @@ type Status struct {
 	Routes  []string `json:"routes"`
 }
 
+type Path struct {
+	Mark   int    `json:"mark"`
+	Device string `json:"device"`
+	Proxy  bool   `json:"proxy"`
+}
+
 type Options struct {
 	Directory   string
 	StateDir    string
@@ -265,6 +271,40 @@ func (manager *Manager) ClearLog(id string) error {
 		}
 	}
 	return fmt.Errorf("outbound '%v' does not exist", id)
+}
+
+// NOTE: How a packet of Proximity itself leaves through an outbound: a routing mark (the table
+// of a tunnel or of a host gateway, or the capture bypass), a device, or only a proxy.
+func (manager *Manager) Path(id string) (Path, error) {
+	manager.mutex.Lock()
+	defer manager.mutex.Unlock()
+	bypass := 0
+	if manager.options.HostNetwork && manager.settings.Capture {
+		bypass = CaptureMark
+	}
+	if id == config.TargetDirect {
+		return Path{Mark: bypass}, nil
+	}
+	for _, outbound := range manager.outbounds {
+		if outbound.ID != id {
+			continue
+		}
+		switch outbound.Type {
+		case config.TypeHost:
+			host := cmp.Or(outbound.Host, &config.HostOptions{})
+			if host.Mode == config.HostInterface && host.Gateway != "" {
+				return Path{Mark: Table(outbound.Slot)}, nil
+			} else if host.Mode == config.HostInterface {
+				return Path{Mark: bypass, Device: host.Interface}, nil
+			}
+			return Path{Mark: bypass}, nil
+		case config.TypeOpenVPN, config.TypeAmneziaWG:
+			return Path{Mark: Table(outbound.Slot)}, nil
+		default:
+			return Path{Proxy: true}, nil
+		}
+	}
+	return Path{}, fmt.Errorf("outbound '%v' does not exist", id)
 }
 
 func (manager *Manager) Status() map[string]Status {

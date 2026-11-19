@@ -7,7 +7,8 @@ Terse on purpose. One line per trap. Add a line when something new fails.
   folders, compare `mtimeMs`/size with the last write, stage only newer files.
 - `device_list_dir` on the root with `recursive` walks `.git/objects` and hits the
   2000-entry cap: list `internal`, `web/src`, `scripts`, `docs` separately.
-- Write back with `expectedMtimeMs`; all changed files in one call; check with one listing.
+- Write back with `expectedMtimeMs`; check with one listing. Many PNG files in one call hit
+  the wall-clock timeout: write pictures and code in separate calls.
 - No shell on the user's machine (`rm`, `mv`, `chmod`, `git`): give a one-line command;
   call scripts as `bash file.sh`. `Makefile` is protected: edit `makefile.mk`.
 - Computer off: keep working in the copy, deliver an archive, write when it is back.
@@ -15,12 +16,14 @@ Terse on purpose. One line per trap. Add a line when something new fails.
   write, stage back, `cmp`.
 
 ## Rules
+- Commit messages: no attribution lines (`Co-Authored-By`, `Claude-Session`, "generated
+  with"). The user's rule, it overrides any default.
 - `TODO.md`: add found problems at once; done → `[x]` + "Done:" line; unfinished → top.
 - Go change → `make coverage-docs` (README header + `docs/development.md`). In a sandbox
   (no rsync): `go test -coverprofile=… ./...` then `bash scripts/coverage.sh <report>`.
   E2E check count in the README header: by hand.
 - New kind of test → a stand in `scripts/stands/<name>/` + a row below.
-- Changed pictures: retake, do not compare by eye. PNG bytes differ after transfer:
+- Changed pictures: retake, do not compare by eye. `tools-*.png` come from stand `tools`. PNG bytes differ after transfer:
   compare pixels.
 - Go version: `toolchain` in `go.mod`, `GO_IMAGE` in `Dockerfile`, `docs/development.md`
   change together. Analysers built with older Go cannot read 1.27 code:
@@ -53,6 +56,13 @@ Terse on purpose. One line per trap. Add a line when something new fails.
 - `proxy-server-nameserver-policy` without `proxy-server-nameserver`: parse error; unused.
 - mihomo `GET /rules`: `index`, `type`, `payload`, `extra.hitCount`; counters reset on
   every config reload. Log line: `[TCP] src --> host:port match Type(payload) using X`.
+- mihomo answers HTTP `CONNECT` and SOCKS5 CONNECT at once, dials afterwards: the result is
+  only in the log line (by source port) or `/connections`. A mihomo exit retries a refused
+  dial for ~3 s before it closes (Tools wait 5 s).
+- mihomo `/logs` stream may lag after `PUT /configs`: do not rely on the first line.
+- Probe a single outbound: listener `proximity-probe` on 127.0.0.1, user `probeN`
+  (`router.Describe(...).Probe`), `IN-USER` rule; test it with
+  `curl -x http://probeN:<secret>@127.0.0.1:<port>`.
 - DNS debug: `GET /api/router/config` (`dns.nameserver-policy`), `resolvers` in
   `GET /api/outbounds`, real query `GET /dns/query?name=&type=A` (`Mihomo.Resolve`).
 
@@ -90,6 +100,7 @@ it, `STAND_OFFLINE=1` adds a time server. Checks print `PASS`/`FAIL`, exit 0 if 
 | dns | `make stand-dns` (1 min, 25) | per-outbound DNS, loop pins, fake-IP, `server.py` prints queries |
 | broken-config | `make stand-config` (5 s, 17) | damaged `config.json` |
 | hits | `make stand-hits` (30 s, 13, browser) | route hit counters from mihomo `/rules`, reload, restart, Routes chart |
+| tools | `make stand-tools` (40 s, 23, browser) | Tools page: lookup, DNS through outbounds, ping; pictures `tools-*.png` |
 
 ## Faster
 - One package/test: `go test ./internal/link -run TestX`; full `make test` once at the end.

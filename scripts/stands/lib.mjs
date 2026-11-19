@@ -14,11 +14,11 @@ export function docker(...parameters) {
   return `${result.stdout || ''}${result.stderr || ''}`
 }
 
-export async function signIn(container) {
+export async function signIn(container, credentials = account) {
   const address = docker('port', container, '8899/tcp').split('\n')[0].trim()
   const client = new Client(`http://${address}`)
   await client.waitForServer()
-  await client.call('POST', '/api/login', account)
+  await client.call('POST', '/api/login', credentials)
   return client
 }
 

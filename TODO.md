@@ -102,6 +102,26 @@ Found by a review of the whole project (code, tests, build, security), not by a 
     `/api/history`; **Hits** column and **Route hits** chart on the Routes page; reset by
     `DELETE /api/routes/hits`. Stand `hits` (13 checks).
 
+- [x] **Page Tools: address check and ping**
+  - Done: `POST /api/tools/lookup` and `/api/tools/ping`, probe listener of mihomo with one
+    user per outbound, own DNS client (`internal/tools`), page Tools with the route path,
+    the table of outbounds and the ping map. Stand `tools` (23 checks).
+
+- [ ] **Tools: UDP and QUIC are not checked**
+  - DNS servers `quic://` are skipped, plain UDP servers are asked over TCP (a server
+    without TCP looks broken), there is no UDP connection check (QUIC sites, games).
+    mihomo's probe listener accepts UDP: add a UDP DNS query through SOCKS5 UDP associate.
+
+- [ ] **Tools: proxies answer before they connect**
+  - Through SOCKS5 / HTTP the check waits 5 s for the far side to close; a slow target
+    (a timeout longer than 5 s) still looks *accepted*. An HTTP request for ports 80 / 443
+    (a real answer) would give a true result there.
+
+- [ ] **Tools: log stream lags after a reload**
+  - The first check after a configuration reload often finds its connection only through
+    `/connections` (200 ms steps), so its time is rounded. Reconnect the log stream at
+    once after `PUT /configs`.
+
 - [ ] **Hit history is lost on restart**
   - The chart keeps samples in memory only, like the throughput chart: after a restart of
     Proximity it starts empty while the totals stay. Store the last hour of samples in

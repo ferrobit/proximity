@@ -28,7 +28,7 @@ A tour of every page of the Proximity web UI (<http://localhost:8899>).
 | Area | Contents |
 |---|---|
 | **Header** | Logo; outbounds in good state / enabled; current upload and download rate; active connections; `transparent` when the host's traffic is captured; router state; theme switch; current user and role (menu: *Change password*, *Sign out*) |
-| **Left column** | Dashboard, Outbounds, Routes, Inbounds, Settings — only the sections your role may open. The column can be collapsed |
+| **Left column** | Dashboard, Outbounds, Routes, Inbounds, Tools, Settings — only the sections your role may open (Tools: Operator and Administrator). The column can be collapsed |
 | **Center** | The selected section. The URL keeps the section (`#/routes`), so you can bookmark it |
 | **Footer** | Version, copyright, page generation time (total and server) |
 
@@ -566,6 +566,57 @@ may ping.
 Disabling or deleting an OpenVPN user, or changing the password, disconnects the sessions
 of that user at once: the client is told to stop and does not wait for its keepalive
 timeout.
+
+## Tools
+
+Two checks for the question "which outbound does this need?". They are open to Operators
+and Administrators and need a running router; both make real connections.
+
+### Address check
+
+![Address check](images/tools-lookup.png)
+
+Type a name, `name:port`, an address or a URL (`https://host/path` takes port 443,
+`http://` port 80; without a port 443) and press **Check**. The last six checks stay as
+tags next to the button.
+
+- **The path** — the connection is sent through the proxy port of the router, as an
+  application would: the route that took it (with the matched rule, e.g.
+  `DomainSuffix(corp.example)`), the fallback and the outbound that carried it, and the
+  result: *connected in N ms* or the error of the router (refused, timeout, no DNS answer).
+  Through a SOCKS5 or HTTP outbound the result is *accepted by the proxy*: a proxy says
+  "connected" before it reaches the target, so the check keeps the connection open for 5
+  seconds and reports an error when the far side closes it in that time.
+- **Router DNS answer** — what the router resolves the name to with its own DNS servers
+  (the DNS of the route, see [DNS](architecture.md#dns)).
+- **The table** — the same name and port through every active outbound and `DIRECT`:
+  - **DNS of the outbound** — every DNS server that answers for the domains routed to it,
+    asked through the outbound itself (`server#outbound`); an address that differs from
+    the router answer is orange. A plain server is asked over TCP, `tls://` and `https://`
+    as usual, `quic://` is not checked, `system` is the resolver of the container.
+  - **TCP connection** — the time to connect through the outbound, or the error.
+  - The row of the outbound that carries the route is green and marked ★ *route*.
+
+### Ping
+
+![Ping](images/tools-ping.png)
+
+Type an address or a name (it is resolved by the router), choose the number of requests
+and the TCP port for proxies, press **Ping**. The picture shows every way out: Proximity
+on the left, the outbounds in the middle, the target on the right. An edge is green when
+every request was answered, amber when some were lost, red and dashed when none; its label
+gives the average time and the loss, or the error. The dots in an outbound show every
+request (higher is slower, ✗ is lost). The table below has sent, received, loss and
+min / average / max.
+
+- **ICMP** through `DIRECT`, HOST outbounds and tunnels: `ping` with the routing mark of
+  the outbound (its table) or its interface, so it leaves exactly where the outbound sends
+  traffic.
+- **TCP** through SOCKS5 and HTTP outbounds: a proxy does not carry ICMP, so every request
+  is a timed TCP connection to the chosen port (*accepted by the proxy*, as above).
+- With host capture on, the thick edge with *clients ↗* is the way a ping of a client to
+  this address takes (by the IP routes); when the route of the address goes to a proxy,
+  clients' pings to it are not answered.
 
 ## Settings
 

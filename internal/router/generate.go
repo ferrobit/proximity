@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net/netip"
 	"slices"
+	"strconv"
 	"strings"
 
 	"proximity/internal/config"
@@ -58,9 +59,16 @@ type listener struct {
 }
 
 type Options struct {
-	Socket    string
-	Capture   bool
-	ProxyBind string
+	Socket      string
+	Capture     bool
+	ProxyBind   string
+	ProbePort   int
+	ProbeSecret string
+}
+
+type Layout struct {
+	Origins []string
+	Probe   map[string]string
 }
 
 type document struct {
@@ -94,6 +102,7 @@ type buildState struct {
 	entries  []dnsEntry
 	cache    map[string][]dnsUpstream
 	origins  []string
+	probe    map[string]string
 }
 
 const secureSuffix = "~https"
@@ -105,6 +114,9 @@ const listenAll = "0.0.0.0"
 const listenDual = "::"
 const OriginDefault = "default"
 const originInbound = "inbound:"
+const ProbeListener = "proximity-probe"
+const probeUser = "probe"
+const listenLocal = "127.0.0.1"
 
 func Generate(snapshot config.Config, links map[string]link.Status, options Options) ([]byte,
 	[]string, error) {
@@ -119,10 +131,12 @@ func Generate(snapshot config.Config, links map[string]link.Status, options Opti
 	return buffer.Bytes(), state.warnings, nil
 }
 
-// NOTE: One origin per rule of the generated configuration, in the same order: the key of the
-// route, the inbound or the default target that produced the rule.
-func Origins(snapshot config.Config, links map[string]link.Status, options Options) []string {
-	return build(snapshot, links, options).origins
+// NOTE: Origins hold one entry per rule of the generated configuration, in the same order: the
+// key of the route, the inbound or the default target that produced the rule, empty for the
+// rules of the probe listener. Probe maps an outbound (or DIRECT) to its user on that listener.
+func Describe(snapshot config.Config, links map[string]link.Status, options Options) Layout {
+	state := build(snapshot, links, options)
+	return Layout{Origins: state.origins, Probe: state.probe}
 }
 
 func InboundOrigin(id string) string {
@@ -203,7 +217,8 @@ func Ping(snapshot config.Config, links map[string]link.Status) []link.PingRule 
 func build(snapshot config.Config, links map[string]link.Status, options Options) *buildState {
 	state := &buildState{config: snapshot, links: links, variants: map[string][]rules.Variant{},
 		active:   map[string]bool{config.TargetDirect: true, config.TargetReject: true},
-		warnings: []string{}, cache: map[string][]dnsUpstream{}, origins: []string{}}
+		warnings: []string{}, cache: map[string][]dnsUpstream{}, origins: []string{},
+		probe: map[string]string{}}
 	settings := snapshot.Settings
 	state.document = document{MixedPort: settings.MixedPort, AllowLan: true,
 		BindAddress: settings.BindAddress, Mode: "rule", LogLevel: settings.LogLevel,
@@ -219,6 +234,7 @@ func build(snapshot config.Config, links map[string]link.Status, options Options
 	}
 	state.buildProxies()
 	state.buildGroups()
+	state.buildProbe(options)
 	state.buildInbounds()
 	state.buildRules()
 	return state
@@ -286,6 +302,31 @@ func (state *buildState) buildInbounds() {
 		}
 		state.addRules(InboundOrigin(inbound.ID), match+","+target)
 	}
+}
+
+// NOTE: The tools of the UI test a name or an address through one chosen outbound: a local
+// listener where every user is sent to one outbound by an IN-USER rule ahead of all routes.
+func (state *buildState) buildProbe(options Options) {
+	if options.ProbePort == 0 {
+		return
+	}
+	result := listener{Name: ProbeListener, Type: "mixed", Port: options.ProbePort,
+		Listen: listenLocal, Users: []listenerUser{}}
+	targets := []string{config.TargetDirect}
+	for _, outbound := range state.config.Outbounds {
+		if state.active[outbound.ID] {
+			targets = append(targets, outbound.ID)
+		}
+	}
+	for index, target := range targets {
+		user := probeUser + strconv.Itoa(index)
+		state.probe[target] = user
+		result.Users = append(result.Users, listenerUser{user, options.ProbeSecret})
+		state.addRules("", fmt.Sprintf("AND,((IN-NAME,%v),(IN-USER,%v)),%v", ProbeListener, user,
+			target))
+	}
+	state.addRules("", "IN-NAME,"+ProbeListener+","+config.TargetReject)
+	state.document.Listeners = append(state.document.Listeners, result)
 }
 
 func (state *buildState) makeListener(inbound config.Inbound) listener {

@@ -206,6 +206,16 @@ wait timed out. The requested state is saved to `router.json` in the settings fo
 The dashboard `router` object has `running` and `stopped` (stopped on request, not by a
 failure).
 
+### Tools
+
+Level 2. Both answer `409 router is not running` while the router is stopped. `host`
+accepts a name, an address, `host:port` or a URL; `port` overrides it (default 443).
+
+| Method and path | Level | Description |
+|---|---|---|
+| `POST /api/tools/lookup` | 2 | `{host, port}` → `{host, port, route, addresses, problem, outbounds}`. `route`: `{rule, key, name, target, chain, latency, proxied, error}` of a real connection through the proxy port (`key` is the route key or `default`); `addresses` / `problem`: the answer of the router DNS; `outbounds`: `DIRECT` and every active outbound with `resolvers` (`{server, addresses, latency, error}` per DNS server, asked through the outbound) and `connect` (`{latency, proxied, error}`). Times in milliseconds |
+| `POST /api/tools/ping` | 2 | `{host, count, port}` (count 1–20, default 5) → `{host, address, port, count, system, blocked, capture, outbounds}`; every outbound has `method` (`icmp` or `tcp` for proxies), `path` (`{mark, device, proxy}`), `sent`, `replies` (`{sequence, time}`) and `error`. `system` is the outbound that carries a client's ping to the address while the host is captured, `blocked` when nobody answers it |
+
 ### Settings and backup
 
 | Method and path | Level | Description |

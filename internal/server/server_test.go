@@ -519,17 +519,19 @@ func TestServer_Hits(t *testing.T) {
 		require.Equal(t, http.StatusOK, code, body)
 	}
 	server.synchronize()
-	require.Nil(t, server.origins)
+	require.Nil(t, server.layout.Origins)
 	server.mutex.Lock()
 	server.running = false
 	server.mutex.Unlock()
 	server.synchronize()
-	routes := server.store.Snapshot().Routes
-	require.Equal(t, []string{routes[0].Key, routes[1].Key, router.OriginDefault}, server.origins)
+	routes, origins := server.store.Snapshot().Routes, server.layout.Origins
+	require.Equal(t, []string{"", "", routes[0].Key, routes[1].Key, router.OriginDefault}, origins)
+	require.Equal(t, map[string]string{config.TargetDirect: "probe0"}, server.layout.Probe)
 	server.countHits()
 	require.Empty(t, server.tracker.Hits())
 	at := time.Unix(1700000000, 0)
-	server.tracker.UpdateHits(1, server.origins, []router.Rule{
+	server.tracker.UpdateHits(1, origins, []router.Rule{
+		{Extra: router.RuleExtra{HitCount: 7, HitAt: at}}, {},
 		{Extra: router.RuleExtra{HitCount: 4, HitAt: at}}, {},
 		{Extra: router.RuleExtra{HitCount: 1, HitAt: at}}})
 	code, body, _ = call(t, server, viewer, http.MethodGet, "/api/routes", nil)

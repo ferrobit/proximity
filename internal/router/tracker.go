@@ -420,10 +420,10 @@ func (tracker *Tracker) UpdateHits(session int, origins []string, rules []Rule) 
 			count >= tracker.matched[index] {
 			delta = count - tracker.matched[index]
 		}
-		if delta <= 0 {
+		origin := origins[index]
+		if delta <= 0 || origin == "" {
 			continue
 		}
-		origin := origins[index]
 		hit := tracker.hits[origin]
 		hit.Count += delta
 		if last := rule.Extra.HitAt.Unix(); last > hit.Last {

@@ -92,6 +92,7 @@ make stand-capture    # end-to-end checks of TCP and ping of a host with transpa
 make stand-dns        # end-to-end checks of DNS: which server is asked and where the query leaves
 make stand-logs       # end-to-end checks of clearing the logs: the button and Start / Restart
 make stand-hits       # end-to-end checks of the route hit counters and their chart
+make stand-tools      # end-to-end checks of the page Tools (address check and ping)
 make down     # stop
 ```
 
@@ -252,7 +253,7 @@ The header of `README.md` (two badges and a line), its *Project status* and the 
 below show the number of tests and the coverage. Run `make coverage-docs` after every
 change of the Go code: it replaces these numbers and changes nothing else.
 
-Current state (version 1.2.0): **153 tests, all passing, 94.6% total statement coverage.**
+Current state (version 1.2.0): **165 tests, all passing, 94.1% total statement coverage.**
 
 | Package | Coverage |
 |---|---|
@@ -260,10 +261,10 @@ Current state (version 1.2.0): **153 tests, all passing, 94.6% total statement c
 | `internal/auth` | 94.1% |
 | `internal/clock` | 97.0% |
 | `internal/config` | 96.3% |
-| `internal/link` | 91.2% |
+| `internal/link` | 91.3% |
 | `internal/router` | 97.4% |
 | `internal/rules` | 99.1% |
-| `internal/server` | 94.9% |
+| `internal/server` | 92.2% |
 | `internal/wgconf` | 97.5% |
 
 Tests use fake tools (`ip`, `openvpn`, `iptables`, `ping` …) and a fake mihomo, so they run
@@ -285,6 +286,7 @@ make stand-capture                      # stand "capture": 29 checks, about 45 s
 make stand-dns                          # stand "dns": 25 checks, about 1 minute
 make stand-logs                         # stand "logs": 21 checks, about 40 seconds
 make stand-hits                         # stand "hits": 13 checks, about 30 seconds
+make stand-tools                        # stand "tools": 23 checks, about 40 seconds
 bash scripts/stands/pair/stand.sh up    # only start the stand; "down" removes it
 ```
 
@@ -297,6 +299,7 @@ bash scripts/stands/pair/stand.sh up    # only start the stand; "down" removes i
 | `dns` | the "host" of `capture` with `nameserver 1.1.1.1`, Proximity in its network with capture on, an exit instance with two SOCKS5 inbounds (with and without UDP) and an OpenVPN inbound, the "Internet" `proximity-stand-wan` with `1.1.1.1` (the resolver of the system), `1.1.1.53` (the DNS server given to the outbounds) and `1.1.1.2`, and `proximity-stand-dns`: a DNS server on both addresses (`server.py`) that prints every query with the address it came from | `make stand-dns` (`check.sh`): outbounds whose servers are given by name (`exit.stand.test`, `vpn.stand.test`) connect, the `remote` is replaced by the real address, the server name of a proxy is never asked through the proxy (the pin in `nameserver-policy`), the time servers are resolved by the router, an application gets a placeholder address; the domain of a route is asked from the server of its outbound through the outbound (UDP, TCP for a proxy without UDP, the far side of a tunnel, the exit *Host*), the default servers of Settings and the DNS of the default target; the answers pass `rp_filter=1`; no warnings |
 | `logs` | one instance with a HOST outbound and a SOCKS5 inbound, and a headless browser (the tools of the screenshots) | `make stand-logs` (`check.sh`): Start and Restart empty the log with the setting on (default), keep it with the setting off; a Start of a running service changes nothing; the restart of the container keeps the logs; the button **Clear** of the log window of an outbound and of an inbound (with its confirmation) empties the window and the log on the server, and the log stays empty after a restart of the container; Settings show the saved value of the checkbox |
 | `hits` | one instance with its proxy port `7899` published, and a headless browser (the tools of the screenshots) | `make stand-hits` (`check.sh`): requests through the HTTP proxy of the router to `one.test` (route *One*), `*.two.test` (route *Two*) and another name; the counts per route and for *Everything else*, the time of the last hit, the history samples, a reload of the router configuration neither loses nor repeats hits, the counts after a restart of the container, the chart and the **Hits** column of the Routes page, the reset |
+| `tools` | a web server `web.tools.test:8080`, an exit instance with an anonymous SOCKS5 inbound, the checked instance with HOST 1 and SOCKS5 1 (to the exit, DNS `tcp://127.0.0.11` through it) and the route `tools.test` → SOCKS5 1, and a headless browser | `make stand-tools` (`check.sh`): the address check (route and rule, chain, router answer, every outbound connects, DNS of SOCKS5 1 through it, closed port closed by the far side, unknown name, URL, address without DNS), the ping (ICMP through DIRECT and HOST 1, TCP through SOCKS5 1, an absent address), a viewer is refused, the page (menu order, the path, the ping map) and the pictures `tools-lookup.png`, `tools-ping.png` |
 | screenshots | two linked instances with sample data and traffic, see [Screenshots](#screenshots) | — |
 
 `scripts/stands/lib.sh` holds the common parts (image, network, instance, removal),

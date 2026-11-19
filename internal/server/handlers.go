@@ -176,6 +176,8 @@ func (server *Server) register() {
 	server.handle("POST /api/routes/preview", 1, server.previewRoute)
 	server.handle("PUT /api/routes/default", 2, server.setDefaultTarget)
 	server.handle("DELETE /api/routes/hits", 2, server.clearHits)
+	server.handle("POST /api/tools/lookup", 2, server.lookup)
+	server.handle("POST /api/tools/ping", 2, server.ping)
 	server.handle("PUT /api/routes/{key}", 2, server.updateRoute)
 	server.handle("DELETE /api/routes/{key}", 2, server.removeRoute)
 	server.handle("POST /api/routes/{key}/move", 2, server.moveRoute)
