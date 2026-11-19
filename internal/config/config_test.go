@@ -904,6 +904,18 @@ func TestOpen_Migrates(t *testing.T) {
 		require.NoError(t, err)
 		require.False(t, store.Snapshot().Settings.PingFilter)
 		require.True(t, Default().Settings.PingFilter)
+		require.True(t, store.Snapshot().Settings.ClearLogOnRestart)
+		require.True(t, Default().Settings.ClearLogOnRestart)
+	}
+	{
+		current := `{"version":11,"secret":"s","settings":{"mixed_port":7890,"bind_address":"*",` +
+			`"default_target":"DIRECT","log_level":"warning","probe_target":"1.1.1.1:443",` +
+			`"check_interval":30,"clear_log_on_restart":false},"users":[]}`
+		require.NoError(t, os.WriteFile(filepath.Join(directory, fileName), []byte(current),
+			0o600))
+		store, err := Open(directory)
+		require.NoError(t, err)
+		require.False(t, store.Snapshot().Settings.ClearLogOnRestart)
 	}
 }
 

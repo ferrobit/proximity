@@ -33,6 +33,7 @@ type Settings struct {
 	Autostart           bool       `json:"autostart"`
 	LogLines            int        `json:"log_lines"`
 	VerboseLogLines     int        `json:"verbose_log_lines"`
+	ClearLogOnRestart   bool       `json:"clear_log_on_restart"`
 	TimeManual          bool       `json:"time_manual"`
 	TimeServers         []string   `json:"time_servers"`
 	TimeTolerance       int        `json:"time_tolerance"`
@@ -200,13 +201,14 @@ const (
 	OTPAppend    = "append"
 )
 
-const currentVersion = 10
+const currentVersion = 11
 const inboundVersion = 4
 const autostartVersion = 5
 const serviceVersion = 6
 const attemptsVersion = 7
 const routesVersion = 8
 const pingVersion = 9
+const clearLogVersion = 11
 const maxSlot = 9999
 const defaultAttempts = 3
 const defaultReconnectTimeout = 10
@@ -249,7 +251,7 @@ func Default() Config {
 		ConnectivityChecks: true, ProbeTarget: defaultProbeTarget, CheckInterval: 30,
 		Capture: true, PingFilter: true, UnreachableLimit: defaultUnreachableLimit,
 		UnreachableLifetime: defaultUnreachableLifetime, Autostart: true,
-		LogLines: DefaultLogLines, VerboseLogLines: DefaultVerboseLogLines,
+		LogLines: DefaultLogLines, VerboseLogLines: DefaultVerboseLogLines, ClearLogOnRestart: true,
 		TimeServers: slices.Clone(defaultTimeServers), TimeTolerance: defaultTimeTolerance,
 		TimeInterval: defaultTimeInterval, TimeWait: defaultTimeWait,
 		DNS: DNSOptions{Servers: []string{}, Exit: ViaHost}}, Users: []User{},

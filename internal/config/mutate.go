@@ -469,6 +469,9 @@ func (config *Config) migrate() {
 	if config.Version < pingVersion {
 		config.Settings.PingFilter = true
 	}
+	if config.Version < clearLogVersion {
+		config.Settings.ClearLogOnRestart = true
+	}
 	for index := range config.Outbounds {
 		outbound := &config.Outbounds[index]
 		outbound.Autostart = outbound.Autostart || config.Version < serviceVersion

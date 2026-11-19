@@ -328,7 +328,7 @@ func TestServer_Backup(t *testing.T) {
 	code, exported, _ := call(t, server, admin, http.MethodGet, "/api/backup", nil)
 	require.Equal(t, http.StatusOK, code)
 	require.Equal(t, config.BackupFormat, exported["format"])
-	require.Equal(t, 10.0, exported["version"])
+	require.Equal(t, 11.0, exported["version"])
 	require.Len(t, exported["inbounds"], 1)
 	require.Len(t, exported["outbounds"], 1)
 	require.Len(t, exported["routes"], 1)
@@ -385,6 +385,49 @@ func TestServer_Backup(t *testing.T) {
 		code, _, _ = call(t, server, admin, http.MethodPost, "/api/backup", 5)
 		require.Equal(t, http.StatusBadRequest, code)
 		require.Equal(t, "SOCKS5 1", server.store.Snapshot().Routes[0].Target)
+	}
+}
+
+func TestServer_ClearLog(t *testing.T) {
+	server := makeServer(t)
+	admin := login(t, server, "admin", "secret123")
+	code, body, _ := call(t, server, admin, http.MethodPost, "/api/users",
+		userRequest{Name: "viewer", Password: "viewer123", Confirm: "viewer123",
+			Role: config.RoleUser})
+	require.Equal(t, http.StatusOK, code, body)
+	viewer := login(t, server, "viewer", "viewer123")
+	code, body, _ = call(t, server, admin, http.MethodPost, "/api/outbounds",
+		config.Outbound{Type: config.TypeHost, Enabled: true, Autostart: true})
+	require.Equal(t, http.StatusOK, code, body)
+	code, body, _ = call(t, server, admin, http.MethodPost, "/api/inbounds",
+		map[string]any{"type": config.TypeSocks5, "enabled": true, "anonymous": true})
+	require.Equal(t, http.StatusOK, code, body)
+	server.synchronize()
+	for _, path := range []string{"/api/outbounds/HOST%201", "/api/inbounds/SOCKS5%201"} {
+		code, body, _ = call(t, server, admin, http.MethodPost, path+"/stop", nil)
+		require.Equal(t, http.StatusOK, code, body)
+		code, body, _ = call(t, server, admin, http.MethodGet, path+"/log", nil)
+		require.Equal(t, http.StatusOK, code)
+		require.NotEmpty(t, body["lines"], path)
+		code, _, _ = call(t, server, viewer, http.MethodDelete, path+"/log", nil)
+		require.Equal(t, http.StatusForbidden, code)
+		code, body, _ = call(t, server, admin, http.MethodDelete, path+"/log", nil)
+		require.Equal(t, http.StatusOK, code, body)
+		require.Equal(t, true, body["ok"])
+		code, body, _ = call(t, server, admin, http.MethodGet, path+"/log", nil)
+		require.Equal(t, http.StatusOK, code)
+		require.Equal(t, []any{}, body["lines"], path)
+	}
+	{
+		code, body, _ := call(t, server, admin, http.MethodDelete, "/api/outbounds/missing/log", nil)
+		require.Equal(t, http.StatusNotFound, code)
+		require.Equal(t, "outbound 'missing' does not exist", body["error"])
+		code, body, _ = call(t, server, admin, http.MethodDelete, "/api/inbounds/missing/log", nil)
+		require.Equal(t, http.StatusNotFound, code)
+		require.Equal(t, "inbound 'missing' does not exist", body["error"])
+		code, body, _ = call(t, server, admin, http.MethodGet, "/api/settings", nil)
+		require.Equal(t, http.StatusOK, code)
+		require.Equal(t, true, body["clear_log_on_restart"])
 	}
 }
 

@@ -130,6 +130,10 @@
               extra="Log of a connection with Verbose on (10…100000)"><a-input-number v-model:value="misc.verbose_log_lines" style="width: 100%" /></a-form-item></a-col>
           </a-row>
           <p class="muted">The limits apply to the logs of outbounds and inbounds at once: older lines are removed, connections are not restarted.</p>
+          <a-form-item name="clear_log_on_restart"
+            extra="The log of an outbound or inbound is emptied when you press Start or Restart. Automatic reconnections, the restart of the router and changed settings keep the log">
+            <a-checkbox v-model:checked="misc.clear_log_on_restart">Clear the log when a connection is started or restarted</a-checkbox>
+          </a-form-item>
           <a-button v-if="isAdmin()" type="primary" :loading="savingMisc" @click="saveMisc"><template #icon><SaveOutlined /></template>Save settings</a-button>
         </a-form>
       </a-card>
@@ -199,10 +203,10 @@ const form = reactive({
   unreachable_lifetime: 86400, lifetime: 1, lifetime_unit: 86400, dns_text: '', dns_exit: '@host'
 })
 const targets = ref([])
-const miscFields = ['log_lines', 'verbose_log_lines', 'time_manual', 'time_servers', 'time_tolerance', 'time_interval', 'time_wait']
+const miscFields = ['log_lines', 'verbose_log_lines', 'clear_log_on_restart', 'time_manual', 'time_servers', 'time_tolerance', 'time_interval', 'time_wait']
 const defaultTimeServers = ['time.cloudflare.com', 'time.google.com', 'pool.ntp.org']
 const misc = reactive({
-  log_lines: 300, verbose_log_lines: 3000, time_manual: false, time_servers: [...defaultTimeServers], time_tolerance: 1,
+  log_lines: 300, verbose_log_lines: 3000, clear_log_on_restart: true, time_manual: false, time_servers: [...defaultTimeServers], time_tolerance: 1,
   time_interval: 3600, time_wait: 60
 })
 const time = ref({ state: 'checking', message: '', checked: 0 })

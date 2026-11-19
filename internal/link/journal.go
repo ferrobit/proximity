@@ -163,6 +163,14 @@ func (book *logBook) add(line string) {
 	}
 }
 
+func (book *logBook) clear() {
+	book.mutex.Lock()
+	defer book.mutex.Unlock()
+	if book.lines, book.written = []string{}, 0; book.path != "" {
+		_ = config.WriteFile(book.path, []byte{})
+	}
+}
+
 func (book *logBook) resize(limit int) {
 	book.mutex.Lock()
 	defer book.mutex.Unlock()

@@ -479,6 +479,30 @@ func TestInterfaces_Loopback(t *testing.T) {
 	}
 }
 
+func TestLogBook_Clear(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "service.log")
+	book := openLogBook(path, maxLogLines)
+	for index := range 2*maxLogLines - 1 {
+		book.add(fmt.Sprintf("line %v", index))
+	}
+	book.clear()
+	require.Empty(t, book.snapshot())
+	data, err := os.ReadFile(path)
+	require.NoError(t, err)
+	require.Empty(t, data)
+	require.Empty(t, openLogBook(path, maxLogLines).snapshot())
+	book.add("after")
+	book.add("again")
+	require.Equal(t, []string{"after", "again"}, book.snapshot())
+	require.Equal(t, []string{"after", "again"}, openLogBook(path, maxLogLines).snapshot())
+	{
+		memory := openLogBook("", maxLogLines)
+		memory.add("only in memory")
+		memory.clear()
+		require.Empty(t, memory.snapshot())
+	}
+}
+
 func TestLogBook_Rotation(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "service.log")
 	book := openLogBook(path, maxLogLines)
@@ -611,6 +635,36 @@ func TestManager_AmneziaFailure(t *testing.T) {
 		require.Equal(t, []string{"10.8.1.1"}, status.DNS)
 		require.Equal(t, []string{"10.55.0.9/32", "10.66.0.0/16"}, status.Routes)
 	}
+}
+
+func TestManager_ClearLog(t *testing.T) {
+	tools, directory := makeTools(t)
+	state := filepath.Join(directory, "state")
+	manager, err := NewManager(Options{Resolve: sampleResolve, Directory: filepath.Join(directory,
+		"run"), StateDir: state, Tools: tools})
+	require.NoError(t, err)
+	defer manager.Close()
+	snapshot := config.Default()
+	snapshot.Outbounds = []config.Outbound{{ID: "Off", Type: config.TypeHost, Slot: 2}}
+	_, err = snapshot.AddInbound(config.Inbound{Type: config.TypeSocks5, ID: "Socks", Port: 7810,
+		Anonymous: true}, time.Now())
+	require.NoError(t, err)
+	manager.Apply(snapshot.Outbounds, snapshot.Settings)
+	manager.ApplyInbounds(snapshot)
+	manager.book(outboundKey(2)).add("outbound line")
+	manager.book(inboundKey(7810)).add("inbound line")
+	require.Equal(t, []string{"outbound line"}, manager.Log("Off"))
+	require.Equal(t, []string{"inbound line"}, manager.InboundLog("Socks"))
+	require.NoError(t, manager.ClearLog("Off"))
+	require.Empty(t, manager.Log("Off"))
+	require.Equal(t, []string{"inbound line"}, manager.InboundLog("Socks"))
+	require.NoError(t, manager.ClearInboundLog("Socks"))
+	require.Empty(t, manager.InboundLog("Socks"))
+	data, err := os.ReadFile(filepath.Join(state, logsDirectory, outboundKey(2)+logSuffix))
+	require.NoError(t, err)
+	require.Empty(t, data)
+	require.EqualError(t, manager.ClearLog("missing"), "outbound 'missing' does not exist")
+	require.EqualError(t, manager.ClearInboundLog("missing"), "inbound 'missing' does not exist")
 }
 
 func TestManager_Inbounds(t *testing.T) {
@@ -1557,12 +1611,26 @@ func TestManager_Services(t *testing.T) {
 		require.NoError(t, manager.ControlInbound("Socks", ActionStart))
 		require.NoError(t, manager.ControlInbound("Socks", ActionRestart))
 		waitInbound(t, manager, "Socks", StateUp)
-		require.Equal(t, 3, strings.Count(strings.Join(manager.InboundLog("Socks"), "\n"),
+		require.Equal(t, 1, strings.Count(strings.Join(manager.InboundLog("Socks"), "\n"),
+			"starting"))
+		require.NotContains(t, strings.Join(manager.InboundLog("Socks"), "\n"), messageStopped)
+		snapshot.Settings.ClearLogOnRestart = false
+		apply(manager, true)
+		require.NoError(t, manager.ControlInbound("Socks", ActionRestart))
+		waitInbound(t, manager, "Socks", StateUp)
+		require.Equal(t, 2, strings.Count(strings.Join(manager.InboundLog("Socks"), "\n"),
 			"starting"))
 		require.NoError(t, manager.Control("AWG", ActionStop))
 		require.Equal(t, messageStopped, manager.Status()["AWG"].Message)
 		require.NoError(t, manager.Control("AWG", ActionStart))
 		waitState(t, manager, "AWG", StateFailed)
+		require.Contains(t, strings.Join(manager.Log("AWG"), "\n"), messageStopped)
+		snapshot.Settings.ClearLogOnRestart = true
+		apply(manager, true)
+		require.NoError(t, manager.Control("AWG", ActionRestart))
+		waitState(t, manager, "AWG", StateFailed)
+		require.NotContains(t, strings.Join(manager.Log("AWG"), "\n"), messageStopped)
+		require.NotContains(t, strings.Join(manager.Log("AWG"), "\n"), "shutting down")
 		snapshot.Inbounds[0].Autostart, snapshot.Outbounds[0].Autostart = false, false
 		apply(manager, false)
 		require.Equal(t, messageInactive, manager.Inbounds()["Socks"].Message)

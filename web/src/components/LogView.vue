@@ -10,6 +10,10 @@
       <a-tooltip title="Save the log as a text file">
         <a-button size="small" :disabled="!lines.length" @click="download"><template #icon><DownloadOutlined /></template>Download</a-button>
       </a-tooltip>
+      <a-popconfirm v-if="canEdit()" title="Clear the log? Its lines are deleted for good." ok-text="Clear" :ok-button-props="{ danger: true }"
+        :disabled="!lines.length" @confirm="clear">
+        <a-button size="small" danger :disabled="!lines.length" :loading="clearing"><template #icon><ClearOutlined /></template>Clear</a-button>
+      </a-popconfirm>
     </div>
     <div ref="view" :class="['mono', 'log-view', 'log-body', { 'log-dark': dark }]" @scroll="scrolled">
       <div v-if="!lines.length" class="log-empty">No messages yet</div>
@@ -26,8 +30,8 @@
 <script setup>
 import { computed, nextTick, onMounted, onUnmounted, ref } from 'vue'
 import { message, theme } from 'ant-design-vue'
-import { CopyOutlined, DownloadOutlined } from '@ant-design/icons-vue'
-import { api } from '../api'
+import { ClearOutlined, CopyOutlined, DownloadOutlined } from '@ant-design/icons-vue'
+import { api, canEdit } from '../api'
 import { copyText } from '../clipboard'
 import { parseLogLine } from './logSyntax'
 import { useDarkTheme } from './ruleTheme'
@@ -40,6 +44,7 @@ const props = defineProps({
 const lines = ref([])
 const follow = ref(true)
 const failure = ref('')
+const clearing = ref(false)
 const view = ref()
 let timer = null
 
@@ -78,6 +83,21 @@ async function copy() {
     message.success('Log copied')
   } catch (error) {
     message.error('Clipboard is not available')
+  }
+}
+
+async function clear() {
+  clearing.value = true
+  try {
+    await api.remove(props.path)
+    lines.value = []
+    follow.value = true
+    message.success('Log cleared')
+    await load()
+  } catch (error) {
+    message.error(error.message)
+  } finally {
+    clearing.value = false
   }
 }
 

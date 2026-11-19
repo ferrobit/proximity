@@ -164,6 +164,7 @@ func (server *Server) register() {
 	server.handle("POST /api/outbounds/{id}/restart", 2,
 		server.controlOutbound(link.ActionRestart))
 	server.handle("GET /api/outbounds/{id}/log", 2, server.getOutboundLog)
+	server.handle("DELETE /api/outbounds/{id}/log", 2, server.clearOutboundLog)
 	server.handle("POST /api/import/amneziawg", 2, server.importAmnezia)
 	server.handle("GET /api/fallbacks", 1, server.getFallbacks)
 	server.handle("POST /api/fallbacks", 2, server.addFallback)
@@ -187,6 +188,7 @@ func (server *Server) register() {
 	server.handle("POST /api/inbounds/{id}/stop", 2, server.controlInbound(link.ActionStop))
 	server.handle("POST /api/inbounds/{id}/restart", 2, server.controlInbound(link.ActionRestart))
 	server.handle("GET /api/inbounds/{id}/log", 2, server.getInboundLog)
+	server.handle("DELETE /api/inbounds/{id}/log", 2, server.clearInboundLog)
 	server.handle("GET /api/inbounds/{id}/config", 2, server.exportInbound)
 	server.handle("GET /api/settings", 1, server.getSettings)
 	server.handle("GET /api/time", 1, server.getTime)
@@ -489,6 +491,15 @@ func (server *Server) getOutboundLog(request *http.Request, _ session) (any, err
 	return map[string]any{"lines": server.manager.Log(request.PathValue("id"))}, nil
 }
 
+func (server *Server) clearOutboundLog(request *http.Request, current session) (any, error) {
+	id := request.PathValue("id")
+	if err := server.manager.ClearLog(id); err != nil {
+		return nil, fail(http.StatusNotFound, "%v", err)
+	}
+	server.options.Logf("outbound '%v': log cleared by '%v'", id, current.user.Name)
+	return map[string]bool{"ok": true}, nil
+}
+
 func (server *Server) importAmnezia(request *http.Request, _ session) (any, error) {
 	body := importRequest{}
 	if err := decode(request, &body); err != nil {
@@ -708,6 +719,15 @@ func (server *Server) controlInbound(command string) action {
 
 func (server *Server) getInboundLog(request *http.Request, _ session) (any, error) {
 	return map[string]any{"lines": server.manager.InboundLog(request.PathValue("id"))}, nil
+}
+
+func (server *Server) clearInboundLog(request *http.Request, current session) (any, error) {
+	id := request.PathValue("id")
+	if err := server.manager.ClearInboundLog(id); err != nil {
+		return nil, fail(http.StatusNotFound, "%v", err)
+	}
+	server.options.Logf("inbound '%v': log cleared by '%v'", id, current.user.Name)
+	return map[string]bool{"ok": true}, nil
 }
 
 func (server *Server) exportInbound(request *http.Request, _ session) (any, error) {

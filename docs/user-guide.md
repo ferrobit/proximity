@@ -365,7 +365,12 @@ The live log of an outbound (last 300 lines, 3000 with *Verbose*; see
 routes, check results, starts and stops. It is saved in `logs/` of the settings folder and
 survives container restarts. It refreshes every 1.5 s; **Follow new lines** keeps it scrolled to
 the bottom, **Copy** copies the whole log, **Download** saves it as
-`outbound-<ID>-<date>-<time>.log` (`inbound-…` for inbounds, time in UTC).
+`outbound-<ID>-<date>-<time>.log` (`inbound-…` for inbounds, time in UTC), **Clear** deletes
+all its lines, also from `logs/`, after a confirmation (Administrator and Operator).
+
+By default **Start** and **Restart** empty the log too, so it shows only the new start; switch
+this off in [Settings](#miscellaneous) to keep the history. Automatic reconnections, the restart
+of the router and changed settings never clear a log.
 
 Lines are highlighted (the same in the inbound log):
 
@@ -625,12 +630,13 @@ The state, the last result and **Check now** are shown at the top of the section
 UDP port 123 to the NTP servers must be open. When Proximity captures the host traffic, its
 own NTP requests bypass the capture.
 
-**Event log** — how many lines the log of every outbound and inbound keeps:
+**Event log** — how many lines the log of every outbound and inbound keeps, and when it is cleared:
 
 | Field | Meaning |
 |---|---|
 | Lines to keep in normal mode | Default 300, 10…100000. For connections with *Verbose* off |
 | Lines to keep in Verbose mode | Default 3000, 10…100000. For connections with *Verbose* on |
+| Clear the log when a connection is started or restarted | On by default. **Start** and **Restart** of an outbound or inbound empty its log first. Automatic reconnections, the restart of the router and changed settings keep the log |
 
 The limits apply at once to all logs, also of stopped connections: older lines are removed,
 connections are not restarted. The log files in `logs/` are rewritten on the next line.

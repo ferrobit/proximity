@@ -150,12 +150,14 @@ func (manager *Manager) ControlInbound(id string, action string) error {
 		current.close()
 		delete(manager.inbounds, inbound.Port)
 	}
+	_, running := manager.inbounds[inbound.Port]
 	if action == ActionStop {
 		manager.journal.set(key, ServiceRecord{State: StateStopped, Message: messageStopped,
 			Since: time.Now().Unix()})
 		manager.book(key).add(stamp("%v", messageStopped))
-	} else {
-		manager.journal.set(key, ServiceRecord{State: intentRunning, Since: time.Now().Unix()})
+	} else if manager.journal.set(key, ServiceRecord{State: intentRunning,
+		Since: time.Now().Unix()}); !running && manager.snapshot.Settings.ClearLogOnRestart {
+		manager.book(key).clear()
 	}
 	manager.applyInbounds()
 	return nil
@@ -270,6 +272,18 @@ func (manager *Manager) InboundLog(id string) []string {
 		}
 	}
 	return []string{}
+}
+
+func (manager *Manager) ClearInboundLog(id string) error {
+	manager.mutex.Lock()
+	defer manager.mutex.Unlock()
+	for _, inbound := range manager.snapshot.Inbounds {
+		if inbound.ID == id {
+			manager.book(inboundKey(inbound.Port)).clear()
+			return nil
+		}
+	}
+	return fmt.Errorf("inbound '%v' does not exist", id)
 }
 
 func (manager *Manager) TraceInbound(id string, lines []string) {

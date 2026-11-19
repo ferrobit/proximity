@@ -20,9 +20,9 @@
 </p>
 
 <p align="center">
-  <img alt="Tests" src="https://img.shields.io/badge/tests-146%20passing-brightgreen">
-  <img alt="Coverage" src="https://img.shields.io/badge/coverage-94.5%25-brightgreen"><br>
-  <sub><b>146</b> Go tests, <b>94.5%</b> statement coverage, 121 end-to-end checks on
+  <img alt="Tests" src="https://img.shields.io/badge/tests-149%20passing-brightgreen">
+  <img alt="Coverage" src="https://img.shields.io/badge/coverage-94.6%25-brightgreen"><br>
+  <sub><b>149</b> Go tests, <b>94.6%</b> statement coverage, 142 end-to-end checks on
   <a href="docs/development.md#test-stands">ready stands</a></sub>
 </p>
 
@@ -99,7 +99,7 @@ port **8899**.
 |---|---|
 | ![Dashboard](docs/images/dashboard.png) **Dashboard** — summary cards, live throughput and connections charts | ![Dark theme](docs/images/connection-map-dark.png) **Dark theme** |
 | ![Outbounds](docs/images/outbounds.png) **Outbounds** — every exit with its state, latency and connection details | ![Routes](docs/images/routes.png) **Routes** — ordered rules with comments, overlap warnings and VPN-provided routes |
-| ![Connection map popup](docs/images/connection-map-popover.png) **Connection map** — details, on/off and start/stop of any item; click to edit | ![Connection log](docs/images/outbound-log.png) **Connection log** — live, auto-scrolling log of a tunnel |
+| ![Connection map popup](docs/images/connection-map-popover.png) **Connection map** — details, on/off and start/stop of any item; click to edit | ![Connection log](docs/images/outbound-log.png) **Connection log** — live, auto-scrolling log of a tunnel; copy, download or clear it |
 | ![OpenVPN outbound](docs/images/outbound-openvpn.png) **OpenVPN outbound** — upload or edit `.ovpn`, credentials, TOTP | ![Client configuration](docs/images/inbound-export.png) **Client configuration** — preview, copy or download per user |
 | ![Inbounds](docs/images/inbounds.png) **Inbounds** — SOCKS5 and OpenVPN servers with users, state and traffic | ![Fallbacks](docs/images/fallbacks.png) **Fallbacks** — proxy groups in priority order, at the bottom of the Routes page |
 | ![Route editor](docs/images/route-dialog.png) **Route editor** — syntax highlighting, load / save / sort, normalized preview | ![Settings](docs/images/settings.png) **Settings** — router service, router, users, backup and restore |
@@ -333,19 +333,20 @@ repository itself is not changed. Component versions are Docker build arguments 
 
 ## Project status
 
-Version **1.2.0**. 146 Go tests pass, total statement coverage 94.5% (81.4–99.1% per
+Version **1.2.0**. 149 Go tests pass, total statement coverage 94.6% (81.4–99.1% per
 package). Transparent capture has been verified in isolated network namespaces and in a
 real Docker image: DIRECT, REJECT, domain → OpenVPN / AmneziaWG, LAN and inbound
 connections untouched, `rp_filter=1`, container stop and kill. Inbounds have been verified
 with real mihomo 1.19.34 and OpenVPN 2.6 in network namespaces: SOCKS5 authentication and
 TLS, an OpenVPN client with password + TOTP (appended and `static-challenge`), anonymous
 clients, token renegotiation, session kill on user change, traffic through the router,
-DNS hijack, traffic counters. Six ready stands run 121 end-to-end checks with the real
+DNS hijack, traffic counters. Seven ready stands run 142 end-to-end checks with the real
 image (`make stand-security`, `stand-tunnel`, `stand-reload`, `stand-config`,
-`stand-capture`, `stand-dns`): one-time codes, certificates, tokens, received routes, a damaged
+`stand-capture`, `stand-dns`, `stand-logs`): one-time codes, certificates, tokens, received routes, a damaged
 configuration, the reload of an open page, TCP and ping of a host with transparent capture,
 an AmneziaWG tunnel with obfuscation and received routes, the DNS servers and DNS exits of
-outbounds (which server gets the query and from which address) and the names of the settings. The web UI, including the connection map, has been checked in
+outbounds (which server gets the query and from which address) and the names of the settings,
+clearing the logs by the button and on Start / Restart. The web UI, including the connection map, has been checked in
 Chrome in the light and dark themes with a live OpenVPN tunnel, SOCKS5 and HTTP proxies and
 both inbound types.
 

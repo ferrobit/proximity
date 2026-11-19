@@ -242,15 +242,29 @@ func (manager *Manager) Control(id string, action string) error {
 		current.close()
 		delete(manager.runners, outbound.Slot)
 	}
+	_, running := manager.runners[outbound.Slot]
 	if action == ActionStop {
 		manager.journal.set(key, ServiceRecord{State: StateStopped, Message: messageStopped,
 			Since: time.Now().Unix()})
 		manager.book(key).add(stamp("%v", messageStopped))
-	} else {
-		manager.journal.set(key, ServiceRecord{State: intentRunning, Since: time.Now().Unix()})
+	} else if manager.journal.set(key, ServiceRecord{State: intentRunning,
+		Since: time.Now().Unix()}); !running && manager.settings.ClearLogOnRestart {
+		manager.book(key).clear()
 	}
 	manager.applyOutbounds()
 	return nil
+}
+
+func (manager *Manager) ClearLog(id string) error {
+	manager.mutex.Lock()
+	defer manager.mutex.Unlock()
+	for _, outbound := range manager.outbounds {
+		if outbound.ID == id {
+			manager.book(outboundKey(outbound.Slot)).clear()
+			return nil
+		}
+	}
+	return fmt.Errorf("outbound '%v' does not exist", id)
 }
 
 func (manager *Manager) Status() map[string]Status {

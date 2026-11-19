@@ -18,7 +18,7 @@ SYNC = rsync -a --delete --exclude /.git --exclude /bin --exclude /docs \
 	--exclude /web/node_modules --exclude /web/dist ./ $(SOURCE)/
 
 .PHONY: all sync deps web build vet test cover coverage-docs dev image up down restart logs screenshots screenshot clean
-.PHONY: stand-security stand-tunnel stand-reload stand-config stand-capture stand-dns
+.PHONY: stand-security stand-tunnel stand-reload stand-config stand-capture stand-dns stand-logs
 
 all: web build
 
@@ -117,6 +117,10 @@ stand-capture:
 stand-dns:
 	@mkdir -p $(ROOT)/tmp
 	bash scripts/stands/dns/check.sh
+
+stand-logs:
+	@mkdir -p $(ROOT)/tmp
+	bash scripts/stands/logs/check.sh
 
 clean:
 	rm -rf $(ROOT)

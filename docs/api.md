@@ -80,6 +80,7 @@ A request below the required level gets `401` (not signed in) or `403` (role too
 | `POST /api/outbounds/{id}/stop` | 2 | Stop an outbound; it stays stopped after restarts |
 | `POST /api/outbounds/{id}/restart` | 2 | Reconnect; starts a stopped or failed outbound |
 | `GET /api/outbounds/{id}/log` | 2 | Connection log (last `log_lines` lines, `verbose_log_lines` when `verbose` is on; kept across restarts) |
+| `DELETE /api/outbounds/{id}/log` | 2 | Clears the connection log (memory and file); 404 for an unknown outbound |
 | `POST /api/import/amneziawg` | 2 | `{text: "vpn://…"}` → `{config: "<.conf text>"}` |
 | `GET /api/interfaces` | 1 | Host network interfaces (for HOST outbounds) |
 | `GET /api/targets` | 1 | Route targets: `[{id, kind, enabled, state}]`. `kind` is `builtin`, `outbound` or `fallback`; `state` is the outbound state (`disabled` when it is off), `up` / `down` for a fallback (`up` when one of its outbounds is up), `up` for `DIRECT` and `REJECT` |
@@ -155,6 +156,7 @@ stopped by a user, by the router stop, or not started because `autostart` is off
 | `POST /api/inbounds/{id}/stop` | 2 | Stop it; it stays stopped after restarts |
 | `POST /api/inbounds/{id}/restart` | 2 | Restart; starts a stopped or failed inbound |
 | `GET /api/inbounds/{id}/log` | 2 | `{lines}` — last `log_lines` log lines (`verbose_log_lines` when `verbose` is on), kept across restarts |
+| `DELETE /api/inbounds/{id}/log` | 2 | Clears the inbound log (memory and file); 404 for an unknown inbound |
 | `GET /api/inbounds/{id}/config?user=&embed=&host=` | 2 | OpenVPN client configuration → `{config, file}`; `file` is `<ID>-<username>.conf`. Empty `user` = anonymous, `embed=true` writes the credentials into the file, `host` is used when the inbound has no public address |
 | `POST /api/inbounds/generate` | 2 | `{kind, ca_certificate, ca_key}` → new key material. `kind`: `all`, `pki` (CA + server + client), `server`, `client` (both signed by the given CA), `tls_crypt`, `otp_key`, `tls` (self-signed certificate for SOCKS5) |
 
@@ -225,7 +227,7 @@ Settings object:
   "connectivity_checks": true, "probe_target": "1.1.1.1:443",
   "check_interval": 30, "capture": true, "ping_filter": true,
   "unreachable_limit": 100, "unreachable_lifetime": 86400, "autostart": true,
-  "log_lines": 300, "verbose_log_lines": 3000,
+  "log_lines": 300, "verbose_log_lines": 3000, "clear_log_on_restart": true,
   "time_manual": false,
   "time_servers": ["time.cloudflare.com", "time.google.com", "pool.ntp.org"],
   "time_tolerance": 1, "time_interval": 3600, "time_wait": 60,
@@ -247,6 +249,10 @@ restart. Configurations and backups older than version 5 get `true`.
 
 `log_lines` and `verbose_log_lines` (10…100000) — lines kept in the log of an outbound or
 inbound with `verbose` off and on; omitted or zero values mean 300 and 3000.
+
+`clear_log_on_restart` (default `true`) — `start` and `restart` of an outbound or inbound
+empty its log before the new start; a `start` of a running service changes nothing.
+Configurations and backups older than version 11 get `true`.
 
 `time_manual` — `false` (default): NTP servers, tolerance and interval are the defaults
 shown above; `true`: `time_servers` (1…10 `host` or `host:port`), `time_tolerance`
