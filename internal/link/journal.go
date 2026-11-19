@@ -33,8 +33,10 @@ type logBook struct {
 	mutex   sync.Mutex
 	path    string
 	lines   []string
+	pending []string
 	written int
 	limit   int
+	timer   *time.Timer
 }
 
 const (
@@ -52,6 +54,8 @@ const inboundPrefix = "inbound-"
 const messageStopped = "stopped by user"
 const messageAutostart = "not started automatically: autostart is off"
 const messageInactive = "router is stopped"
+const flushDelay = time.Second
+const flushLines = 256
 
 func outboundKey(slot int) string {
 	return outboundPrefix + strconv.Itoa(slot)
@@ -149,8 +153,43 @@ func (book *logBook) add(line string) {
 	if book.path == "" {
 		return
 	} else if book.written >= 2*book.limit {
+		book.drop()
 		book.written = len(book.lines)
 		_ = config.WriteFile(book.path, []byte(strings.Join(book.lines, "\n")+"\n"))
+		return
+	}
+	book.pending = append(book.pending, line)
+	if book.written++; len(book.pending) >= flushLines {
+		book.flush()
+	} else if book.timer == nil {
+		book.timer = time.AfterFunc(flushDelay, book.sync)
+	}
+}
+
+func (book *logBook) clear() {
+	book.mutex.Lock()
+	defer book.mutex.Unlock()
+	if book.drop(); book.path != "" {
+		_ = config.WriteFile(book.path, []byte{})
+	}
+	book.lines, book.written = []string{}, 0
+}
+
+func (book *logBook) sync() {
+	book.mutex.Lock()
+	defer book.mutex.Unlock()
+	book.flush()
+}
+
+func (book *logBook) discard() {
+	book.mutex.Lock()
+	defer book.mutex.Unlock()
+	book.drop()
+}
+
+func (book *logBook) flush() {
+	pending := book.pending
+	if book.drop(); len(pending) == 0 {
 		return
 	}
 	file, err := os.OpenFile(book.path, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o600)
@@ -158,16 +197,13 @@ func (book *logBook) add(line string) {
 		return
 	}
 	defer file.Close()
-	if _, err = file.WriteString(line + "\n"); err == nil {
-		book.written++
-	}
+	_, _ = file.WriteString(strings.Join(pending, "\n") + "\n")
 }
 
-func (book *logBook) clear() {
-	book.mutex.Lock()
-	defer book.mutex.Unlock()
-	if book.lines, book.written = []string{}, 0; book.path != "" {
-		_ = config.WriteFile(book.path, []byte{})
+func (book *logBook) drop() {
+	if book.pending = nil; book.timer != nil {
+		book.timer.Stop()
+		book.timer = nil
 	}
 }
 

@@ -41,12 +41,19 @@ type Sample struct {
 	Total       [2]int64            `json:"total"`
 	Connections int                 `json:"connections"`
 	Outbounds   map[string][2]int64 `json:"outbounds"`
+	Hits        map[string]int64    `json:"hits,omitempty"`
+}
+
+type Hit struct {
+	Count int64 `json:"count"`
+	Last  int64 `json:"last"`
 }
 
 type trackerState struct {
 	Traffic  map[string]Traffic `json:"traffic"`
 	Refused  []Refused          `json:"refused"`
 	Inbounds map[string]Traffic `json:"inbounds,omitempty"`
+	Hits     map[string]Hit     `json:"hits,omitempty"`
 }
 
 type Tracker struct {
@@ -71,6 +78,10 @@ type Tracker struct {
 	entered   map[string]Connection
 	gauges    map[string][2]int64
 	visited   time.Time
+	hits      map[string]Hit
+	matched   []int64
+	session   int
+	struck    map[string]int64
 }
 
 const defaultRefused = 100
@@ -99,7 +110,8 @@ func NewTracker(path string) *Tracker {
 		refused: map[string]*Refused{}, collected: map[string]bool{}, started: map[string]int{},
 		polled: time.Now(), bucket: map[string][2]int64{}, sampled: time.Now(),
 		limit: defaultRefused, lifetime: defaultLifetime, inbounds: map[string]Traffic{},
-		listening: map[string]bool{}, entered: map[string]Connection{}, visited: time.Now()}
+		listening: map[string]bool{}, entered: map[string]Connection{}, visited: time.Now(),
+		hits: map[string]Hit{}, struck: map[string]int64{}}
 	state := trackerState{}
 	if data, err := os.ReadFile(path); err == nil && json.Unmarshal(data, &state) == nil {
 		for id, traffic := range state.Traffic {
@@ -111,6 +123,7 @@ func NewTracker(path string) *Tracker {
 		for _, item := range state.Refused {
 			result.refused[item.key()] = &item
 		}
+		maps.Copy(result.hits, state.Hits)
 	}
 	return result
 }
@@ -388,6 +401,66 @@ func (tracker *Tracker) Observe(line string) {
 	tracker.prune(time.Now())
 }
 
+// NOTE: mihomo counts hits per rule since its last reload or start (session). Origins map the
+// rule index to its route; a counter below the previous one means mihomo started counting again.
+func (tracker *Tracker) UpdateHits(session int, origins []string, rules []Rule) {
+	tracker.mutex.Lock()
+	defer tracker.mutex.Unlock()
+	if session != tracker.session {
+		tracker.matched, tracker.session = nil, session
+	}
+	if len(rules) != len(origins) {
+		tracker.matched = nil
+		return
+	}
+	matched := make([]int64, len(rules))
+	for index, rule := range rules {
+		count, delta := rule.Extra.HitCount, rule.Extra.HitCount
+		if matched[index] = count; len(tracker.matched) == len(rules) &&
+			count >= tracker.matched[index] {
+			delta = count - tracker.matched[index]
+		}
+		if delta <= 0 {
+			continue
+		}
+		origin := origins[index]
+		hit := tracker.hits[origin]
+		hit.Count += delta
+		if last := rule.Extra.HitAt.Unix(); last > hit.Last {
+			hit.Last = last
+		}
+		tracker.hits[origin], tracker.dirty = hit, true
+		tracker.struck[origin] += delta
+	}
+	tracker.matched = matched
+}
+
+func (tracker *Tracker) Hits() map[string]Hit {
+	tracker.mutex.Lock()
+	defer tracker.mutex.Unlock()
+	return maps.Clone(tracker.hits)
+}
+
+func (tracker *Tracker) KeepHits(known map[string]bool) {
+	tracker.mutex.Lock()
+	defer tracker.mutex.Unlock()
+	for origin := range tracker.hits {
+		if !known[origin] {
+			delete(tracker.hits, origin)
+			tracker.dirty = true
+		}
+	}
+}
+
+func (tracker *Tracker) ClearHits() {
+	tracker.mutex.Lock()
+	defer tracker.mutex.Unlock()
+	tracker.hits, tracker.dirty = map[string]Hit{}, true
+	for index := range tracker.history {
+		tracker.history[index].Hits = nil
+	}
+}
+
 func (tracker *Tracker) Snapshot() (map[string]Traffic, []Refused) {
 	tracker.mutex.Lock()
 	defer tracker.mutex.Unlock()
@@ -433,7 +506,7 @@ func (tracker *Tracker) Save() error {
 		return nil
 	}
 	state := trackerState{Traffic: tracker.traffic, Refused: []Refused{},
-		Inbounds: tracker.inbounds}
+		Inbounds: tracker.inbounds, Hits: tracker.hits}
 	for _, item := range tracker.refused {
 		state.Refused = append(state.Refused, *item)
 	}
@@ -479,6 +552,9 @@ func (tracker *Tracker) sample(now time.Time, seconds float64) {
 		}
 	}
 	result.Total = rateOf(tracker.bucket[totalKey], seconds)
+	if len(tracker.struck) != 0 {
+		result.Hits, tracker.struck = tracker.struck, map[string]int64{}
+	}
 	if tracker.history = append(tracker.history, result); len(tracker.history) > maxHistory {
 		tracker.history = tracker.history[len(tracker.history)-maxHistory:]
 	}

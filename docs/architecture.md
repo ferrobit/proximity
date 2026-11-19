@@ -446,6 +446,14 @@ base32 TOTP key.
   destination, outbound, matched rule, count and first/last time. The list is bounded by
   *Settings → Unreachable routes*: entries older than the maximum lifetime (by the last
   occurrence) are removed, then the oldest ones above the maximum count.
+- Route hits are read every 2 s from mihomo's `GET /rules`: every rule has `extra.hitCount`,
+  counted since the last reload or start of mihomo. The generator keeps, for every rule it
+  writes, the route that produced it (`router.Origins`: route key, `default`, or
+  `inbound:<id>`), so the counts of all rules of one route are summed. The tracker keeps the
+  previous count per rule and adds the difference; a new session of mihomo (reload or
+  start, `Mihomo.Rules`) or a smaller count starts from zero again, so a reload neither
+  loses nor repeats hits. Totals are stored in `state.json`, the 5 s samples of the history
+  carry the matches of their step.
 - Inbound traffic is read every 2 s. OpenVPN: `rx_bytes` / `tx_bytes` of the server device.
   SOCKS5: byte counters of two `iptables` chains (`PROXIMITY-STAT-IN` from `INPUT` by
   destination port, `PROXIMITY-STAT-OUT` from `OUTPUT` by source port), because short
@@ -461,10 +469,10 @@ All persistent data lives in the settings folder mounted as `/config`:
 | `proximity.json` | on every change (atomic replace) | users, outbounds, inbounds, fallbacks, routes, settings, token secret |
 | `proximity.invalid-<time>.json` | at a start with a damaged `proximity.json` | the file as it was; the valid part is written back to `proximity.json` |
 | `proximity.problems.json` | with the copy above; removed by `DELETE /api/problems` | what was dropped and why (`GET /api/problems`) |
-| `state.json` | every 30 s and on shutdown | traffic totals of outbounds and inbounds, unreachable routes |
+| `state.json` | every 30 s and on shutdown | traffic totals of outbounds and inbounds, unreachable routes, route hit counters |
 | `router.json` | on start, stop and restart of the router, and at startup | requested router state (`running`) |
 | `services.json` | on every service state change | state of tunnels and inbounds: `running`, `stopped`, `failed` with message |
-| `logs/<outbound\|inbound>-<N>.log` | on every log line (trimmed to *Lines to keep*: 300 by default, 3000 for a verbose service) | logs of outbounds (by slot) and inbounds (by port) |
+| `logs/<outbound\|inbound>-<N>.log` | buffered: once a second, at 256 waiting lines and on shutdown (trimmed to *Lines to keep*: 300 by default, 3000 for a verbose service) | logs of outbounds (by slot) and inbounds (by port) |
 | `mihomo/config.yaml` | on every synchronization | generated mihomo configuration |
 | `mihomo/geoip.metadb`, `geosite.dat` | first start | GeoIP / GeoSite databases |
 

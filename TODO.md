@@ -86,12 +86,32 @@ Found by a review of the whole project (code, tests, build, security), not by a 
     self-signed certificate (the SOCKS5 inbound already generates one) and `Secure` cookies
     in that mode.
 
-- [ ] **Verbose logs write the file line by line**
+- [x] **Verbose logs write the file line by line**
   - `logBook.add` opens, writes and closes the file for every line: 3.1 µs per line
     against 0.04 µs in memory (measured, 78 times slower), under the lock of the book. A
     Verbose OpenVPN tunnel writes a line per packet. Hypothesis: this slows the reading of
     the OpenVPN output and the tunnel itself; measure iperf with Verbose on and off. Fix: a
     buffered writer flushed every second and on stop.
+  - Done: lines wait in memory and go to the file once a second, at 256 waiting lines and
+    on shutdown (`BenchmarkLogBook_Add`: 3.27 → 0.59 µs per line, 5.5 times faster, the
+    rest is the time stamp). Still open: the iperf measurement of the hypothesis.
+
+- [x] **Route hit counters and their chart**
+  - Done: mihomo `GET /rules` (`extra.hitCount`) read every 2 s, summed per route by the
+    origins of the generated rules; totals in `state.json`, matches per 5 s sample in
+    `/api/history`; **Hits** column and **Route hits** chart on the Routes page; reset by
+    `DELETE /api/routes/hits`. Stand `hits` (13 checks).
+
+- [ ] **Hit history is lost on restart**
+  - The chart keeps samples in memory only, like the throughput chart: after a restart of
+    Proximity it starts empty while the totals stay. Store the last hour of samples in
+    `state.json` (both charts).
+
+- [ ] **Hits of rule sets and of one rule shared by routes**
+  - A route that expands to many rules is summed correctly, but when two routes produce
+    the same rule, mihomo counts only the first (the second never matches): the editor
+    could show such routes as "never hit" with the reason. Also a rule list that does not
+    match the origins (length differs) drops counts until the next reload.
 
 - [ ] **UI is sent without compression**
   - One script of 1.95 MB, no gzip: 0.6 MB compressed (3.3 times less). Ant Design is

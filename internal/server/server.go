@@ -50,6 +50,7 @@ type Server struct {
 	mutex     sync.Mutex
 	warnings  []string
 	failure   string
+	origins   []string
 	captured  bool
 	running   bool
 	restart   bool
@@ -312,6 +313,7 @@ func (server *Server) loop(ctx context.Context) {
 			}
 			if err == nil && time.Since(measured) >= measureInterval {
 				server.tracker.UpdateInbounds(connections, server.manager.InboundCounters())
+				server.countHits()
 				measured = time.Now()
 			}
 		case <-save.C:
@@ -319,6 +321,15 @@ func (server *Server) loop(ctx context.Context) {
 				server.options.Logf("%v", err)
 			}
 		}
+	}
+}
+
+func (server *Server) countHits() {
+	server.mutex.Lock()
+	origins := server.origins
+	server.mutex.Unlock()
+	if session, rules, err := server.mihomo.Rules(); err == nil {
+		server.tracker.UpdateHits(session, origins, rules)
 	}
 }
 
@@ -475,16 +486,27 @@ func (server *Server) synchronize() {
 			generated.Inbounds[index].Enabled = false
 		}
 	}
-	data, warnings, err := router.Generate(generated, links, router.Options{
-		Socket: server.mihomo.Socket(), ProxyBind: server.options.ProxyBind,
-		Capture: server.options.HostNetwork && snapshot.Settings.Capture})
+	options := router.Options{Socket: server.mihomo.Socket(), ProxyBind: server.options.ProxyBind,
+		Capture: server.options.HostNetwork && snapshot.Settings.Capture}
+	data, warnings, err := router.Generate(generated, links, options)
 	if err == nil && running {
 		err = server.mihomo.Apply(data)
 	}
+	origins := router.Origins(generated, links, options)
+	known := map[string]bool{router.OriginDefault: true}
+	for _, route := range snapshot.Routes {
+		known[route.Key] = true
+	}
+	for _, inbound := range snapshot.Inbounds {
+		known[router.InboundOrigin(inbound.ID)] = true
+	}
+	server.tracker.KeepHits(known)
 	server.capture()
 	server.mutex.Lock()
 	defer server.mutex.Unlock()
-	if server.warnings, server.failure = warnings, ""; err != nil {
+	if server.warnings, server.failure = warnings, ""; err == nil {
+		server.origins = origins
+	} else {
 		server.failure = err.Error()
 		server.options.Logf("failed to apply router configuration: %v", err)
 	}

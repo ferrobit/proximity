@@ -494,12 +494,43 @@ func TestLogBook_Clear(t *testing.T) {
 	book.add("after")
 	book.add("again")
 	require.Equal(t, []string{"after", "again"}, book.snapshot())
+	book.sync()
 	require.Equal(t, []string{"after", "again"}, openLogBook(path, maxLogLines).snapshot())
 	{
 		memory := openLogBook("", maxLogLines)
 		memory.add("only in memory")
 		memory.clear()
 		require.Empty(t, memory.snapshot())
+	}
+}
+
+func TestLogBook_Flush(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "service.log")
+	book := openLogBook(path, maxVerboseLines)
+	book.add("first")
+	_, err := os.Stat(path)
+	require.ErrorIs(t, err, os.ErrNotExist)
+	require.Eventually(t, func() bool {
+		data, err := os.ReadFile(path)
+		return err == nil && string(data) == "first\n"
+	}, 3*flushDelay, 50*time.Millisecond)
+	for index := range flushLines {
+		book.add(fmt.Sprintf("line %v", index))
+	}
+	data, err := os.ReadFile(path)
+	require.NoError(t, err)
+	require.Equal(t, flushLines+1, strings.Count(string(data), "\n"))
+	book.add("dropped")
+	book.discard()
+	book.sync()
+	reopened := openLogBook(path, maxVerboseLines)
+	require.Len(t, reopened.snapshot(), flushLines+1)
+	require.Equal(t, "line 255", reopened.snapshot()[flushLines])
+	{
+		blocked := openLogBook(filepath.Join(path, "sub.log"), maxLogLines)
+		blocked.add("not written")
+		blocked.sync()
+		require.Equal(t, []string{"not written"}, blocked.snapshot())
 	}
 }
 
@@ -515,6 +546,7 @@ func TestLogBook_Rotation(t *testing.T) {
 	data, err := os.ReadFile(path)
 	require.NoError(t, err)
 	require.LessOrEqual(t, strings.Count(string(data), "\n"), 2*maxLogLines)
+	book.sync()
 	reopened := openLogBook(path, maxLogLines)
 	require.Equal(t, book.snapshot(), reopened.snapshot())
 	require.Len(t, openLogBook(path, 10).snapshot(), 10)
@@ -2144,4 +2176,11 @@ func TestUsesTCP_Directives(t *testing.T) {
 	require.True(t, usesTCP("client\n  --proto tcp4\n"))
 	require.True(t, usesTCP("client\nremote vpn.example.com 1194 udp\nremote b 443 tcp\n"))
 	require.True(t, usesTCP("<connection>\nremote vpn.example.com 443 tcp-client\n</connection>\n"))
+}
+
+func BenchmarkLogBook_Add(b *testing.B) {
+	book := openLogBook(filepath.Join(b.TempDir(), "service.log"), maxVerboseLines)
+	for index := range b.N {
+		book.add(stamp("line %v", index))
+	}
 }

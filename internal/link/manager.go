@@ -339,6 +339,9 @@ func (manager *Manager) Close() {
 		delete(manager.runners, slot)
 	}
 	manager.capture.remove(manager.options.Tools)
+	for _, book := range manager.books {
+		book.sync()
+	}
 }
 
 func (manager *Manager) applyOutbounds() {
@@ -421,6 +424,7 @@ func (manager *Manager) forget(prefix string, exists func(slot int) bool, keys m
 	for key := range manager.books {
 		if slot, err := strconv.Atoi(strings.TrimPrefix(key, prefix)); err == nil &&
 			strings.HasPrefix(key, prefix) && !exists(slot) {
+			manager.books[key].discard()
 			delete(manager.books, key)
 		}
 	}

@@ -93,6 +93,7 @@ type buildState struct {
 	warnings []string
 	entries  []dnsEntry
 	cache    map[string][]dnsUpstream
+	origins  []string
 }
 
 const secureSuffix = "~https"
@@ -102,29 +103,12 @@ const filePort = 21
 const healthTimeout = 5000
 const listenAll = "0.0.0.0"
 const listenDual = "::"
+const OriginDefault = "default"
+const originInbound = "inbound:"
 
 func Generate(snapshot config.Config, links map[string]link.Status, options Options) ([]byte,
 	[]string, error) {
-	state := &buildState{config: snapshot, links: links, variants: map[string][]rules.Variant{},
-		active:   map[string]bool{config.TargetDirect: true, config.TargetReject: true},
-		warnings: []string{}, cache: map[string][]dnsUpstream{}}
-	settings := snapshot.Settings
-	state.document = document{MixedPort: settings.MixedPort, AllowLan: true,
-		BindAddress: settings.BindAddress, Mode: "rule", LogLevel: settings.LogLevel,
-		IPv6: settings.IPv6, Controller: options.Socket, FindProcess: "off",
-		Profile: map[string]bool{"store-selected": false}, Proxies: []map[string]any{},
-		Groups: []proxyGroup{}, Rules: []string{}}
-	if options.ProxyBind != "" {
-		state.document.BindAddress = options.ProxyBind
-	}
-	if options.Capture {
-		state.document.RoutingMark = link.CaptureMark
-		state.attachTun()
-	}
-	state.buildProxies()
-	state.buildGroups()
-	state.buildInbounds()
-	state.buildRules()
+	state := build(snapshot, links, options)
 	buffer := bytes.Buffer{}
 	encoder := json.NewEncoder(&buffer)
 	encoder.SetEscapeHTML(false)
@@ -133,6 +117,16 @@ func Generate(snapshot config.Config, links map[string]link.Status, options Opti
 		return nil, nil, fmt.Errorf("failed to encode router configuration: %w", err)
 	}
 	return buffer.Bytes(), state.warnings, nil
+}
+
+// NOTE: One origin per rule of the generated configuration, in the same order: the key of the
+// route, the inbound or the default target that produced the rule.
+func Origins(snapshot config.Config, links map[string]link.Status, options Options) []string {
+	return build(snapshot, links, options).origins
+}
+
+func InboundOrigin(id string) string {
+	return originInbound + id
 }
 
 func Owner(name string) string {
@@ -206,6 +200,30 @@ func Ping(snapshot config.Config, links map[string]link.Status) []link.PingRule 
 	return append(result, link.PingRule{Allow: state.direct(target), Table: state.table(target)})
 }
 
+func build(snapshot config.Config, links map[string]link.Status, options Options) *buildState {
+	state := &buildState{config: snapshot, links: links, variants: map[string][]rules.Variant{},
+		active:   map[string]bool{config.TargetDirect: true, config.TargetReject: true},
+		warnings: []string{}, cache: map[string][]dnsUpstream{}, origins: []string{}}
+	settings := snapshot.Settings
+	state.document = document{MixedPort: settings.MixedPort, AllowLan: true,
+		BindAddress: settings.BindAddress, Mode: "rule", LogLevel: settings.LogLevel,
+		IPv6: settings.IPv6, Controller: options.Socket, FindProcess: "off",
+		Profile: map[string]bool{"store-selected": false}, Proxies: []map[string]any{},
+		Groups: []proxyGroup{}, Rules: []string{}}
+	if options.ProxyBind != "" {
+		state.document.BindAddress = options.ProxyBind
+	}
+	if options.Capture {
+		state.document.RoutingMark = link.CaptureMark
+		state.attachTun()
+	}
+	state.buildProxies()
+	state.buildGroups()
+	state.buildInbounds()
+	state.buildRules()
+	return state
+}
+
 func setCredentials(proxy map[string]any, username string, password string, secure bool,
 	skip bool) {
 	if username != "" {
@@ -221,6 +239,13 @@ func routeLabel(route config.Route, index int) string {
 		return "'" + route.ID + "'"
 	}
 	return fmt.Sprintf("#%v", index+1)
+}
+
+func (state *buildState) addRules(origin string, lines ...string) {
+	state.document.Rules = append(state.document.Rules, lines...)
+	for range lines {
+		state.origins = append(state.origins, origin)
+	}
 }
 
 func (state *buildState) warnf(format string, arguments ...any) {
@@ -256,10 +281,10 @@ func (state *buildState) buildInbounds() {
 			continue
 		}
 		for _, variant := range state.variants[target] {
-			state.document.Rules = append(state.document.Rules, fmt.Sprintf(
-				"AND,((%v),(DST-PORT,%v)),%v", match, variant.Port, variant.Target))
+			state.addRules(InboundOrigin(inbound.ID), fmt.Sprintf("AND,((%v),(DST-PORT,%v)),%v",
+				match, variant.Port, variant.Target))
 		}
-		state.document.Rules = append(state.document.Rules, match+","+target)
+		state.addRules(InboundOrigin(inbound.ID), match+","+target)
 	}
 }
 
@@ -451,8 +476,7 @@ func (state *buildState) buildRules() {
 		}
 		state.noteDomains(route.Target, parsed)
 		for _, rule := range parsed {
-			state.document.Rules = append(state.document.Rules,
-				rule.Lines(route.Target, state.variants[route.Target])...)
+			state.addRules(route.Key, rule.Lines(route.Target, state.variants[route.Target])...)
 			if strings.HasPrefix(rule.Directive, "PROCESS-") {
 				state.document.FindProcess = "strict"
 			}
@@ -463,6 +487,6 @@ func (state *buildState) buildRules() {
 		state.warnf("default target '%v' is disabled, using '%v'", target, config.TargetDirect)
 		target = config.TargetDirect
 	}
-	state.document.Rules = append(state.document.Rules, "MATCH,"+target)
+	state.addRules(OriginDefault, "MATCH,"+target)
 	state.buildDNS(target)
 }

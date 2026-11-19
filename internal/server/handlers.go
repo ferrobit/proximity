@@ -175,6 +175,7 @@ func (server *Server) register() {
 	server.handle("POST /api/routes", 2, server.addRoute)
 	server.handle("POST /api/routes/preview", 1, server.previewRoute)
 	server.handle("PUT /api/routes/default", 2, server.setDefaultTarget)
+	server.handle("DELETE /api/routes/hits", 2, server.clearHits)
 	server.handle("PUT /api/routes/{key}", 2, server.updateRoute)
 	server.handle("DELETE /api/routes/{key}", 2, server.removeRoute)
 	server.handle("POST /api/routes/{key}/move", 2, server.moveRoute)
@@ -561,7 +562,14 @@ func (server *Server) getRoutes(_ *http.Request, _ session) (any, error) {
 	problems, failure := server.problems()
 	return map[string]any{"routes": snapshot.Routes, "directives": rules.Directives,
 		"warnings": rules.Check(router.Items(snapshot)), "problems": problems,
-		"failure": failure, "default_target": snapshot.Settings.DefaultTarget}, nil
+		"failure": failure, "default_target": snapshot.Settings.DefaultTarget,
+		"hits": server.tracker.Hits()}, nil
+}
+
+func (server *Server) clearHits(_ *http.Request, current session) (any, error) {
+	server.tracker.ClearHits()
+	server.options.Logf("route hit counters cleared by '%v'", current.user.Name)
+	return nil, nil
 }
 
 func (server *Server) addRoute(request *http.Request, _ session) (any, error) {

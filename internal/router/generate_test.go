@@ -552,6 +552,30 @@ func TestItems_EnabledOnly(t *testing.T) {
 	}
 }
 
+func TestOrigins_Rules(t *testing.T) {
+	snapshot := makeSnapshot(t)
+	_, err := snapshot.AddInbound(config.Inbound{Type: config.TypeSocks5, Enabled: true,
+		Anonymous: true, Outbound: "HTTP 1"}, time.Unix(1700000000, 0))
+	require.NoError(t, err)
+	_, err = snapshot.AddRoute(config.Route{Directive: "DOMAIN", Target: "HTTP 1", Enabled: true,
+		Params: []string{"split.test"}})
+	require.NoError(t, err)
+	data, _, err := Generate(snapshot, nil, Options{})
+	require.NoError(t, err)
+	result := document{}
+	require.NoError(t, json.Unmarshal(data, &result))
+	origins := Origins(snapshot, nil, Options{})
+	require.Len(t, origins, len(result.Rules))
+	inbound, split := InboundOrigin("SOCKS5 1"), snapshot.Routes[len(snapshot.Routes)-1].Key
+	fallback := snapshot.Routes[2].Key
+	require.Equal(t, []string{inbound, inbound, inbound, snapshot.Routes[0].Key,
+		snapshot.Routes[1].Key, fallback, fallback, fallback, snapshot.Routes[3].Key, split, split,
+		split, OriginDefault}, origins)
+	require.Equal(t, "DOMAIN,split.test,HTTP 1", result.Rules[11])
+	require.True(t, strings.HasPrefix(result.Rules[12], "MATCH,"))
+	require.Equal(t, "inbound:SOCKS5 1", inbound)
+}
+
 func TestOwner_Variants(t *testing.T) {
 	require.Equal(t, "HTTP 1", Owner("HTTP 1"))
 	require.Equal(t, "HTTP 1", Owner("HTTP 1~https"))

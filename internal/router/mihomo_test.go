@@ -82,6 +82,11 @@ func runFake(arguments []string) int {
 		_, _ = writer.Write([]byte(`{"downloadTotal":300,"uploadTotal":200,"connections":[` +
 			`{"id":"c1","upload":5,"download":7,"chains":["A","G"]}]}`))
 	})
+	routes.HandleFunc("GET /rules", func(writer http.ResponseWriter, _ *http.Request) {
+		_, _ = writer.Write([]byte(`{"rules":[{"index":0,"type":"DomainSuffix",` +
+			`"payload":"example.com","proxy":"DIRECT","extra":{"hitCount":3,` +
+			`"hitAt":"2026-11-19T21:15:22Z"}},{"index":1,"type":"Match","proxy":"DIRECT"}]}`))
+	})
 	routes.HandleFunc("GET /logs", func(writer http.ResponseWriter, request *http.Request) {
 		_, _ = writer.Write([]byte(`{"type":"info","payload":"first"}` + "\n" +
 			`{"type":"warning","payload":"second"}` + "\n"))
@@ -144,6 +149,8 @@ func TestApply_Lifecycle(t *testing.T) {
 	require.False(t, mihomo.State().Running)
 	_, err = mihomo.Connections()
 	require.ErrorContains(t, err, "failed to get router connections")
+	_, _, err = mihomo.Rules()
+	require.ErrorContains(t, err, "failed to get router rules")
 	data := makeDocument(t, socket, "warning", 7899)
 	require.NoError(t, mihomo.Apply(data))
 	state := mihomo.State()
@@ -176,6 +183,17 @@ func TestApply_Lifecycle(t *testing.T) {
 		require.NoError(t, err)
 		require.Equal(t, Connections{Items: []Connection{{ID: "c1", Upload: 5, Download: 7,
 			Chains: []string{"A", "G"}}}, Upload: 200, Download: 300}, connections)
+	}
+	{
+		session, rules, err := mihomo.Rules()
+		require.NoError(t, err)
+		require.Equal(t, []Rule{{Index: 0, Type: "DomainSuffix", Payload: "example.com",
+			Proxy: "DIRECT", Extra: RuleExtra{HitCount: 3, HitAt: time.Date(2026, 11, 19, 21, 15,
+				22, 0, time.UTC)}}, {Index: 1, Type: "Match", Proxy: "DIRECT"}}, rules)
+		require.NoError(t, mihomo.Apply(makeDocument(t, socket, "warning", 7892)))
+		next, _, err := mihomo.Rules()
+		require.NoError(t, err)
+		require.Equal(t, session+1, next)
 	}
 	{
 		ctx, cancel := context.WithCancel(context.Background())

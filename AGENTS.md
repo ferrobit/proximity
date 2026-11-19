@@ -1,109 +1,97 @@
 # Notes for AI agents
 
-Short list of what already failed in this project and what to do instead, and how to
-save time. Add a line when a new command fails; keep it short.
+Terse on purpose. One line per trap. Add a line when something new fails.
 
-## Failed → use instead
-
-| Failed | Use instead |
-|---|---|
-| Writing `Makefile` with remote file tools: *protected file* | Edit `makefile.mk`; `Makefile` only includes it. A change of `Makefile` itself: give the user a Git patch (`git apply`) |
-| `rm`, `mv`, `chmod`, `git` on the user's machine: no shell there | Write the new file and give the user the one-line command; call a script through `bash file.sh` so it works without `chmod +x` |
-| Writing a file to the user's folder right after copying it to the outputs folder: the old version arrived | `sync`, wait some seconds, write, then stage the file back and `cmp` it with the tested copy |
-| Comparing PNG files by bytes: the transfer adds metadata | Compare pixels (`make screenshots` does it) |
-| `docker build` in a sandbox behind a TLS proxy: certificate errors | `--build-arg GO_IMAGE=… NODE_IMAGE=… BASE_IMAGE=…` with images that hold the proxy CA, or `PROXIMITY_IMAGE=<ready image>` for the screenshots; the proxy refuses plain HTTP (405), so switch the apt sources of the base image to `https://deb.debian.org` |
-| `docker …`: *Cannot connect to the Docker daemon* after a pause in a sandbox | `rm -f /var/run/docker.pid`, start `dockerd` again, then repeat |
-| OpenVPN waits for time synchronization: no NTP in a sandbox | A local NTP server in the Docker network with the aliases `time.cloudflare.com`, `time.google.com`, `pool.ntp.org`; for the screenshots pass the network as `SCREENSHOT_NETWORK` |
-| `curl`, `wget`, `sysctl` inside the Proximity container: not installed | Call the API from outside; inside there are `ip`, `iptables`, `ping`, `openvpn`, `awg` |
-| `POST /api/outbounds/{id}/stop` right after creating the outbound: *does not exist* | Retry for a few seconds: the control loop learns about new items a moment later |
-| One instance as OpenVPN client and server of itself: the kernel drops the packets | Two instances in one Docker network (the screenshot stand does it) |
-| Outbounds `failed` in a network without Internet: probe target `1.1.1.1:443` | Give the far side the address `1.1.1.1` and redirect port 443 (see `scripts/screenshots.sh`) |
-| puppeteer: Chrome does not start as root; local pages go to the proxy | `--no-sandbox` for root, `--no-proxy-server` |
-| puppeteer: waiting for the sign-in form | The dashboard is public: sign in with `fetch('/api/login')` inside the page |
-| puppeteer: a table row is not found by the text of an input | Compare `input.value`, not `textContent` |
-| puppeteer: `click` on a dropdown button, the menu does not open | `hover`: Ant Design dropdowns open on hover |
-| puppeteer: the same dialog gives different pixels | Hide `#app` behind the dialog, blur the focused control, take the picture until two in a row are equal |
-| A test of the capture code fails when a running Proximity left `proximity_tun` on the machine | Give the test its own device name (`manager.capture.device = "proximity_missing"`); reproduce with `ip tuntap add dev proximity_tun mode tun` |
-| Node `execFileSync('docker', ['logs', …])`: the log is empty | `docker logs` writes to stderr too: read both streams (`docker()` in `scripts/stands/lib.mjs`) |
-| A test with a one-time code waits up to 30 seconds for the next code | Give the test a clock that stands a few seconds before the next 30-second window (`TestManager_RejectedCode`) |
-| A test expects the exact text of the generated OpenVPN server config | Build the expected text from the same helper (`certificateFingerprint`) instead of a constant |
-| The user's computer is off: files cannot be written | Keep working in the copy, hand over the changed files as an archive and write them when the computer is back |
-| A restart of an inbound removes its folder `inbound-<N>`: a key generated there is new every time | Derive such a key from the saved secrets of the inbound (`tokenKey`), do not generate it at start |
-| `docker restart` of a stand instance: the UI port published as `127.0.0.1::8899` changes | Sign in again (`signIn`) after the restart; for a browser test publish a fixed port (stand `reload`) |
-| An outbound stopped with `POST …/stop` stays stopped after a restart of the container | Start it again with `POST …/start` |
-| A check counts log lines of a successful login: OpenVPN writes the same line for a password and for a token | Look at the side effect: `codes.json` is filled only by a login with a one-time code |
-| `make test`, `make cover`, `make coverage-docs` in a sandbox: *rsync is required* | Run `go test -coverprofile=… ./...` in the working tree and give its output to `bash scripts/coverage.sh <report>` |
-| A test expects the exact text of an `encoding/json` error: Go 1.25+ with `jsonv2` (default in the user's Go 1.27) prints other type names | Build the expected text with `unmarshalError` (the same `json.Unmarshal` call) or give the code its own message |
-| A test of transparent capture needs the host network | Stand `capture`: a container plays the host, Proximity joins its namespace (`--network container:<host>`), the host's default route goes through a counting "Internet" container; a specific route in the main table would bypass the capture (rule 5160) |
-| mihomo `tun.disable-icmp-forwarding: true` as the fix of the ICMP leak | No leak, but the gVisor stack answers every ping itself: an unreachable or absent address answers too |
-| `make screenshots` in a sandbox: OpenVPN of the stand stays `reconnecting` (no NTP) | `STAND_OFFLINE=1` + `stand_network_up` from `scripts/stands/lib.sh`, then `SCREENSHOT_NETWORK=proximity-stand`; one picture: `scripts/screenshots.sh settings` |
-| `ip rule add priority P ipproto 1 lookup T` (no `to`): *File exists* | The kernel takes it for a copy of a rule with the same priority, table and `to`; give it another priority (5166) |
-| An AmneziaWG server for a test | The Proximity image has `amneziawg-go` and `awg`: `docker exec -d <c> amneziawg-go --foreground awg0`, wait for `/var/run/amneziawg/awg0.sock`, `awg genkey` / `pubkey`, `awg setconf`; both sides need the same Jc/Jmin/Jmax/S1/S2/H1-H4 (stand `capture`) |
-| A DNS server for a test on an address added to `lo` (`0.0.0.0:53`): the client gets no answer | A UDP server on all addresses answers from the address of the route, not from the one that was asked: bind every address (`scripts/stands/dns/server.py`) |
-| mihomo cannot resolve with `nameserver: system` on a host with `rp_filter=1` and capture on: `read udp …:53: i/o timeout`, the counter `IPReversePathFilter` of `/proc/net/netstat` grows | The reverse path check of the answer finds an `ip rule` with `ipproto … dport 53` and no source: such a rule needs `from` (rule 5155 has it) |
-| `docker pull` / `docker build` in a sandbox: *429 Too Many Requests* from Docker Hub | Pull from a mirror and tag: `docker pull mirror.gcr.io/library/<image>` (also `public.ecr.aws/docker/library/<image>`), `docker tag … <image>` |
-| A check expects one DNS query for a domain routed to a SOCKS5 proxy: there are two | The proxy gets the domain and resolves it itself too; tell the queries apart by the server they go to (stand `dns`: `1.1.1.53` for the router, `1.1.1.1` for the far side) |
-| A unit test starts an outbound with a server name: it asks real DNS | Give the manager `Options.Resolve` (`sampleResolve` in `link_test.go`) |
-| mihomo `proxy-server-nameserver-policy` without `proxy-server-nameserver`: *Parse config error* | Not used: without both, the names of proxy servers follow `nameserver-policy`, where the generator pins them |
-| A browser check stops with `net::ERR_CONNECTION_REFUSED` after `docker restart` | A container published on `127.0.0.1::8899` gets another port after a restart: take the address again with `docker port` (stand `logs`) |
-| Go versions drift apart (`go.mod`, `GO_IMAGE`, the user's machine) | One version: `toolchain` in `go.mod` and `GO_IMAGE` in `Dockerfile` and `docs/development.md` change together; an older local `go` downloads the toolchain itself |
+## Session start
+- The user's copy is written only by the agent. Do not re-read the project: list
+  folders, compare `mtimeMs`/size with the last write, stage only newer files.
+- `device_list_dir` on the root with `recursive` walks `.git/objects` and hits the
+  2000-entry cap: list `internal`, `web/src`, `scripts`, `docs` separately.
+- Write back with `expectedMtimeMs`; all changed files in one call; check with one listing.
+- No shell on the user's machine (`rm`, `mv`, `chmod`, `git`): give a one-line command;
+  call scripts as `bash file.sh`. `Makefile` is protected: edit `makefile.mk`.
+- Computer off: keep working in the copy, deliver an archive, write when it is back.
+- After writing a file just copied to outputs the old version may arrive: `sync`, wait,
+  write, stage back, `cmp`.
 
 ## Rules
+- `TODO.md`: add found problems at once; done → `[x]` + "Done:" line; unfinished → top.
+- Go change → `make coverage-docs` (README header + `docs/development.md`). In a sandbox
+  (no rsync): `go test -coverprofile=… ./...` then `bash scripts/coverage.sh <report>`.
+  E2E check count in the README header: by hand.
+- New kind of test → a stand in `scripts/stands/<name>/` + a row below.
+- Changed pictures: retake, do not compare by eye. PNG bytes differ after transfer:
+  compare pixels.
+- Go version: `toolchain` in `go.mod`, `GO_IMAGE` in `Dockerfile`, `docs/development.md`
+  change together. Analysers built with older Go cannot read 1.27 code:
+  `GOTOOLCHAIN=go1.27.4 go install …`; `govulncheck` still fails.
 
-- **`TODO.md`**: a problem or an idea found during the work is added to `TODO.md` at
-  once, without a separate request. A finished item is marked `[x]` with a short "Done:"
-  line. When the work is interrupted, the unfinished part goes to the top of `TODO.md`.
-- **Coverage**: after every change of the Go code run `make coverage-docs`. It writes the
-  number of tests and the coverage into the header of `README.md` and into
-  `docs/development.md`. Update the number of end-to-end checks in the `README.md` header
-  by hand when a stand gets new checks.
-- **Stands**: a new kind of test gets a ready stand (see below) and its line in the table.
+## Sandbox
+- Docker Hub 429: `docker pull mirror.gcr.io/library/<img>` (or
+  `public.ecr.aws/docker/library/<img>`) + `docker tag`.
+- `docker build` behind the TLS proxy: `--build-arg GO_IMAGE= NODE_IMAGE= BASE_IMAGE=`
+  with images holding the proxy CA, or `PROXIMITY_IMAGE=<ready>`; apt sources → https.
+- Docker daemon gone after a pause: `rm -f /var/run/docker.pid`, start `dockerd`.
+- No NTP → OpenVPN waits: `STAND_OFFLINE=1` (time server with aliases
+  `time.cloudflare.com`, `time.google.com`, `pool.ntp.org`); screenshots:
+  `stand_network_up` + `SCREENSHOT_NETWORK=proximity-stand`.
+- No Internet → outbounds `failed` (probe `1.1.1.1:443`): give the far side `1.1.1.1`.
+- Inside the container: no `curl`/`wget`/`sysctl`; there are `ip`, `iptables`, `ping`,
+  `openvpn`, `awg`. Call the API from outside.
+- mihomo binary for quick probes: `/home/claude/work/lab/dns/mihomo` (v1.19.34).
+
+## Product traps
+- New outbound → `POST …/stop` says *does not exist*: retry for a few seconds.
+- Outbound stopped by `…/stop` stays stopped after a container restart.
+- One instance as OpenVPN client and server of itself: packets dropped → two instances.
+- Inbound restart deletes `inbound-<N>`: derive keys from saved secrets (`tokenKey`).
+- OpenVPN logs the same line for password and token login: check `codes.json`.
+- `ip rule … ipproto 1` without `to` at a used priority: *File exists* → other priority (5166).
+- Rule with `ipproto … dport 53` needs `from`, else `rp_filter=1` drops DNS answers (5155).
+- `tun.disable-icmp-forwarding: true`: gVisor answers every ping itself; not a fix.
+- SOCKS5 domain → two DNS queries (router + far side): tell apart by server.
+- `proxy-server-nameserver-policy` without `proxy-server-nameserver`: parse error; unused.
+- mihomo `GET /rules`: `index`, `type`, `payload`, `extra.hitCount`; counters reset on
+  every config reload. Log line: `[TCP] src --> host:port match Type(payload) using X`.
+- DNS debug: `GET /api/router/config` (`dns.nameserver-policy`), `resolvers` in
+  `GET /api/outbounds`, real query `GET /dns/query?name=&type=A` (`Mihomo.Resolve`).
+
+## Test traps
+- Capture test vs a leftover `proximity_tun`: own device name (`proximity_missing`).
+- One-time code test: clock a few seconds before the next 30 s window.
+- Expected OpenVPN config / `encoding/json` errors (jsonv2 in Go 1.27): build the
+  expectation with the same helper (`certificateFingerprint`, `unmarshalError`).
+- Unit test with a server name asks real DNS: `Options.Resolve` (`sampleResolve`).
+- UDP test server on `lo` addresses: bind every address, not `0.0.0.0`.
+- `docker logs` writes to stderr too: `docker()` in `scripts/stands/lib.mjs`.
+- `docker restart` changes a `127.0.0.1::8899` port: `docker port` again / `signIn`;
+  browser tests: fixed port.
+- puppeteer: root → `--no-sandbox`, `--no-proxy-server`; sign in by `fetch('/api/login')`;
+  inputs: compare `input.value`; dropdowns open on `hover`; stable dialog pictures: hide
+  `#app`, blur, shoot until two equal.
+- AmneziaWG server: `docker exec -d <c> amneziawg-go --foreground awg0`, wait for
+  `/var/run/amneziawg/awg0.sock`, `awg genkey|pubkey`, `awg setconf`; same Jc…H4 on both.
 
 ## Stands
+`stand_instance <name> [docker options] <image>`: options go before the image, after it
+they are arguments of Proximity (*flag provided but not defined*).
+`scripts/stands/lib.sh`, `lib.mjs`. `PROXIMITY_IMAGE` skips build, `STAND_KEEP=1` keeps
+it, `STAND_OFFLINE=1` adds a time server. Checks print `PASS`/`FAIL`, exit 0 if all pass.
 
-A stand is a ready environment for a kind of test: started with one command, removed at
-the end. Do not build a test environment by hand twice: when a new kind of test appears,
-make a stand for it in `scripts/stands/<stand>/` and add its line here.
-
-| Stand | Start | What it gives |
+| Stand | Start | Checks |
 |---|---|---|
-| screenshots | `make screenshots`, `make screenshot <picture>` | Two linked instances in their own Docker network: SOCKS5 and HTTP proxies, an OpenVPN tunnel, routes, inbounds, users, generated traffic, no Internet needed (`scripts/screenshots.sh`, `scripts/screenshots/`) |
-| pair | `bash scripts/stands/pair/stand.sh up` / `down` / `status` | Two empty linked instances: `proximity-stand-a` (client side) and `proximity-stand-b` (server side, answers for `1.1.1.1:443`). A check adds what it needs through the API |
-| pair: security | `make stand-security` (1 minute, 16 checks) | OpenVPN inbound with TOTP and two users against two outbounds: single use of one-time codes, rejection of an old client certificate, ping of clients |
-| pair: tunnel | `make stand-tunnel` (20 seconds, 24 checks) | OpenVPN inbound with pushed routes and an outbound with *Receive routes*: defaults of a new inbound (network, MTU), the provided route (first, follows the connection, moved, kept after a restart), the token after a restart of the inbound, a disabled user, the instance mark |
-| reload | `make stand-reload` (25 seconds, 10 checks, needs a browser) | One instance on the fixed port `127.0.0.1:18899` and a headless browser: after `docker restart` the open page warns that unsaved changes are lost and reloads itself in 5 seconds, also with an open dialog |
-| logs | `make stand-logs` (40 seconds, 21 checks, needs a browser) | One instance with a HOST outbound and a SOCKS5 inbound: Start / Restart clear the log with the setting on and keep it with the setting off, the restart of the container keeps the logs, the button **Clear** of both log windows in the browser, the checkbox in Settings |
-| capture | `make stand-capture` (45 seconds, 29 checks, its own time server) | A "host" network namespace (`rp_filter=1`) with Proximity in it (`PROXIMITY_NETWORK=host`, capture on), an exit with SOCKS5 and OpenVPN inbounds, an AmneziaWG server `proximity-stand-awg` and the "Internet" `proximity-stand-wan` with `1.1.1.1` (route to SOCKS5), `1.1.1.2` (no route), `1.1.1.3` (route to OpenVPN) and `1.1.1.4` (route from the `AllowedIPs` of AmneziaWG) that counts packets by source: where TCP and ping of the host leave, ping through the tunnels, *Receive routes* of AmneziaWG, the default target SOCKS5 / tunnel, the setting off |
-| dns | `make stand-dns` (1 minute, 25 checks, its own time server) | The "host" of `capture` (`rp_filter=1`, `nameserver 1.1.1.1`), an exit with SOCKS5 inbounds (with and without UDP) and an OpenVPN inbound, the "Internet" with `1.1.1.1` (system resolver) and `1.1.1.53` (server of the outbounds) and a DNS server that prints every query with its source (`server.py`): names of the configuration (`exit.stand.test`, `vpn.stand.test`, time servers), the loop pin, fake-IP for applications, the DNS servers and exits of outbounds (UDP, TCP, tunnel, *Host*), the default servers, the DNS of the default target |
-| broken-config | `make stand-config` (5 seconds, 17 checks) | One instance started with the damaged `config.json`: what is dropped and kept, the copy of the file, the report in the API |
-
-Common parts: `scripts/stands/lib.sh` (image, network, instance, removal) and `lib.mjs`
-(API client, `docker`, `check`, `waitFor`). `PROXIMITY_IMAGE` skips the build,
-`STAND_KEEP=1` leaves the stand running, `STAND_OFFLINE=1` adds a time server for a
-network without Internet. A check prints `PASS` / `FAIL` lines and exits with 0 only when
-all passed. More stands are planned, see *Test stands* in `TODO.md`.
+| screenshots | `make screenshots`, `make screenshot <name>`, `ONLY=static`, `SCREENSHOT_TRAFFIC=30` | two linked instances, all pictures |
+| pair | `bash scripts/stands/pair/stand.sh up/down/status` | `stand-a` client, `stand-b` server (`1.1.1.1:443`) |
+| pair: security | `make stand-security` (1 min, 16) | TOTP single use, old cert, client ping |
+| pair: tunnel | `make stand-tunnel` (20 s, 24) | pushed routes, *Receive routes*, token after restart |
+| reload | `make stand-reload` (25 s, 10, browser) | page reload after `docker restart`, port `18899` |
+| logs | `make stand-logs` (40 s, 21, browser) | log clearing on Start/Restart, **Clear** buttons |
+| capture | `make stand-capture` (45 s, 29) | host namespace, `rp_filter=1`, SOCKS5/OpenVPN/AWG exits, counting "Internet" |
+| dns | `make stand-dns` (1 min, 25) | per-outbound DNS, loop pins, fake-IP, `server.py` prints queries |
+| broken-config | `make stand-config` (5 s, 17) | damaged `config.json` |
+| hits | `make stand-hits` (30 s, 13, browser) | route hit counters from mihomo `/rules`, reload, restart, Routes chart |
 
 ## Faster
-
-- The project on the user's machine is written by the agent itself and usually does not
-  change between sessions. Do not stage and read the whole project again: keep the working
-  copy, list the folder (`device_list_dir`) and compare the modification times and sizes
-  with the last write. Stage again only the files that are newer; write with
-  `expectedMtimeMs`, so a file changed by the user is refused instead of overwritten.
-- One picture: `make screenshot <name>`; dialogs only: `make screenshots ONLY=static`
-  (about 1.5 minutes, no traffic wait). All pictures wait 5 minutes for traffic;
-  `SCREENSHOT_TRAFFIC=30` is enough to check a change.
-- A picture that had to change is replaced without opening it and comparing by eye.
-- The image is rebuilt from cache: a change in `web/` does not rebuild the Go helpers, a
-  change in `internal/` does not run `npm ci`. Reuse an image with `PROXIMITY_IMAGE`.
-- Go: run one package or one test (`go test ./internal/link -run TestManager_Recovery`),
-  the whole `make test` and `make cover` once before delivery.
-- UI only: `make dev` (Vite reloads the page), no image build.
-- DNS: what the router will ask is in `GET /api/router/config` (`dns.nameserver-policy`,
-  in the order of the routes) and in `resolvers` of `GET /api/outbounds`; mihomo answers a
-  real query on its socket: `GET /dns/query?name=<name>&type=A` (`Mihomo.Resolve`).
-- API first: seed data and read states through the API (`docs/api.md`), use the browser
-  only for pictures.
-- Deliver all changed files in one write call, then check sizes with one listing.
-- `docs/development.md` describes the build, the tests and the screenshot stand; `TODO.md`
-  holds the open tasks.
+- One package/test: `go test ./internal/link -run TestX`; full `make test` once at the end.
+- UI only: `make dev`. Image cache: `web/` change skips Go helpers, `internal/` skips `npm ci`.
+- Seed and read through the API (`docs/api.md`); browser only for pictures.

@@ -62,7 +62,7 @@ A request below the required level gets `401` (not signed in) or `403` (role too
 | Method and path | Level | Description |
 |---|---|---|
 | `GET /api/dashboard` | 0* | Counts, totals, router state, outbounds with status and traffic, fallbacks, unreachable routes, warnings |
-| `GET /api/history?since=<unix>` | 0* | Throughput and connection count samples newer than `since` (5 s step, up to 1 hour) |
+| `GET /api/history?since=<unix>` | 0* | Throughput and connection count samples newer than `since` (5 s step, up to 1 hour); `hits` of a sample: new matches per route key, `default` and `inbound:<id>` in that step |
 | `DELETE /api/refused` | 2 | Clear the unreachable routes list |
 
 \* Level 0 only when *Anonymous users can view the dashboard* is on; otherwise 1.
@@ -186,7 +186,8 @@ Empty key and certificate fields are generated on save.
 
 | Method and path | Level | Description |
 |---|---|---|
-| `GET /api/routes` | 1 | `{routes, directives, default_target, warnings, failure}` |
+| `GET /api/routes` | 1 | `{routes, directives, default_target, warnings, failure, hits}`; `hits` maps a route key, `default` (everything else) or `inbound:<id>` to `{count, last}` (total matches, Unix time of the last one) |
+| `DELETE /api/routes/hits` | 2 | Reset the hit counters and their history |
 | `POST /api/routes` | 2 | `{id, directive, target, params: [...], enabled}` |
 | `POST /api/routes/preview` | 1 | Same body → `{params, lines}` (normalized parameters and mihomo rules) or an error with the line number |
 | `PUT /api/routes/default` | 2 | `{target}` — target for everything else |

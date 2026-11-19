@@ -113,6 +113,53 @@ func TestHistory_Samples(t *testing.T) {
 	}
 }
 
+func TestHits_Counters(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "state.json")
+	tracker := NewTracker(path)
+	at := time.Unix(1700000000, 0)
+	makeRules := func(counts ...int64) []Rule {
+		result := []Rule{}
+		for index, count := range counts {
+			result = append(result, Rule{Index: index, Extra: RuleExtra{HitCount: count,
+				HitAt: at.Add(time.Duration(count) * time.Second)}})
+		}
+		return result
+	}
+	origins := []string{"r1", "r1", "r2", OriginDefault}
+	tracker.UpdateHits(1, origins, makeRules(2, 1, 0, 5))
+	require.Equal(t, map[string]Hit{"r1": {Count: 3, Last: at.Unix() + 2},
+		OriginDefault: {Count: 5, Last: at.Unix() + 5}}, tracker.Hits())
+	tracker.UpdateHits(1, origins, makeRules(2, 4, 1, 5))
+	require.Equal(t, Hit{Count: 6, Last: at.Unix() + 4}, tracker.Hits()["r1"])
+	require.Equal(t, Hit{Count: 1, Last: at.Unix() + 1}, tracker.Hits()["r2"])
+	tracker.UpdateHits(1, origins, makeRules(1, 4, 1, 5))
+	require.Equal(t, int64(7), tracker.Hits()["r1"].Count)
+	tracker.UpdateHits(2, origins, makeRules(1, 0, 0, 2))
+	require.Equal(t, int64(8), tracker.Hits()["r1"].Count)
+	require.Equal(t, int64(7), tracker.Hits()[OriginDefault].Count)
+	tracker.UpdateHits(2, origins[:3], makeRules(9, 9, 9, 9))
+	tracker.UpdateHits(2, origins, makeRules(1, 0, 0, 2))
+	require.Equal(t, int64(9), tracker.Hits()["r1"].Count)
+	tracker.sampled = time.Now().Add(-HistoryStep)
+	tracker.Update(Connections{}, nil)
+	history := tracker.History(0)
+	require.Len(t, history, 1)
+	require.Equal(t, map[string]int64{"r1": 9, "r2": 1, OriginDefault: 9}, history[0].Hits)
+	tracker.sampled = time.Now().Add(-HistoryStep)
+	tracker.Update(Connections{}, nil)
+	require.Nil(t, tracker.History(0)[1].Hits)
+	require.NoError(t, tracker.Save())
+	reloaded := NewTracker(path)
+	require.Equal(t, tracker.Hits(), reloaded.Hits())
+	reloaded.KeepHits(map[string]bool{"r2": true})
+	require.Equal(t, map[string]Hit{"r2": {Count: 1, Last: at.Unix() + 1}}, reloaded.Hits())
+	tracker.ClearHits()
+	require.Empty(t, tracker.Hits())
+	require.Nil(t, tracker.History(0)[0].Hits)
+	require.NoError(t, tracker.Save())
+	require.Empty(t, NewTracker(path).Hits())
+}
+
 func TestObserve_DialErrors(t *testing.T) {
 	tracker := NewTracker("")
 	for _, line := range []string{dialRefused, dialRefused, dialProxy, dialResolve, dialPlain,

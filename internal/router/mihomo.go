@@ -43,6 +43,23 @@ type Connection struct {
 	Metadata Metadata `json:"metadata"`
 }
 
+type RuleExtra struct {
+	HitCount int64     `json:"hitCount"`
+	HitAt    time.Time `json:"hitAt"`
+}
+
+type Rule struct {
+	Index   int       `json:"index"`
+	Type    string    `json:"type"`
+	Payload string    `json:"payload"`
+	Proxy   string    `json:"proxy"`
+	Extra   RuleExtra `json:"extra"`
+}
+
+type ruleList struct {
+	Rules []Rule `json:"rules"`
+}
+
 type Connections struct {
 	Items    []Connection `json:"connections"`
 	Upload   int64        `json:"uploadTotal"`
@@ -87,6 +104,7 @@ type Mihomo struct {
 	current   []byte
 	state     State
 	closed    bool
+	session   int
 }
 
 const configName = "config.yaml"
@@ -157,6 +175,18 @@ func (mihomo *Mihomo) Connections() (Connections, error) {
 	return result, nil
 }
 
+// NOTE: The session changes with every reload or start of mihomo, where its counters start
+// from zero; rules read across such a change are refused.
+func (mihomo *Mihomo) Rules() (int, []Rule, error) {
+	session, result := mihomo.currentSession(), ruleList{}
+	if err := mihomo.request(http.MethodGet, "/rules", nil, &result); err != nil {
+		return 0, nil, fmt.Errorf("failed to get router rules: %w", err)
+	} else if mihomo.currentSession() != session {
+		return 0, nil, errors.New("router reloaded while reading rules")
+	}
+	return session, result.Rules, nil
+}
+
 // NOTE: The answer comes from the resolver of mihomo, so it follows the DNS servers of the
 // routes and is a real address, also while applications get placeholder (fake-IP) answers.
 func (mihomo *Mihomo) Resolve(ctx context.Context, host string) ([]string, error) {
@@ -215,6 +245,12 @@ func (mihomo *Mihomo) Close() {
 	terminate(command, finished)
 }
 
+func (mihomo *Mihomo) currentSession() int {
+	mihomo.mutex.Lock()
+	defer mihomo.mutex.Unlock()
+	return mihomo.session
+}
+
 func (mihomo *Mihomo) apply(data []byte) error {
 	candidate := filepath.Join(mihomo.directory, "candidate.yaml")
 	path := filepath.Join(mihomo.directory, configName)
@@ -230,6 +266,7 @@ func (mihomo *Mihomo) apply(data []byte) error {
 		return fmt.Errorf("failed to rename file '%v': %w", candidate, err)
 	}
 	mihomo.current, mihomo.state.Applied = bytes.Clone(data), time.Now().Unix()
+	mihomo.session++
 	if mihomo.command == nil {
 		return mihomo.start()
 	}
@@ -251,6 +288,7 @@ func (mihomo *Mihomo) start() error {
 	}
 	finished := make(chan struct{})
 	mihomo.command, mihomo.finished, mihomo.state.Running = command, finished, true
+	mihomo.session++
 	go func() {
 		scanner := bufio.NewScanner(reader)
 		scanner.Buffer(make([]byte, 64*1024), 1024*1024)

@@ -504,6 +504,53 @@ func TestServer_DNS(t *testing.T) {
 	}
 }
 
+func TestServer_Hits(t *testing.T) {
+	server := makeServer(t)
+	admin := login(t, server, "admin", "secret123")
+	code, body, _ := call(t, server, admin, http.MethodPost, "/api/users",
+		userRequest{Name: "viewer", Password: "viewer123", Confirm: "viewer123",
+			Role: config.RoleUser})
+	require.Equal(t, http.StatusOK, code, body)
+	viewer := login(t, server, "viewer", "viewer123")
+	for _, domain := range []string{"one.test", "two.test"} {
+		code, body, _ = call(t, server, admin, http.MethodPost, "/api/routes", config.Route{
+			Directive: "DOMAIN", Target: config.TargetDirect, Enabled: true,
+			Params: []string{domain}})
+		require.Equal(t, http.StatusOK, code, body)
+	}
+	server.synchronize()
+	require.Nil(t, server.origins)
+	server.mutex.Lock()
+	server.running = false
+	server.mutex.Unlock()
+	server.synchronize()
+	routes := server.store.Snapshot().Routes
+	require.Equal(t, []string{routes[0].Key, routes[1].Key, router.OriginDefault}, server.origins)
+	server.countHits()
+	require.Empty(t, server.tracker.Hits())
+	at := time.Unix(1700000000, 0)
+	server.tracker.UpdateHits(1, server.origins, []router.Rule{
+		{Extra: router.RuleExtra{HitCount: 4, HitAt: at}}, {},
+		{Extra: router.RuleExtra{HitCount: 1, HitAt: at}}})
+	code, body, _ = call(t, server, viewer, http.MethodGet, "/api/routes", nil)
+	require.Equal(t, http.StatusOK, code)
+	require.Equal(t, map[string]any{routes[0].Key: map[string]any{"count": 4.0,
+		"last": float64(at.Unix())}, router.OriginDefault: map[string]any{"count": 1.0,
+		"last": float64(at.Unix())}}, body["hits"])
+	code, _, _ = call(t, server, viewer, http.MethodDelete, "/api/routes/hits", nil)
+	require.Equal(t, http.StatusForbidden, code)
+	code, body, _ = call(t, server, admin, http.MethodDelete, "/api/routes/"+routes[0].Key, nil)
+	require.Equal(t, http.StatusOK, code, body)
+	server.synchronize()
+	require.Equal(t, map[string]router.Hit{router.OriginDefault: {Count: 1, Last: at.Unix()}},
+		server.tracker.Hits())
+	code, body, _ = call(t, server, admin, http.MethodDelete, "/api/routes/hits", nil)
+	require.Equal(t, http.StatusOK, code, body)
+	code, body, _ = call(t, server, admin, http.MethodGet, "/api/routes", nil)
+	require.Equal(t, http.StatusOK, code)
+	require.Equal(t, map[string]any{}, body["hits"])
+}
+
 func TestServer_Inbounds(t *testing.T) {
 	server := makeServer(t)
 	admin := login(t, server, "admin", "secret123")

@@ -393,9 +393,17 @@ count show how many errors and warnings the log has.
 ![Routes](images/routes.png)
 
 Routes are checked from top to bottom; the first match wins. The table shows the order,
-the *On* switch, ID, directive, parameters (comments dimmed), and the target. Rows with a
-⚠ are involved in a warning listed at the top. **Everything else (MATCH)** at the bottom
-sets the default target.
+the *On* switch, ID, directive, parameters (comments dimmed), the target and **Hits**: how
+many connections the route has matched and when the last one came. Rows with a ⚠ are
+involved in a warning listed at the top. **Everything else (MATCH)** at the bottom sets the
+default target and shows its hits.
+
+**Route hits** above the table is a stacked bar chart: matches per interval (10 s, 30 s or
+2 min for the 5m / 15m / 1h range) by route, the seven busiest routes by name and the rest
+as *Other*. Hover a bar for its numbers, click a legend entry to hide it. The counts come
+from mihomo itself (every rule counts its matches) and are read every 2 seconds; they
+survive reloads of the router and restarts of Proximity, the chart keeps the last hour in
+memory. **Reset** sets all counters to zero.
 
 A route row is tinted by the state of its target: red when the target outbound is down or
 failed, the fallback has no alive outbound, or the target does not exist; blue while the
