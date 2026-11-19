@@ -71,6 +71,57 @@
     the exit through an HTTP proxy (port 443 through `ID~https`) are covered by unit tests
     and by `mihomo -t` only.
 
+## Review 2026-11-19
+
+Found by a review of the whole project (code, tests, build, security), not by a bug report.
+
+- [ ] **Login: no limit on attempts**
+  - A wrong password waits 700 ms, but parallel requests are not limited: a password can be
+    guessed with many connections at once. Add a growing delay or a lockout per address and
+    per user name (for example 5 failures → 1 minute, doubling), shown in the server log.
+
+- [ ] **Web UI only over plain HTTP**
+  - Port 8899 has no TLS (encrypted connection); the session cookie has no `Secure` flag, the
+    password and the cookie cross the LAN in clear text. Add an optional TLS mode with a
+    self-signed certificate (the SOCKS5 inbound already generates one) and `Secure` cookies
+    in that mode.
+
+- [ ] **Verbose logs write the file line by line**
+  - `logBook.add` opens, writes and closes the file for every line: 3.1 µs per line
+    against 0.04 µs in memory (measured, 78 times slower), under the lock of the book. A
+    Verbose OpenVPN tunnel writes a line per packet. Hypothesis: this slows the reading of
+    the OpenVPN output and the tunnel itself; measure iperf with Verbose on and off. Fix: a
+    buffered writer flushed every second and on stop.
+
+- [ ] **UI is sent without compression**
+  - One script of 1.95 MB, no gzip: 0.6 MB compressed (3.3 times less). Ant Design is
+    imported whole (`app.use(Antd)`). Serve pre-compressed files and import only the used
+    components.
+
+- [ ] **No CI**
+  - Tests run only on the developer machine and in the pre-commit hook. A GitHub Actions
+    workflow: `go vet`, `go test -race`, `staticcheck`, the image build, the stands that
+    need no browser.
+
+- [ ] **Version and change log**
+  - The image is still `VERSION=1.2.0` after DNS per outbound, recovery, log clearing and
+    configuration versions 10 and 11. Bump the version, add `CHANGELOG.md` and git tags.
+
+- [ ] **Mutation testing of the DNS generator**
+  - `router/dns.go` (`arrange`, `pins`) has full statement coverage, but the order rules are
+    subtle: run go-mutesting / go-gremlins on `internal/router` and `internal/config/dns.go`
+    and close the surviving mutants.
+
+- [ ] **Small findings**
+  - `staticcheck` SA4006: `server_test.go` does not check the code of
+    `PUT /api/users/admin` (own role).
+  - `govulncheck` cannot read Go 1.27 code yet (its parser is older): check again with a
+    newer release. `npm audit`: 0 vulnerabilities.
+  - JavaScript has no unit tests (`dns.js`, `format.js`, `states.js`); the stands cover the
+    pages only end to end.
+  - Passwords of inbound users and private keys are stored in `proximity.json` in clear text
+    (known limitation of 1.2.0).
+
 ## OpenVPN
 
 All three tests use full auth: PKI (CA, server and client certificates

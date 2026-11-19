@@ -85,6 +85,11 @@ all passed. More stands are planned, see *Test stands* in `TODO.md`.
 
 ## Faster
 
+- The project on the user's machine is written by the agent itself and usually does not
+  change between sessions. Do not stage and read the whole project again: keep the working
+  copy, list the folder (`device_list_dir`) and compare the modification times and sizes
+  with the last write. Stage again only the files that are newer; write with
+  `expectedMtimeMs`, so a file changed by the user is refused instead of overwritten.
 - One picture: `make screenshot <name>`; dialogs only: `make screenshots ONLY=static`
   (about 1.5 minutes, no traffic wait). All pictures wait 5 minutes for traffic;
   `SCREENSHOT_TRAFFIC=30` is enough to check a change.
