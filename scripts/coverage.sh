@@ -26,7 +26,7 @@ rules=(-e "s/tests-[0-9]*%20passing/tests-$tests%20passing/"
 while read -r name value; do
     rules+=(-e "s#^| \`$name\` | [0-9.]*% |#| \`$name\` | $value% |#")
 done <<< "$packages"
-for file in README.md docs/development.md; do
+for file in README.md docs/development.md docs/status.md; do
     sed -i.bak "${rules[@]}" "$root/$file"
     rm -f "$root/$file.bak"
 done

@@ -313,7 +313,8 @@ What an outbound can carry:
 - The check target of AmneziaWG and the health check URL of a fallback are resolved by
   the DNS of the tunnel, where their connection goes.
 - The servers in effect are shown in the outbounds table (`DNS …`) and in
-  **Dashboard → Router configuration** (`nameserver-policy`).
+  **Dashboard → Router configuration** (`nameserver-policy`). The whole rule, with
+  servers given by name and fake-IP, is in [DNS](dns.md).
 
 **Names in the settings.** A proxy server, a `remote` of an OpenVPN configuration, an
 `Endpoint` of AmneziaWG, a check target and a time server may be given by name. Proximity

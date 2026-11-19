@@ -15,6 +15,7 @@ for mistakes and applies them immediately.
 - [Routes provided by a VPN](#routes-provided-by-a-vpn)
 - [Targets](#targets)
 - [DNS: which server resolves the name](#dns-which-server-resolves-the-name)
+- [Hits and checks](#hits-and-checks)
 - [Recipes](#recipes)
 
 ## How matching works
@@ -231,8 +232,9 @@ so the real resolution happens only when the connection is made — by the targe
 This is why intranet names that exist only behind the VPN work without changing
 `/etc/resolv.conf`.
 
-The binding follows the routes: `DOMAIN`, `DOMAIN-SUFFIX` and `GEOSITE` rules, the first
-route that matches a name decides, the same as for the traffic. A route to `DIRECT` above
+The binding follows the routes: every domain rule (`DOMAIN`, `DOMAIN-SUFFIX`,
+`DOMAIN-KEYWORD`, `DOMAIN-WILDCARD`, `DOMAIN-REGEX`, `GEOSITE`), the first route that
+matches a name decides, the same as for the traffic. A route to `DIRECT` above
 a wider route to a VPN keeps its domains on the default servers:
 
 ```text
@@ -246,7 +248,19 @@ default target (**Everything else**) has its own servers, names without a route 
 there. A proxy still resolves the names it is given by itself; the servers of a proxy
 outbound answer what the router has to resolve: records other than addresses (browsers ask
 for `HTTPS` records), and names checked against an `IP-CIDR` / `GEOIP` route that stands
-above without `,no-resolve`. More in the [user guide](user-guide.md#dns).
+above without `,no-resolve`. The whole picture — servers given by name, fake-IP, OpenVPN
+inbounds — is in [DNS](dns.md).
+
+## Hits and checks
+
+- **Hits** (a column of the Routes page and the **Route hits** chart, also on the
+  dashboard): how many connections each route matched and when the last one came. The
+  counts come from mihomo itself (every rule counts its matches), are summed per route,
+  survive reloads and restarts and are reset by **Reset**. A route that stays at 0 is
+  covered by a route above or never sees its traffic.
+- **Tools → Address check**: type a name or an address and see which route and rule take
+  it, through which outbound it leaves and whether it connects — before you change the
+  routes, or to check them after ([user guide](user-guide.md#address-check)).
 
 ## Recipes
 

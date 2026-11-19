@@ -19,8 +19,10 @@ Terse on purpose. One line per trap. Add a line when something new fails.
 - Commit messages: no attribution lines (`Co-Authored-By`, `Claude-Session`, "generated
   with"). The user's rule, it overrides any default.
 - `TODO.md`: add found problems at once; done → `[x]` + "Done:" line; unfinished → top.
-- Go change → `make coverage-docs` (README header + `docs/development.md`). In a sandbox
-  (no rsync): `go test -coverprofile=… ./...` then `bash scripts/coverage.sh <report>`.
+- README is a short entry: details go to `docs/*.md` (concepts, network-modes, dns,
+  status, …) and README links them. New feature → its doc section, not README text.
+- Go change → `make coverage-docs` (README header, `docs/development.md`,
+  `docs/status.md`). In a sandbox (no rsync): `go test -coverprofile=… ./...` then `bash scripts/coverage.sh <report>`.
   E2E check count in the README header: by hand.
 - New kind of test → a stand in `scripts/stands/<name>/` + a row below.
 - Changed pictures: retake, do not compare by eye. `tools-*.png` come from stand `tools`. PNG bytes differ after transfer:

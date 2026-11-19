@@ -166,6 +166,13 @@ curl -x socks5h://127.0.0.1:7899 https://ifconfig.me
    routes** on the Dashboard with the outbound and the rule that matched.
 4. **Dashboard → Connection map** shows the whole chain at a glance: moving dashes mark
    the routes and outbounds that carry traffic now, red items are down.
+5. **Tools → Address check** with a name you routed: the route, the rule, the outbound
+   and a test connection through it; **Routes → Hits** counts the connections every route
+   takes.
+
+Background: [Concepts](concepts.md) (what outbounds, fallbacks and routes are, roles,
+backup, the settings folder), [Network modes](network-modes.md) (transparent capture or
+proxy) and [DNS](dns.md) (where names are resolved).
 
 ## Environment variables
 

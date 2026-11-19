@@ -1,6 +1,6 @@
 # Troubleshooting
 
-Start with four places in the UI — they answer most questions:
+Start with five places in the UI — they answer most questions:
 
 1. **Dashboard → Connection map**: red items are down or failed, gray ones are disabled or
    stopped. Hover over a route to see which outbound it really reaches (through a fallback,
@@ -9,6 +9,10 @@ Start with four places in the UI — they answer most questions:
 3. **Dashboard → Unreachable routes**: destination, reason, the outbound used and the rule
    that matched.
 4. **Routes → Router configuration**: the rules exactly as mihomo received them.
+5. **Tools → Address check**: a real connection to a name or address through the router —
+   the route and rule that take it, the outbound it leaves through, and what every
+   outbound gets for it (its DNS answers and a TCP connection). **Tools → Ping** does the
+   same for ping. See the [user guide](user-guide.md#tools).
 
 And the container log:
 
@@ -64,10 +68,19 @@ says `recovery is stopped after N attempts`) or when the error needs your action
 waits for **Start**, **Restart** or a configuration change — also after a container
 restart; its log keeps the lines of the failed attempt.
 
+## Which outbound does a name need?
+
+**Tools → Address check** with the name (or `name:port`): the table shows every outbound
+side by side. An outbound whose DNS servers know the name (no *name does not exist*) and
+whose TCP connection succeeds is the one to route it to; an orange address means the
+outbound gets another answer than the router. For an address, **Tools → Ping** shows
+through which outbounds it answers and how fast.
+
 ## Traffic goes through the wrong outbound
 
-1. Look at **Dashboard → Unreachable routes** or the router log: the *Matched rule* column
-   shows which rule caught the connection.
+1. **Tools → Address check** shows the route, the rule and the chain of the connection
+   right away. For past connections look at **Dashboard → Unreachable routes** or the
+   router log: the *Matched rule* column shows which rule caught the connection.
 2. Routes are checked **top to bottom**; a broader route above wins. The warning at the
    top of the Routes page lists rules that can never match.
 3. `DOMAIN-KEYWORD` matches substrings: `ads` also matches `downloads.example.org`.
@@ -92,9 +105,10 @@ restart; its log keeps the lines of the failed attempt.
 - Look at **Dashboard → Router configuration**, `dns.nameserver-policy`: which servers a
   domain gets, and through which exit (`server#exit`). The outbounds table shows the
   servers of an outbound as `DNS …`.
-- Only `DOMAIN`, `DOMAIN-SUFFIX` and `GEOSITE` routes bind a domain to the DNS servers of
-  their outbound; an outbound without servers on its **DNS** tab uses the default servers
-  of **Settings → Router → DNS**.
+- Every domain route (`DOMAIN`, `DOMAIN-SUFFIX`, `DOMAIN-KEYWORD`, `DOMAIN-WILDCARD`,
+  `DOMAIN-REGEX`, `GEOSITE`) binds its names to the DNS servers of its outbound; IP and
+  port routes do not. An outbound without servers on its **DNS** tab uses the default
+  servers of **Settings → Router → DNS**. The whole rule: [DNS](dns.md).
 - A warning *DNS server … is skipped: … does not carry UDP*: the outbound is a SOCKS5
   proxy without UDP or an HTTP proxy. Use `tcp://`, `tls://` or `https://`, or choose
   another exit in *Send the queries through*.
@@ -107,10 +121,31 @@ restart; its log keeps the lines of the failed attempt.
   resolved by the router, through the DNS servers of the route that takes its domain. When
   that outbound is down, the name is not resolved: route the name elsewhere (a `DOMAIN`
   route to `DIRECT` above) or write the address.
-- `name '…' has no usable address (198.18.…)`: the DNS server answered with a placeholder
-  address. This happens when the name is asked through a tunnel to another Proximity (its
-  OpenVPN inbound answers its clients with fake-IP). Write the address, or route the name
-  to `DIRECT`.
+- `name '…' has only placeholder (fake-IP) addresses (198.18.…)`: the DNS server answered
+  with a placeholder address, typically the resolver `198.18.0.2` of another Proximity
+  behind a tunnel to its OpenVPN inbound. Ask a server of your own through the tunnel (the
+  **DNS** tab of the outbound), or fill in real **DNS servers** in that inbound; see
+  [OpenVPN inbounds and DNS](dns.md#openvpn-inbounds-and-dns).
+
+## A DNS server given by name does not answer
+
+- `https://dns.corp.example/dns-query` on the **DNS** tab: the name of the server is
+  resolved through the servers of the same outbound given by address (pushed by the VPN,
+  or written by address). Without one the default servers resolve it and may not know it:
+  add the address of a server of the VPN to the tab, or write the server by address.
+- The container log shows `DNS server name '…' is resolved to …` or
+  `… is not resolved: …`; **Routes → Router configuration** shows the result in `hosts`.
+- **Tools → Address check** asks every server separately and shows its error (TLS,
+  certificate, *name does not exist*).
+
+## A route never matches (Hits stay at 0)
+
+- The **Hits** column of the Routes page counts the connections that the route matched
+  since the counters were reset. A route stuck at 0 while you use the site is covered by a
+  route above it (see the warnings), or the connection goes past Proximity (a program
+  with its own proxy, a connection by IP in transparent mode that cannot be sniffed for
+  DOMAIN routes).
+- **Tools → Address check** names the route that takes the address now.
 
 ## Transparent mode is not active (Linux)
 
@@ -226,6 +261,12 @@ mihomo rejected the generated configuration (`mihomo -t` failed). The message sh
 reason. Typical causes: an unknown GEOSITE category, a regular expression mihomo does not
 accept, a missing GeoIP database file. Fix or disable the route; the previous working
 configuration stays active meanwhile.
+
+## The log file lags behind the log window
+
+Log lines are written to `logs/*.log` once a second (at once when 256 lines wait, and on
+shutdown), so a file read from the disk may miss the last second; the log window of the
+UI is always current. **Clear** empties both.
 
 ## The throughput chart is empty after a restart
 

@@ -249,8 +249,8 @@ make coverage-docs    # the same, then scripts/coverage.sh writes the numbers in
 go test -race ./...   # by hand: uses the default Go caches
 ```
 
-The header of `README.md` (two badges and a line), its *Project status* and the table
-below show the number of tests and the coverage. Run `make coverage-docs` after every
+The header of `README.md` (two badges and a line), the first line of
+[Project status](status.md) and the table below show the number of tests and the coverage. Run `make coverage-docs` after every
 change of the Go code: it replaces these numbers and changes nothing else.
 
 Current state (version 1.2.0): **167 tests, all passing, 94.2% total statement coverage.**
@@ -261,7 +261,7 @@ Current state (version 1.2.0): **167 tests, all passing, 94.2% total statement c
 | `internal/auth` | 94.1% |
 | `internal/clock` | 97.0% |
 | `internal/config` | 96.3% |
-| `internal/link` | 91.3% |
+| `internal/link` | 91.4% |
 | `internal/router` | 97.6% |
 | `internal/rules` | 99.1% |
 | `internal/server` | 92.2% |
@@ -348,7 +348,7 @@ new ones after an upgrade.
 2. `make all` — the UI and the binary build without errors.
 3. Bump `VERSION` in `makefile.mk`, `Dockerfile` and the default `PROXIMITY_VERSION` in the
    compose files.
-4. Update the *Project status* section in `README.md` and screenshots if the UI changed
+4. Update [Project status](status.md) and screenshots if the UI changed
    (`make screenshots` retakes them).
 5. `make up` on a clean settings folder: first-run dialog, one outbound of each type,
    transparent mode on Linux.
