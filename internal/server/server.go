@@ -6,10 +6,12 @@ import (
 	"errors"
 	"fmt"
 	"io/fs"
+	"maps"
 	"net/http"
 	"net/netip"
 	"os"
 	"path/filepath"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -52,6 +54,8 @@ type Server struct {
 	failure   string
 	layout    router.Layout
 	probe     probeState
+	dnsHosts  map[string][]string
+	naming    bool
 	captured  bool
 	running   bool
 	restart   bool
@@ -96,6 +100,7 @@ const cookieName = "proximity_session"
 const sessionLifetime = 7 * 24 * time.Hour
 const maxBodySize = 4 << 20
 const pollInterval = 500 * time.Millisecond
+const nameTimeout = 5 * time.Second
 const measureInterval = 2 * time.Second
 const saveInterval = 30 * time.Second
 const failedLoginDelay = 700 * time.Millisecond
@@ -134,7 +139,7 @@ func internalNew(options Options) (*Server, error) {
 	server := &Server{options: options, store: store, dirty: make(chan struct{}, 1),
 		started: time.Now(), warnings: []string{}, mux: http.NewServeMux(),
 		traced: map[string]tracedConnection{}, clock: options.Clock,
-		probe: probeState{waiters: map[int]chan string{}}}
+		probe: probeState{waiters: map[int]chan string{}}, dnsHosts: map[string][]string{}}
 	if server.probe.port, server.probe.secret, err = makeProbe(); err != nil {
 		return nil, err
 	}
@@ -269,6 +274,40 @@ func (server *Server) resolve(ctx context.Context, host string) ([]string, error
 		return server.mihomo.Resolve(ctx, host)
 	}
 	return link.SystemResolve(ctx, host)
+}
+
+// NOTE: A DNS server of an outbound given by name is asked through the servers of the same
+// outbound (the router pins it there) and its addresses go to the hosts of the router, which
+// mihomo uses to reach the server. A name without an answer keeps its earlier addresses.
+func (server *Server) resolveNames(names []string) {
+	result := map[string][]string{}
+	server.mutex.Lock()
+	previous := maps.Clone(server.dnsHosts)
+	server.mutex.Unlock()
+	for _, name := range names {
+		ctx, cancel := context.WithTimeout(context.Background(), nameTimeout)
+		if addresses, err := server.manager.Lookup(ctx, name); err == nil {
+			result[name] = addresses
+		} else if addresses, found := previous[name]; found {
+			result[name] = addresses
+			server.options.Logf("DNS server name '%v' is not resolved, kept %v: %v", name,
+				strings.Join(addresses, ", "), err)
+		} else {
+			server.options.Logf("DNS server name '%v' is not resolved: %v", name, err)
+		}
+		cancel()
+	}
+	server.mutex.Lock()
+	changed := !maps.EqualFunc(result, server.dnsHosts, slices.Equal)
+	server.dnsHosts, server.naming = result, false
+	server.mutex.Unlock()
+	if changed {
+		for name, addresses := range result {
+			server.options.Logf("DNS server name '%v' is resolved to %v", name,
+				strings.Join(addresses, ", "))
+		}
+		server.notify()
+	}
 }
 
 func (server *Server) queryTime(ctx context.Context, address string, mark int) (time.Duration,
@@ -491,9 +530,12 @@ func (server *Server) synchronize() {
 			generated.Inbounds[index].Enabled = false
 		}
 	}
+	server.mutex.Lock()
+	hosts := maps.Clone(server.dnsHosts)
+	server.mutex.Unlock()
 	options := router.Options{Socket: server.mihomo.Socket(), ProxyBind: server.options.ProxyBind,
 		Capture:   server.options.HostNetwork && snapshot.Settings.Capture,
-		ProbePort: server.probe.port, ProbeSecret: server.probe.secret}
+		ProbePort: server.probe.port, ProbeSecret: server.probe.secret, Hosts: hosts}
 	data, warnings, err := router.Generate(generated, links, options)
 	if err == nil && running {
 		err = server.mihomo.Apply(data)
@@ -512,6 +554,10 @@ func (server *Server) synchronize() {
 	defer server.mutex.Unlock()
 	if server.warnings, server.failure = warnings, ""; err == nil {
 		server.layout = layout
+		if names := router.ServerNames(generated, links); running && !server.naming {
+			server.naming = true
+			go server.resolveNames(names)
+		}
 	} else {
 		server.failure = err.Error()
 		server.options.Logf("failed to apply router configuration: %v", err)

@@ -4,7 +4,10 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
+	"net"
+	"net/url"
 	"slices"
+	"strconv"
 	"strings"
 
 	"proximity/internal/config"
@@ -56,9 +59,17 @@ type dnsOwner struct {
 	hosts []string
 }
 
+type ruleProvider struct {
+	Type     string   `json:"type"`
+	Behavior string   `json:"behavior"`
+	Payload  []string `json:"payload"`
+}
+
 const exitRules = "RULES"
 const matcherPrefix = "geosite:"
 const suffixPrefix = "+."
+const ruleSetPrefix = "rule-set:"
+const dnsSetPrefix = "proximity-dns-"
 
 // NOTE: The servers that answer for the domains routed to an outbound, as mihomo gets them:
 // "server#exit".
@@ -73,6 +84,22 @@ func Resolvers(snapshot config.Config, links map[string]link.Status) map[string]
 		if texts := serverTexts(state.resolvers(outbound.ID)); len(texts) != 0 {
 			result[outbound.ID] = texts
 		}
+	}
+	return result
+}
+
+// NOTE: The DNS servers given by name that the router can resolve for real through the servers
+// of the same outbound given by address (see named): the server resolves them and passes
+// the answers back as hosts.
+func ServerNames(snapshot config.Config, links map[string]link.Status) []string {
+	state := &buildState{config: snapshot, links: links, variants: map[string][]rules.Variant{},
+		active: map[string]bool{config.TargetDirect: true, config.TargetReject: true},
+		cache:  map[string][]dnsUpstream{}}
+	state.buildProxies()
+	state.buildGroups()
+	result := []string{}
+	for _, entry := range state.named() {
+		result = append(result, entry.domain)
 	}
 	return result
 }
@@ -281,12 +308,79 @@ func (state *buildState) global() []dnsUpstream {
 	return []dnsUpstream{{text: config.DNSSystem, address: true}}
 }
 
+// NOTE: A keyword, wildcard or regex route cannot be a key of nameserver-policy: its patterns
+// go into an inline rule set of the route, and the set is the key.
 func (state *buildState) noteDomains(target string, parsed []rules.Rule) {
+	patterns, upstreams := []string{}, state.resolvers(target)
 	for _, rule := range parsed {
-		if entry, found := makeEntry(rule, state.resolvers(target)); found {
+		if entry, found := makeEntry(rule, upstreams); found {
 			state.entries = append(state.entries, entry)
+		} else if rule.Directive == rules.DomainKeyword || rule.Directive == rules.DomainWildcard ||
+			rule.Directive == rules.DomainRegex {
+			patterns = append(patterns, rule.Directive+","+rule.Value)
 		}
 	}
+	if len(patterns) == 0 {
+		return
+	}
+	name := dnsSetPrefix + strconv.Itoa(len(state.providers)+1)
+	state.providers[name] = ruleProvider{Type: "inline", Behavior: "classical", Payload: patterns}
+	state.entries = append(state.entries, dnsEntry{key: ruleSetPrefix + name, matcher: true,
+		routed: true, upstreams: upstreams})
+}
+
+// NOTE: A DNS server of an outbound given by name is resolved by the default servers, which
+// may not know it: the name is asked from the servers of the same outbound given by address.
+func (state *buildState) named() []dnsEntry {
+	result := []dnsEntry{}
+	add := func(servers []string, upstreams []dnsUpstream) {
+		addresses := []dnsUpstream{}
+		for _, upstream := range upstreams {
+			if upstream.address {
+				addresses = append(addresses, upstream)
+			}
+		}
+		for _, text := range servers {
+			parsed, err := config.ParseDNSServer(text)
+			if name := parsed.Named(); err == nil && name != "" && len(addresses) != 0 &&
+				!slices.ContainsFunc(result, func(entry dnsEntry) bool { return entry.domain == name }) {
+				result = append(result, dnsEntry{key: name, domain: name, upstreams: addresses})
+			}
+		}
+	}
+	for _, outbound := range state.config.Outbounds {
+		if state.active[outbound.ID] {
+			add(outbound.DNS.Servers, state.resolvers(outbound.ID))
+		}
+	}
+	return result
+}
+
+// NOTE: The check target of a tunnel and the health check of a fallback leave through the
+// tunnel, so their names are asked from its servers, not from those of their routes.
+func (state *buildState) checks() []dnsEntry {
+	result := []dnsEntry{}
+	add := func(host string, upstreams []dnsUpstream) {
+		if name := config.HostName(host); name != "" && len(upstreams) != 0 &&
+			!slices.ContainsFunc(result, func(entry dnsEntry) bool { return entry.domain == name }) {
+			result = append(result, dnsEntry{key: name, domain: name, upstreams: upstreams})
+		}
+	}
+	for _, outbound := range state.config.Outbounds {
+		if outbound.Type != config.TypeAmneziaWG || outbound.Monitoring == nil ||
+			!state.active[outbound.ID] {
+			continue
+		} else if host, _, err := net.SplitHostPort(outbound.Monitoring.Target); err == nil {
+			add(host, state.resolvers(outbound.ID))
+		}
+	}
+	for _, fallback := range state.config.Fallbacks {
+		if address, err := url.Parse(fallback.URL); err == nil && fallback.HealthCheck &&
+			state.active[fallback.ID] {
+			add(address.Hostname(), state.resolvers(fallback.ID))
+		}
+	}
+	return result
 }
 
 func (state *buildState) pushed() []dnsEntry {
@@ -458,6 +552,7 @@ func (state *buildState) buildDNS(target string) {
 		base = global
 	}
 	entries := append(slices.Clone(state.entries), state.pushed()...)
+	entries = append(append(state.named(), state.checks()...), entries...)
 	entries = append(state.pins(entries, base, global), entries...)
 	for index := range entries {
 		if len(entries[index].upstreams) == 0 {

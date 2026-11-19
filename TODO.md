@@ -43,33 +43,59 @@
   - Expose it in the UI (Outbounds and/or Routes pages).
 
 
-- [ ] **Names of DNS servers follow the DNS routing**
+- [x] **Names of DNS servers follow the DNS routing**
   - `https://dns.corp.example/dns-query` on the DNS tab of a VPN outbound: the name of the
     server is resolved by the default servers (`default-nameserver`) or by the resolver of
     the system, not by the DNS of the VPN. Now: write the address. An idea: resolve such a
     name through the servers of the same outbound that are given by address and put it into
     `hosts` of the router.
+  - Done: such a name is pinned to the servers of the same outbound given by address,
+    resolved after every apply and written to `hosts` (mihomo takes the address of an
+    upstream from there). Through a proxy mihomo hands the name to the proxy. Stand `dns`.
 
-- [ ] **A check target reached through a tunnel is resolved by the DNS of the tunnel**
+- [x] **A check target reached through a tunnel is resolved by the DNS of the tunnel**
   - The check target of AmneziaWG (and the health check URL of a fallback) given by name is
     resolved by the DNS of the route that takes its domain; without such a route by the
     default servers, though the connection goes through the tunnel.
+  - Done: exact policy entries with the servers of the tunnel (of the first working member
+    of a fallback). The health check of mihomo through a tunnel resolves through the tunnel
+    by itself (stand `dns`).
 
-- [ ] **Placeholder answers of a Proximity OpenVPN inbound**
+- [x] **Placeholder answers of a Proximity OpenVPN inbound**
   - An OpenVPN inbound answers the DNS queries of its clients with fake-IP. A name of the
     configuration asked through a tunnel to another Proximity gets such an address and is
     refused (`has no usable address`). Decide: real answers for the names of the settings,
     or an option of the inbound.
+  - Done: the cause was `dns-hijack: any:53` of the TUN of the inbound, which took also the
+    queries to the servers of the client. Without capture the TUN takes only the queries to
+    `198.18.0.2`; the DNS servers of the inbound give real answers. The error of a lookup
+    names fake-IP and the fix, the inbound dialog explains it. Stand `dns`.
 
-- [ ] **DNS binding of keyword, wildcard and regex routes**
+- [x] **DNS binding of keyword, wildcard and regex routes**
   - `DOMAIN-KEYWORD`, `DOMAIN-WILDCARD` and `DOMAIN-REGEX` routes do not bind their domains to
     the DNS of the outbound (a `nameserver-policy` key cannot express them): such names use
     the DNS of everything else.
+  - Done: an inline rule set per route and the policy key `rule-set:proximity-dns-N`
+    (checked with mihomo 1.19.34 and on the stand `dns`).
 
-- [ ] **DNS: check through a real DoH / DoT server and an HTTP proxy**
+- [x] **DNS: check through a real DoH / DoT server and an HTTP proxy**
   - The stand `dns` checks plain DNS over UDP and TCP. `tls://`, `https://`, `quic://` and
     the exit through an HTTP proxy (port 443 through `ID~https`) are covered by unit tests
     and by `mihomo -t` only.
+  - Done: the stand `dns` has DoT and DoH on `1.1.1.53` with its own certificate
+    (`SSL_CERT_FILE`), an HTTP proxy with CONNECT (`proxy.py`), DoT through SOCKS5 and
+    through a tunnel by name, DoH through the HTTP proxy (36 checks).
+
+- [ ] **Hosts of DNS server names are never refreshed**
+  - A resolved name keeps its address until the next apply that answers differently; with
+    the address in `hosts` mihomo answers from there, so a changed address of the server
+    is seen only after a restart. Resolve through the policy without `hosts` (a query to
+    the pinned servers through the probe listener) or refresh on a timer.
+
+- [ ] **Capture and an OpenVPN inbound together**
+  - With host capture on, `dns-hijack: any:53` takes the queries of the inbound clients to
+    their own servers too (mihomo cannot match a source in `fake-ip-filter`). Exclude the
+    networks of the inbounds from the hijack, if mihomo gets a way.
 
 ## Review 2026-11-19
 

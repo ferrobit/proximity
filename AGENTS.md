@@ -35,7 +35,7 @@ Terse on purpose. One line per trap. Add a line when something new fails.
 - `docker build` behind the TLS proxy: `--build-arg GO_IMAGE= NODE_IMAGE= BASE_IMAGE=`
   with images holding the proxy CA, or `PROXIMITY_IMAGE=<ready>`; apt sources → https.
 - Docker daemon gone after a pause: `rm -f /var/run/docker.pid`, start `dockerd`.
-- No NTP → OpenVPN waits: `STAND_OFFLINE=1` (time server with aliases
+- No NTP → OpenVPN waits: `STAND_OFFLINE=1` (pair stands too: without it "server starts" fails) (time server with aliases
   `time.cloudflare.com`, `time.google.com`, `pool.ntp.org`); screenshots:
   `stand_network_up` + `SCREENSHOT_NETWORK=proximity-stand`.
 - No Internet → outbounds `failed` (probe `1.1.1.1:443`): give the far side `1.1.1.1`.
@@ -63,6 +63,12 @@ Terse on purpose. One line per trap. Add a line when something new fails.
 - Probe a single outbound: listener `proximity-probe` on 127.0.0.1, user `probeN`
   (`router.Describe(...).Probe`), `IN-USER` rule; test it with
   `curl -x http://probeN:<secret>@127.0.0.1:<port>`.
+- mihomo DNS facts (1.19.34): `nameserver-policy` key `rule-set:<inline classical set>`
+  works for KEYWORD/WILDCARD/REGEX; `hosts` gives the address of a named upstream; all
+  servers of a policy are asked at once, the first answer wins (a slow DoT/DoH loses);
+  through a proxy the server name is sent to the proxy; DoH uses GET `?dns=`;
+  `SSL_CERT_FILE` is trusted; `fake-ip-filter-mode: rule` accepts domain rules only.
+- A TUN for OpenVPN inbounds only hijacks `198.18.0.2:53`; capture hijacks `any:53`.
 - DNS debug: `GET /api/router/config` (`dns.nameserver-policy`), `resolvers` in
   `GET /api/outbounds`, real query `GET /dns/query?name=&type=A` (`Mihomo.Resolve`).
 
@@ -97,7 +103,7 @@ it, `STAND_OFFLINE=1` adds a time server. Checks print `PASS`/`FAIL`, exit 0 if 
 | reload | `make stand-reload` (25 s, 10, browser) | page reload after `docker restart`, port `18899` |
 | logs | `make stand-logs` (40 s, 21, browser) | log clearing on Start/Restart, **Clear** buttons |
 | capture | `make stand-capture` (45 s, 29) | host namespace, `rp_filter=1`, SOCKS5/OpenVPN/AWG exits, counting "Internet" |
-| dns | `make stand-dns` (1 min, 25) | per-outbound DNS, loop pins, fake-IP, `server.py` prints queries |
+| dns | `make stand-dns` (1.5 min, 36, openssl) | per-outbound DNS, loop pins, fake-IP, DoT/DoH (own CA via `SSL_CERT_FILE`), HTTP proxy `proxy.py`, keyword/regex, server names → hosts |
 | broken-config | `make stand-config` (5 s, 17) | damaged `config.json` |
 | hits | `make stand-hits` (30 s, 13, browser) | route hit counters from mihomo `/rules`, reload, restart, Routes chart |
 | tools | `make stand-tools` (40 s, 23, browser) | Tools page: lookup, DNS through outbounds, ping; pictures `tools-*.png` |

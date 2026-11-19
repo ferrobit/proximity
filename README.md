@@ -20,9 +20,9 @@
 </p>
 
 <p align="center">
-  <img alt="Tests" src="https://img.shields.io/badge/tests-165%20passing-brightgreen">
-  <img alt="Coverage" src="https://img.shields.io/badge/coverage-94.1%25-brightgreen"><br>
-  <sub><b>165</b> Go tests, <b>94.1%</b> statement coverage, 178 end-to-end checks on
+  <img alt="Tests" src="https://img.shields.io/badge/tests-167%20passing-brightgreen">
+  <img alt="Coverage" src="https://img.shields.io/badge/coverage-94.2%25-brightgreen"><br>
+  <sub><b>167</b> Go tests, <b>94.2%</b> statement coverage, 189 end-to-end checks on
   <a href="docs/development.md#test-stands">ready stands</a></sub>
 </p>
 
@@ -335,14 +335,14 @@ repository itself is not changed. Component versions are Docker build arguments 
 
 ## Project status
 
-Version **1.2.0**. 165 Go tests pass, total statement coverage 94.1% (81.4–99.1% per
+Version **1.2.0**. 167 Go tests pass, total statement coverage 94.2% (81.4–99.1% per
 package). Transparent capture has been verified in isolated network namespaces and in a
 real Docker image: DIRECT, REJECT, domain → OpenVPN / AmneziaWG, LAN and inbound
 connections untouched, `rp_filter=1`, container stop and kill. Inbounds have been verified
 with real mihomo 1.19.34 and OpenVPN 2.6 in network namespaces: SOCKS5 authentication and
 TLS, an OpenVPN client with password + TOTP (appended and `static-challenge`), anonymous
 clients, token renegotiation, session kill on user change, traffic through the router,
-DNS hijack, traffic counters. Nine ready stands run 178 end-to-end checks with the real
+DNS hijack, traffic counters. Nine ready stands run 189 end-to-end checks with the real
 image (`make stand-security`, `stand-tunnel`, `stand-reload`, `stand-config`,
 `stand-capture`, `stand-dns`, `stand-logs`): one-time codes, certificates, tokens, received routes, a damaged
 configuration, the reload of an open page, TCP and ping of a host with transparent capture,

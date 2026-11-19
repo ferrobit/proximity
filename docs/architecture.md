@@ -211,11 +211,14 @@ every mode.
 
 | Part | mihomo DNS configuration |
 |---|---|
-| Transparent capture, OpenVPN inbound | `enhanced-mode: fake-ip`, range `198.18.0.1/16`, `dns-hijack: any:53` |
+| Transparent capture | `enhanced-mode: fake-ip`, range `198.18.0.1/16`, `dns-hijack: any:53` (every query of the host) |
+| OpenVPN inbound without capture | the same fake-IP resolver, but `dns-hijack: 198.18.0.2:53`: only the queries to the pushed resolver; a client that asks a server of its own (the **DNS servers** of the inbound, another Proximity behind the tunnel) gets a real answer |
 | Servers of an outbound (tab **DNS**, DNS of a VPN) | `nameserver-policy`: the domains of the routes to the outbound (and the domains pushed by the VPN) → `server#outbound`, the query goes through the outbound |
 | Default servers (**Settings → Router → DNS**) | `nameserver` and the policy entries of `DIRECT` routes; `system` when none are set |
 | Names without a route | `nameserver`: the servers of the default target when it has its own, else the default servers |
-| Names of DNS servers | `default-nameserver`: the default servers given by address, else `system` |
+| Names of DNS servers | `default-nameserver`: the default servers given by address, else `system`; a server of an outbound given by name is resolved through the servers of the same outbound and written to `hosts` (below) |
+| Keyword, wildcard and regex routes | an inline rule set per route (`rule-providers: proximity-dns-N`, behavior `classical`) and the policy key `rule-set:proximity-dns-N` |
+| Check target of AmneziaWG, health check URL of a fallback | an exact policy entry with the servers of the tunnel (of the first working member of the fallback) |
 
 With fake-IP the application receives a placeholder address immediately; the real name is
 resolved later by the target: remotely by a proxy, through the DNS of the outbound for a
@@ -242,6 +245,20 @@ refused. While mihomo does not run, the resolver of the system answers. The name
 written into the configuration of the tunnel before it starts (`resolveOpenVPN`,
 `wgconf.Config.Resolve`): `openvpn` and `awg` would ask the resolver of the system, which
 is hijacked in transparent mode.
+
+**DNS servers given by name.** `https://dns.corp.example/dns-query` on the DNS tab of a VPN
+outbound would be resolved by `default-nameserver`, which may not know a name of the VPN.
+When the outbound also has servers given by address (its pushed DNS, or one written by
+address), the generator pins the name to them (an exact policy entry, `router.ServerNames`),
+the server resolves it through `GET /dns/query` after every apply (`resolveNames`) and
+passes the answer back as `hosts` of the configuration; mihomo takes the address of an
+upstream from `hosts` first. A name that gets no answer keeps its earlier address. Through a
+SOCKS5 or HTTP exit mihomo hands the name itself to the proxy (`CONNECT dns.example:443`):
+the far side resolves it, `hosts` matters for tunnels and HOST outbounds.
+
+**Parallel servers.** mihomo asks all servers of a policy at once and keeps the first
+answer: a plain server next to a DoT or DoH one answers most queries, the slower encrypted
+server is used when the plain one fails.
 
 **Loops.** The name of an outbound's own server must not be asked through that outbound,
 or through an outbound whose own server name is asked through the first one. The generator

@@ -127,7 +127,7 @@ func validateServers(servers []string) error {
 	return nil
 }
 
-func hostName(host string) string {
+func HostName(host string) string {
 	host = strings.ToLower(strings.TrimSuffix(strings.TrimSpace(host), "."))
 	if _, err := netip.ParseAddr(strings.Trim(host, "[]")); err == nil || host == "" ||
 		!hostPattern.MatchString(host) {
@@ -149,7 +149,7 @@ func OpenVPNHosts(text string) []string {
 		} else if directive := strings.TrimPrefix(fields[0], "--"); len(fields) > 1 &&
 			(block == "" || block == "connection") &&
 			slices.Contains(openvpnHostDirectives, directive) {
-			if host := hostName(fields[1]); host != "" && !slices.Contains(result, host) {
+			if host := HostName(fields[1]); host != "" && !slices.Contains(result, host) {
 				result = append(result, host)
 			}
 		}
@@ -162,7 +162,7 @@ func (server DNSServer) Address() string {
 }
 
 func (server DNSServer) Named() string {
-	return hostName(server.Host)
+	return HostName(server.Host)
 }
 
 func (server DNSServer) String() string {
@@ -233,7 +233,7 @@ func (outbound *Outbound) Hosts() []string {
 	}
 	names := []string{}
 	for _, host := range result {
-		if name := hostName(host); name != "" && !slices.Contains(names, name) {
+		if name := HostName(host); name != "" && !slices.Contains(names, name) {
 			names = append(names, name)
 		}
 	}

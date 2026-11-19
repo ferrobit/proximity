@@ -7,6 +7,7 @@ import { check, docker, finish, logOf, signIn, sleep, stateOf, waitFor } from '.
 const [host, exit, dns] = process.argv.slice(2)
 const system = '1.1.1.1'
 const custom = '1.1.1.53'
+const webProxy = '1.1.1.80'
 const addressOf = (container) => docker('inspect', '-f', '{{range .NetworkSettings.Networks}}{{.IPAddress}}{{end}}', container).trim()
 const inHost = (...command) => docker('exec', host, ...command)
 const queries = (name) => docker('logs', dns).split('\n').filter((line) => line.split(' ')[1] === name)
@@ -57,9 +58,14 @@ async function run() {
     dns: { servers: [custom], exit: '' } })
   await client.call('POST', '/api/outbounds', { ...outbound, id: 'Plain', type: 'socks5', socks5: { server: far, port: 7800, udp: true },
     dns: { servers: [custom], exit: '@host' } })
+  await client.call('POST', '/api/outbounds', { ...outbound, id: 'Secure', type: 'socks5', socks5: { server: far, port: 7800, udp: true },
+    dns: { servers: [`tls://${custom}`], exit: '' } })
+  await client.call('POST', '/api/outbounds', { ...outbound, id: 'Web', type: 'http', http: { server: webProxy, port: 3128, single: true },
+    dns: { servers: ['https://doh.stand.test/dns-query'], exit: '' } })
   for (const [directive, target, ...params] of [['IP-CIDR', 'DIRECT', '10.99.0.0/16'], ['DOMAIN-SUFFIX', 'DIRECT', 'direct.test'],
     ['DOMAIN-SUFFIX', 'Proxy', 'viaproxy.test', 'stand.test'], ['DOMAIN-SUFFIX', 'ProxyTCP', 'viatcp.test'],
-    ['DOMAIN-SUFFIX', 'Plain', 'viahost.test']]) {
+    ['DOMAIN-SUFFIX', 'Plain', 'viahost.test'], ['DOMAIN-SUFFIX', 'Secure', 'viadot.test'], ['DOMAIN-SUFFIX', 'Web', 'viadoh.test'],
+    ['DOMAIN-KEYWORD', 'Proxy', 'kwproxy'], ['DOMAIN-REGEX', 'Proxy', '^rx[0-9]+\\.example$']]) {
     await client.call('POST', '/api/routes', { directive, target, enabled: true, params })
   }
   check('capture rules are installed, the DNS rule has a source', Boolean(await waitFor(() =>
@@ -72,6 +78,7 @@ async function run() {
   await sleep(3000)
   await client.call('POST', '/api/outbounds', { ...outbound, id: 'Tunnel', type: 'openvpn',
     openvpn: { config, username: 'alice', password: 'wonderland', use_dns: true, use_routes: false },
+    dns: { servers: ['tls://dot.stand.test'], exit: '' },
     monitoring: { enabled: false, interval: 30, timeout: 5, retries: 3, target: '1.1.1.2:80' } })
   await client.call('POST', '/api/routes', { directive: 'DOMAIN-SUFFIX', target: 'Tunnel', enabled: true, params: ['corp.test'] })
   check('tunnel outbound with a remote name connects', Boolean(await waitFor(async () => (await stateOf(client, 'outbounds', 'Tunnel')).state === 'up', 90)),
@@ -108,7 +115,40 @@ async function run() {
   const views = (await client.call('GET', '/api/outbounds')).outbounds
   const resolvers = Object.fromEntries(views.map((view) => [view.id, view.resolvers.join(' ')]))
   check('API shows the DNS servers of the outbounds', resolvers.Proxy === `${custom}#Proxy` && resolvers.ProxyTCP === `tcp://${custom}#ProxyTCP` &&
-    resolvers.Plain === custom && resolvers.Tunnel === `${custom}#Tunnel`, JSON.stringify(resolvers))
+    resolvers.Plain === custom && resolvers.Tunnel === `${custom}#Tunnel tls://dot.stand.test#Tunnel`, JSON.stringify(resolvers))
+
+  // Names of DNS servers, DoT and DoH, keyword and regex routes, the health check of a fallback.
+  // NOTE: mihomo asks all servers of a domain at once and drops the slower ones: the outbounds
+  // with DoT and DoH have only them, the tunnel is checked with the tools of the page.
+  const hosts = await waitFor(async () => {
+    const value = JSON.parse((await client.call('GET', '/api/router/config')).config).hosts || {}
+    return value['dot.stand.test'] ? value : null
+  }, 30)
+  check('name of a DNS server of the tunnel is resolved into the hosts of the router', JSON.stringify(hosts?.['dot.stand.test']) === `["${custom}"]`,
+    JSON.stringify(hosts))
+  check('name of the DNS server is asked through its tunnel', queries('dot.stand.test').some((line) => line.includes(`from=${far} to=${custom} `)),
+    queries('dot.stand.test').join(' | '))
+  const lookup = await client.call('POST', '/api/tools/lookup', { host: 'a.corp.test', port: 80 })
+  const secure = (lookup.outbounds.find((item) => item.id === 'Tunnel')?.resolvers || []).find((item) => item.server === 'tls://dot.stand.test#Tunnel')
+  check('DoT server by name answers through the tunnel', secure && !secure.error && secure.addresses.length > 0, JSON.stringify(secure))
+  check('a name through the tunnel to a Proximity inbound gets a real address', JSON.stringify(lookup.addresses) === '["1.1.1.2"]',
+    JSON.stringify(lookup.addresses))
+  const exitTun = JSON.parse((await remote.call('GET', '/api/router/config')).config).tun || {}
+  check('an inbound without capture takes only the queries to its resolver', JSON.stringify(exitTun['dns-hijack']) === '["198.18.0.2:53"]',
+    JSON.stringify(exitTun['dns-hijack']))
+  check('DoT server is asked through the SOCKS5 proxy', (await asked('a.viadot.test')).some((line) => line.includes(`from=${far} `) && line.endsWith('tls')))
+  check('DoH server is asked through the HTTP proxy', (await asked('a.viadoh.test')).some((line) => line.endsWith('https')) &&
+    docker('logs', dns).split('\n').some((line) => line.startsWith('CONNECT doh.stand.test:443 ') && line.endsWith(`from=${here}`)))
+  check('keyword route asks the DNS of its outbound', through(await asked('a.kwproxy.example'), far, 'udp', here))
+  check('regex route asks the DNS of its outbound', through(await asked('rx42.example'), far, 'udp', here))
+  await client.call('POST', '/api/fallbacks', { id: 'Checked', enabled: true, health_check: true, url: 'http://health.stand.test/',
+    interval: 60, outbounds: ['Tunnel'] })
+  const health = await waitFor(() => (queries('health.stand.test').length ? queries('health.stand.test') : null), 30)
+  check('health check of a fallback resolves its name through the tunnel', Boolean(health) && health.every((line) => line.includes(`from=${far} `)),
+    (health || ['no query']).join(' | '))
+  const named = Object.fromEntries((await client.call('GET', '/api/outbounds')).outbounds.map((view) => [view.id, view.resolvers.join(' ')]))
+  check('API shows DoT and DoH servers with their exits', named.Secure === `tls://${custom}#Secure` &&
+    named.Web === 'https://doh.stand.test/dns-query#Web' && named.Tunnel === `${custom}#Tunnel tls://dot.stand.test#Tunnel`, JSON.stringify(named))
 
   // The default servers of Settings.
   check('domain without a route is asked from the system resolver', only(await asked('a.other.test'), here, system, 'udp'))

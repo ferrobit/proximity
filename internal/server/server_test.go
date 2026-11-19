@@ -553,6 +553,20 @@ func TestServer_Hits(t *testing.T) {
 	require.Equal(t, map[string]any{}, body["hits"])
 }
 
+func TestServer_ResolveNames(t *testing.T) {
+	server := makeServer(t)
+	server.resolveNames([]string{"localhost"})
+	local := server.dnsHosts["localhost"]
+	require.Equal(t, "127.0.0.1", local[0])
+	require.False(t, server.naming)
+	server.dnsHosts["gone.invalid"] = []string{"192.0.2.53"}
+	server.resolveNames([]string{"localhost", "gone.invalid", "never.invalid"})
+	require.Equal(t, map[string][]string{"localhost": local, "gone.invalid": {"192.0.2.53"}},
+		server.dnsHosts)
+	server.resolveNames(nil)
+	require.Empty(t, server.dnsHosts)
+}
+
 func TestServer_Inbounds(t *testing.T) {
 	server := makeServer(t)
 	admin := login(t, server, "admin", "secret123")

@@ -298,9 +298,16 @@ What an outbound can carry:
   tab) together with the servers of this tab. All servers of an outbound are asked at
   once, the first answer wins.
 - The domains of a route to a **fallback** are asked where its first working outbound asks.
-- A domain is bound by `DOMAIN`, `DOMAIN-SUFFIX` and `GEOSITE` routes, the first route that
-  matches wins, as for the traffic. Domains of `DOMAIN-KEYWORD`, `DOMAIN-WILDCARD` and
-  `DOMAIN-REGEX` routes use the DNS of everything else.
+- A domain is bound by `DOMAIN`, `DOMAIN-SUFFIX`, `GEOSITE`, `DOMAIN-KEYWORD`,
+  `DOMAIN-WILDCARD` and `DOMAIN-REGEX` routes, the first route that matches wins, as for
+  the traffic.
+- A server given by name (`https://dns.corp.example/dns-query`) is resolved through the
+  servers of the same outbound given by address (the DNS of the VPN, or one written by
+  address on this tab), so a name that exists only behind the VPN works. Without such a
+  server the default servers resolve it. Through a SOCKS5 or HTTP proxy the proxy resolves
+  the name itself.
+- The check target of AmneziaWG and the health check URL of a fallback are resolved by
+  the DNS of the tunnel, where their connection goes.
 - The servers in effect are shown in the outbounds table (`DNS …`) and in
   **Dashboard → Router configuration** (`nameserver-policy`).
 
@@ -512,7 +519,7 @@ The OpenVPN inbound dialog has the tabs **General**, **Server**, **Clients**, **
 | Tab | Fields |
 |---|---|
 | Server | *Public address* and *Public port* (what clients connect to; written to exported configurations), *Protocol* UDP/TCP, *Listen address*, *VPN network* (when empty: `10.<X>.<N>.0/24`, where `<X>` is 64–191 and fixed for this installation, so two installations rarely collide), *Maximum clients*, *Tunnel MTU* (1420 for a new inbound: packets of the tunnel fit a 1500-byte link without fragments), *Log verbosity* |
-| Clients | *Route all client traffic through the VPN*, *Clients can reach each other*, *Additional routes* (one IPv4 network per line, up to 64; addresses and masks are highlighted, an invalid line is underlined in red and blocks saving), *DNS servers* (empty: the Proximity resolver, so domain routes work for VPN clients) |
+| Clients | *Route all client traffic through the VPN*, *Clients can reach each other*, *Additional routes* (one IPv4 network per line, up to 64; addresses and masks are highlighted, an invalid line is underlined in red and blocks saving), *DNS servers* (empty: the Proximity resolver `198.18.0.2`, which answers with placeholder addresses so that domain routes work for VPN clients; a client that asks another server gets a real answer. Another Proximity that uses this inbound as its tunnel resolves the names of its settings through the tunnel: give real servers here, or it reports *only placeholder (fake-IP) addresses*) |
 | Security | *Data ciphers*, *HMAC digest*, *Minimum TLS version*, *Renegotiation*, *Keepalive*, *Require one-time code (TOTP)* with the *TOTP key* |
 | Keys and certificates | CA certificate and key, server certificate and key, client certificate and key, TLS-crypt key. The fields highlight the `BEGIN` / `END` lines; the body of private and static keys is red |
 

@@ -116,7 +116,7 @@
             </a-col>
             <a-col :span="12">
               <a-form-item label="DNS servers" :name="['openvpn', 'dns_text']" :rules="[{ pattern: /^$|^\s*(\d{1,3}\.){3}\d{1,3}(\s*[,\s]\s*(\d{1,3}\.){3}\d{1,3}){0,3}\s*$/, message: 'Up to 4 IPv4 addresses' }]"
-                extra="Empty: Proximity resolver, so that domain routes work for clients">
+                extra="Empty: Proximity resolver with placeholder (fake-IP) answers, so that domain routes work for clients. Another Proximity that uses this inbound as its tunnel needs real answers for the names of its settings: give real servers here">
                 <a-input v-model:value="form.openvpn.dns_text" placeholder="Proximity resolver" />
               </a-form-item>
             </a-col>

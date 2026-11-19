@@ -72,6 +72,11 @@ func resolveOpenVPN(text string, lookupFunc func(host string) ([]string, error))
 	return strings.Join(result, "\n"), notes, nil
 }
 
+func usable(text string) bool {
+	address, err := netip.ParseAddr(text)
+	return err != nil || !placeholders.Contains(address.Unmap())
+}
+
 func (manager *Manager) Lookup(ctx context.Context, host string) ([]string, error) {
 	if address, err := netip.ParseAddr(strings.Trim(host, "[]")); err == nil {
 		return []string{address.String()}, nil
@@ -93,7 +98,13 @@ func (manager *Manager) Lookup(ctx context.Context, host string) ([]string, erro
 			}
 		}
 	}
-	if len(result) == 0 {
+	if len(result) == 0 && len(addresses) != 0 && !slices.ContainsFunc(addresses, usable) {
+		// NOTE: A Proximity OpenVPN inbound gives its clients placeholder answers unless its
+		// DNS servers are set: a tunnel to it cannot resolve the names of the settings.
+		return nil, fmt.Errorf("name '%v' has only placeholder (fake-IP) addresses (%v): its DNS "+
+			"server answers with fake-IP, for a Proximity OpenVPN inbound set real DNS servers "+
+			"in the inbound", host, strings.Join(addresses, ", "))
+	} else if len(result) == 0 {
 		return nil, fmt.Errorf("name '%v' has no usable address (%v)", host,
 			strings.Join(addresses, ", "))
 	}

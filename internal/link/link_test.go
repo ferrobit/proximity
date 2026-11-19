@@ -576,7 +576,7 @@ func TestLogBook_Rotation(t *testing.T) {
 func TestLookup_Addresses(t *testing.T) {
 	answers := map[string][]string{"mixed.test": {"2001:db8::1", "198.18.0.9", "192.0.2.1",
 		"::ffff:192.0.2.2", "bad"}, "fake.test": {"198.18.0.7", "198.18.255.1"},
-		"six.test": {"2001:db8::2"}}
+		"six.test": {"2001:db8::2"}, "bad.test": {"bad", "198.18.0.8"}}
 	manager := &Manager{options: Options{Resolve: func(_ context.Context, host string) ([]string,
 		error) {
 		if answers[host] == nil {
@@ -597,8 +597,11 @@ func TestLookup_Addresses(t *testing.T) {
 	}
 	{
 		_, err := manager.Lookup(context.Background(), "fake.test")
-		require.EqualError(t, err,
-			"name 'fake.test' has no usable address (198.18.0.7, 198.18.255.1)")
+		require.EqualError(t, err, "name 'fake.test' has only placeholder (fake-IP) addresses "+
+			"(198.18.0.7, 198.18.255.1): its DNS server answers with fake-IP, for a Proximity "+
+			"OpenVPN inbound set real DNS servers in the inbound")
+		_, err = manager.Lookup(context.Background(), "bad.test")
+		require.EqualError(t, err, "name 'bad.test' has no usable address (bad, 198.18.0.8)")
 		_, err = manager.Lookup(context.Background(), "missing.test")
 		require.EqualError(t, err, "failed to resolve 'missing.test': no such name")
 	}
@@ -994,7 +997,8 @@ func TestManager_Names(t *testing.T) {
 	require.Contains(t, status.Message,
 		"failed to check 'down.example.com:1': failed to connect to '127.0.0.1:1'")
 	status = waitState(t, manager, "F", StateFailed)
-	require.Equal(t, "name 'fake.example.com' has no usable address (198.18.0.7)", status.Message)
+	require.Contains(t, status.Message,
+		"name 'fake.example.com' has only placeholder (fake-IP) addresses (198.18.0.7)")
 	status = waitState(t, manager, "M", StateFailed)
 	require.Equal(t, "failed to resolve 'missing.example.com': no such name", status.Message)
 	{

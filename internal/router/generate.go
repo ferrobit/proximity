@@ -64,6 +64,7 @@ type Options struct {
 	ProxyBind   string
 	ProbePort   int
 	ProbeSecret string
+	Hosts       map[string][]string
 }
 
 type Layout struct {
@@ -72,37 +73,40 @@ type Layout struct {
 }
 
 type document struct {
-	MixedPort   int              `json:"mixed-port"`
-	AllowLan    bool             `json:"allow-lan"`
-	BindAddress string           `json:"bind-address"`
-	Mode        string           `json:"mode"`
-	LogLevel    string           `json:"log-level"`
-	IPv6        bool             `json:"ipv6"`
-	Controller  string           `json:"external-controller-unix"`
-	FindProcess string           `json:"find-process-mode"`
-	GeoUpdate   bool             `json:"geo-auto-update"`
-	Profile     map[string]bool  `json:"profile"`
-	RoutingMark int              `json:"routing-mark,omitempty"`
-	Tun         *tunSection      `json:"tun,omitempty"`
-	Sniffer     *snifferSection  `json:"sniffer,omitempty"`
-	DNS         *dnsSection      `json:"dns,omitempty"`
-	Listeners   []listener       `json:"listeners,omitempty"`
-	Proxies     []map[string]any `json:"proxies"`
-	Groups      []proxyGroup     `json:"proxy-groups"`
-	Rules       []string         `json:"rules"`
+	MixedPort   int                     `json:"mixed-port"`
+	AllowLan    bool                    `json:"allow-lan"`
+	BindAddress string                  `json:"bind-address"`
+	Mode        string                  `json:"mode"`
+	LogLevel    string                  `json:"log-level"`
+	IPv6        bool                    `json:"ipv6"`
+	Controller  string                  `json:"external-controller-unix"`
+	FindProcess string                  `json:"find-process-mode"`
+	GeoUpdate   bool                    `json:"geo-auto-update"`
+	Profile     map[string]bool         `json:"profile"`
+	RoutingMark int                     `json:"routing-mark,omitempty"`
+	Tun         *tunSection             `json:"tun,omitempty"`
+	Sniffer     *snifferSection         `json:"sniffer,omitempty"`
+	DNS         *dnsSection             `json:"dns,omitempty"`
+	Hosts       map[string]any          `json:"hosts,omitempty"`
+	Providers   map[string]ruleProvider `json:"rule-providers,omitempty"`
+	Listeners   []listener              `json:"listeners,omitempty"`
+	Proxies     []map[string]any        `json:"proxies"`
+	Groups      []proxyGroup            `json:"proxy-groups"`
+	Rules       []string                `json:"rules"`
 }
 
 type buildState struct {
-	config   config.Config
-	links    map[string]link.Status
-	document document
-	variants map[string][]rules.Variant
-	active   map[string]bool
-	warnings []string
-	entries  []dnsEntry
-	cache    map[string][]dnsUpstream
-	origins  []string
-	probe    map[string]string
+	config    config.Config
+	links     map[string]link.Status
+	document  document
+	variants  map[string][]rules.Variant
+	active    map[string]bool
+	warnings  []string
+	entries   []dnsEntry
+	cache     map[string][]dnsUpstream
+	origins   []string
+	probe     map[string]string
+	providers map[string]ruleProvider
 }
 
 const secureSuffix = "~https"
@@ -218,7 +222,7 @@ func build(snapshot config.Config, links map[string]link.Status, options Options
 	state := &buildState{config: snapshot, links: links, variants: map[string][]rules.Variant{},
 		active:   map[string]bool{config.TargetDirect: true, config.TargetReject: true},
 		warnings: []string{}, cache: map[string][]dnsUpstream{}, origins: []string{},
-		probe: map[string]string{}}
+		probe: map[string]string{}, providers: map[string]ruleProvider{}}
 	settings := snapshot.Settings
 	state.document = document{MixedPort: settings.MixedPort, AllowLan: true,
 		BindAddress: settings.BindAddress, Mode: "rule", LogLevel: settings.LogLevel,
@@ -230,13 +234,22 @@ func build(snapshot config.Config, links map[string]link.Status, options Options
 	}
 	if options.Capture {
 		state.document.RoutingMark = link.CaptureMark
-		state.attachTun()
+		state.attachTun(true)
 	}
 	state.buildProxies()
 	state.buildGroups()
 	state.buildProbe(options)
 	state.buildInbounds()
 	state.buildRules()
+	if len(state.providers) != 0 {
+		state.document.Providers = state.providers
+	}
+	for name, addresses := range options.Hosts {
+		if state.document.Hosts == nil {
+			state.document.Hosts = map[string]any{}
+		}
+		state.document.Hosts[name] = addresses
+	}
 	return state
 }
 
@@ -268,9 +281,16 @@ func (state *buildState) warnf(format string, arguments ...any) {
 	state.warnings = append(state.warnings, fmt.Sprintf(format, arguments...))
 }
 
-func (state *buildState) attachTun() {
+// NOTE: Capture takes every DNS query of the host to the resolver of the router. A TUN only for
+// the clients of OpenVPN inbounds takes only the queries to the pushed resolver: a client or
+// another Proximity that asks a server of its own gets a real answer, not a placeholder.
+func (state *buildState) attachTun(capture bool) {
+	hijack := []string{"any:53"}
+	if !capture {
+		hijack = []string{link.InboundDNS + ":53"}
+	}
 	state.document.Tun = &tunSection{Enable: true, Device: link.CaptureDevice, Stack: "gvisor",
-		DNSHijack: []string{"any:53"}}
+		DNSHijack: hijack}
 	state.document.Sniffer = &snifferSection{Enable: true, Sniff: map[string]sniffPorts{
 		"HTTP": {Ports: []string{"80", "8080-8880"}}, "TLS": {Ports: []string{"443", "8443"}},
 		"QUIC": {Ports: []string{"443", "8443"}}}}
@@ -288,7 +308,7 @@ func (state *buildState) buildInbounds() {
 		if server := inbound.OpenVPN; server != nil {
 			match = "SRC-IP-CIDR," + server.Network
 			if state.document.Tun == nil {
-				state.attachTun()
+				state.attachTun(false)
 			}
 		} else {
 			state.document.Listeners = append(state.document.Listeners, state.makeListener(inbound))

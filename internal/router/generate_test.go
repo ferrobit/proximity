@@ -118,6 +118,53 @@ func TestGenerate_DNSDefault(t *testing.T) {
 	}
 }
 
+func TestGenerate_DNSNames(t *testing.T) {
+	snapshot := config.Default()
+	for _, outbound := range []config.Outbound{
+		{Type: config.TypeOpenVPN, Enabled: true, OpenVPN: &config.OpenVPNOptions{
+			Config: "client\nremote 203.0.113.1 1194\n", UseDNS: true},
+			DNS: config.DNSOptions{Servers: []string{"https://dns.corp.test/dns-query",
+				"tls://dot.corp.test"}}},
+		{Type: config.TypeAmneziaWG, Enabled: true, AmneziaWG: &config.AmneziaWGOptions{
+			Config: sampleTunnel, UseDNS: true}, Monitoring: &config.Monitoring{
+			Enabled: true, Interval: 30, Timeout: 5, Retries: 3, Target: "check.awg.test:443"}},
+		{Type: config.TypeSocks5, Enabled: true, Socks5: &config.Socks5Options{Server: "10.0.0.1",
+			Port: 1080}, DNS: config.DNSOptions{Servers: []string{"tls://named.test"}}}} {
+		_, err := snapshot.AddOutbound(outbound)
+		require.NoError(t, err)
+	}
+	_, err := snapshot.AddFallback(config.Fallback{Enabled: true, HealthCheck: true,
+		URL: "http://probe.corp.test/generate_204", Outbounds: []string{"OpenVPN 1"}})
+	require.NoError(t, err)
+	links := map[string]link.Status{"OpenVPN 1": {State: link.StateUp, DNS: []string{"10.8.0.1"}},
+		"AmneziaWG 1": {State: link.StateUp, DNS: []string{"10.9.0.1"}}}
+	require.Equal(t, []string{"dns.corp.test", "dot.corp.test"}, ServerNames(snapshot, links))
+	options := Options{Socket: "socket", Hosts: map[string][]string{"dns.corp.test": {"10.8.0.53"}}}
+	data, warnings, err := Generate(snapshot, links, options)
+	require.NoError(t, err)
+	require.Empty(t, warnings)
+	result := document{}
+	require.NoError(t, json.Unmarshal(data, &result))
+	require.Equal(t, map[string]any{"dns.corp.test": []any{"10.8.0.53"}}, result.Hosts)
+	tunnel := []string{"10.8.0.1#OpenVPN 1"}
+	policy := map[string][]string{}
+	for _, item := range result.DNS.Policy {
+		policy[item.Key] = item.Servers
+	}
+	require.Equal(t, tunnel, policy["dns.corp.test"])
+	require.Equal(t, tunnel, policy["dot.corp.test"])
+	require.Equal(t, []string{"10.9.0.1#AmneziaWG 1"}, policy["check.awg.test"])
+	require.Equal(t, append(tunnel, "https://dns.corp.test/dns-query#OpenVPN 1",
+		"tls://dot.corp.test#OpenVPN 1"), policy["probe.corp.test"])
+	require.NotContains(t, policy, "named.test")
+	require.Nil(t, result.Providers)
+	{
+		data, _, err := Generate(snapshot, links, Options{Socket: "socket"})
+		require.NoError(t, err)
+		require.NotContains(t, string(data), `"hosts"`)
+	}
+}
+
 func TestGenerate_DNSPins(t *testing.T) {
 	proxy := config.Outbound{Type: config.TypeSocks5, ID: "P", Enabled: true,
 		Socks5: &config.Socks5Options{Server: "proxy.corp.test", Port: 1080, UDP: true}}
@@ -228,7 +275,10 @@ func TestGenerate_DNSPolicy(t *testing.T) {
 		require.Equal(t, &dnsSection{Enable: true, EnhancedMode: "fake-ip",
 			FakeIPRange: link.CaptureFakeIPRange, Bootstrap: system, Nameserver: system,
 			Policy: policyList{{"+.www.corp.test", system}, {"+.corp.test", tunnel},
-				{"geosite:google", system}, {"a.test", proxy}, {"+.vpn.test", tunnel}}}, result.DNS)
+				{"geosite:google", system}, {"a.test", proxy}, {"rule-set:proximity-dns-1", proxy},
+				{"+.vpn.test", tunnel}}}, result.DNS)
+		require.Equal(t, map[string]ruleProvider{"proximity-dns-1": {Type: "inline",
+			Behavior: "classical", Payload: []string{"DOMAIN-KEYWORD,key"}}}, result.Providers)
 		require.Contains(t, string(data), `"+.www.corp.test": [`)
 		require.Less(t, strings.Index(string(data), `"+.www.corp.test"`),
 			strings.Index(string(data), `"+.corp.test"`))
@@ -243,8 +293,8 @@ func TestGenerate_DNSPolicy(t *testing.T) {
 		require.NoError(t, json.Unmarshal(data, &result))
 		require.Equal(t, &dnsSection{Enable: true, Bootstrap: system, Nameserver: proxy,
 			Policy: policyList{{"+.www.corp.test", system}, {"+.corp.test", tunnel},
-				{"geosite:google", system}, {"+.tail.test", system}, {"+.b.a.test", system},
-				{"+.vpn.test", tunnel}}}, result.DNS)
+				{"geosite:google", system}, {"rule-set:proximity-dns-1", proxy},
+				{"+.tail.test", system}, {"+.b.a.test", system}, {"+.vpn.test", tunnel}}}, result.DNS)
 	}
 	{
 		snapshot.Outbounds[0].OpenVPN.UseDNS = false
@@ -253,8 +303,8 @@ func TestGenerate_DNSPolicy(t *testing.T) {
 		result := document{}
 		require.NoError(t, json.Unmarshal(data, &result))
 		require.Equal(t, policyList{{"+.www.corp.test", system}, {"+.corp.test", system},
-			{"geosite:google", system}, {"+.tail.test", system}, {"+.b.a.test", system}},
-			result.DNS.Policy)
+			{"geosite:google", system}, {"rule-set:proximity-dns-1", proxy}, {"+.tail.test", system},
+			{"+.b.a.test", system}}, result.DNS.Policy)
 	}
 }
 
@@ -427,6 +477,7 @@ func TestGenerate_Inbounds(t *testing.T) {
 	require.Contains(t, warnings, "inbound 'SOCKS5 5' is skipped: outbound 'AmneziaWG 1' is disabled")
 	require.NotNil(t, result.Tun)
 	require.Equal(t, link.CaptureDevice, result.Tun.Device)
+	require.Equal(t, []string{link.InboundDNS + ":53"}, result.Tun.DNSHijack)
 	require.False(t, result.Tun.AutoRoute)
 	require.Zero(t, result.RoutingMark)
 	require.NotNil(t, result.Sniffer)
