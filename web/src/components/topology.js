@@ -4,11 +4,13 @@ import { stateTone } from '../states'
 export const nodeHeight = 62
 export const columnTitles = ['Sources', 'Router', 'Routes', 'Fallbacks', 'Outbounds', 'Internet']
 
-const columnWidths = [212, 170, 222, 180, 224, 156]
+const columnWidths = [212, 170, 222, 0, 224, 196]
 const gap = 14
 const pad = 22
 const header = 40
 const minimumSpace = 34
+const groupGap = 50
+const groupPad = 10
 
 const speed = (traffic) => traffic ? (traffic.upload_rate || 0) + (traffic.download_rate || 0) : 0
 
@@ -96,7 +98,7 @@ export function buildGraph(data, overview, showDisabled) {
       const node = nodes.get(`outbound:${member}`)
       return node && node.state === 'good'
     })
-    const id = add({ id: `fallback:${fallback.id}`, column: 3, kind: 'fallback', record: fallback, title: fallback.id,
+    const id = add({ id: `fallback:${fallback.id}`, column: 5, kind: 'fallback', record: fallback, title: fallback.id,
       subtitle: alive ? `uses ${alive}` : 'No outbound is alive', disabled: !fallback.enabled,
       state: !fallback.enabled ? 'off' : alive ? 'good' : 'bad',
       details: [['Outbounds', fallback.outbounds.join(' → ') || '—'],
@@ -182,9 +184,28 @@ function prune(nodes, edges, showDisabled) {
   return { nodes, edges: visible.filter((edge) => nodes.has(edge.to)) }
 }
 
-function bezier(x1, y1, x2, y2, t) {
-  const dx = Math.max(40, (x2 - x1) / 2)
-  const points = [[x1, y1], [x1 + dx, y1], [x2 - dx, y2], [x2, y2]]
+function curve(x1, y1, x2, y2) {
+  const dx = Math.max(40, Math.abs(x2 - x1) / 2) * (x2 >= x1 ? 1 : -1)
+  return [[x1, y1], [x1 + dx, y1], [x2 - dx, y2], [x2, y2]]
+}
+
+function corridors(column) {
+  const nodes = [...column.nodes].sort((left, right) => left.y - right.y)
+  const result = nodes.slice(1).map((node, index) => (nodes[index].y + nodeHeight + node.y) / 2)
+  return [nodes[0].y - gap, ...result, nodes.at(-1).y + nodeHeight + gap]
+}
+
+function route(points) {
+  const parts = points.slice(1).map(([x2, y2], index) => {
+    const [x1, y1] = points[index]
+    if (y1 === y2) return `L ${x2} ${y2}`
+    const dx = (x2 - x1) / 2
+    return `C ${x1 + dx} ${y1}, ${x2 - dx} ${y2}, ${x2} ${y2}`
+  })
+  return `M ${points[0][0]} ${points[0][1]} ${parts.join(' ')}`
+}
+
+function bezier(points, t) {
   const weights = [(1 - t) ** 3, 3 * (1 - t) ** 2 * t, 3 * (1 - t) * t * t, t ** 3]
   return points.reduce((sum, point, index) => [sum[0] + point[0] * weights[index], sum[1] + point[1] * weights[index]], [0, 0])
 }
@@ -195,57 +216,108 @@ function edgeState(from, to) {
   return state === 'info' ? 'good' : state
 }
 
+function stack(nodes, top) {
+  nodes.forEach((node, index) => {
+    node.y = top + index * (nodeHeight + gap)
+  })
+  return nodes.length ? top + nodes.length * nodeHeight + (nodes.length - 1) * gap : top
+}
+
 export function layoutGraph(graph, viewportWidth) {
   const all = [...graph.nodes.values()]
+  all.forEach((node) => {
+    delete node.y
+  })
   const used = [...new Set(all.map((node) => node.column))].sort((left, right) => left - right)
   const columns = used.map((index) => ({ index, title: columnTitles[index], nodes: all.filter((node) => node.column === index) }))
   const count = columns.length
   const occupied = columns.reduce((sum, column) => sum + columnWidths[column.index], 0)
   const width = Math.max(viewportWidth, pad * 2 + occupied + (count - 1) * minimumSpace)
   const space = count > 1 ? (width - pad * 2 - occupied) / (count - 1) : 0
-  let left = pad
-  const tallest = Math.max(1, ...columns.map((column) => column.nodes.length))
-  const content = tallest * nodeHeight + (tallest - 1) * gap
+  const tallest = Math.max(1, ...columns.filter((column) => column.index !== 5).map((column) => column.nodes.length))
+  const span = (size) => size ? size * nodeHeight + (size - 1) * gap : 0
+  const last = columns.find((column) => column.index === 5)
+  const split = last ? last.nodes.filter((node) => node.kind === 'fallback').length : 0
+  const content = Math.max(span(tallest), split ? span(split) + groupGap + header - 6 + span(last.nodes.length - split) : 0)
   const incoming = new Map()
   for (const edge of graph.edges) {
     incoming.set(edge.to, [...(incoming.get(edge.to) || []), edge.from])
   }
+  const center = (node, seen = new Set()) => {
+    seen.add(node.id)
+    const levels = (incoming.get(node.id) || []).map((id) => graph.nodes.get(id)).filter((item) => !seen.has(item.id))
+      .map((item) => item.y !== undefined ? item.y : center(item, seen)).filter(Number.isFinite)
+    return levels.length ? levels.reduce((sum, level) => sum + level, 0) / levels.length : Infinity
+  }
+  const order = (nodes) => {
+    const weights = new Map(nodes.map((node) => [node.id, center(node)]))
+    return nodes.sort((left, right) => weights.get(left.id) - weights.get(right.id) || 0)
+  }
+  const groups = []
+  let left = pad
   columns.forEach((column) => {
-    if (column.index === 3 || column.index === 4) {
-      const center = (node) => {
-        const sources = (incoming.get(node.id) || []).map((id) => graph.nodes.get(id)).filter((item) => item.y !== undefined)
-        return sources.length ? sources.reduce((sum, item) => sum + item.y, 0) / sources.length : Infinity
-      }
-      const weights = new Map(column.nodes.map((node) => [node.id, center(node)]))
-      column.nodes.sort((left, right) => weights.get(left.id) - weights.get(right.id) || 0)
-    }
-    const height = column.nodes.length * nodeHeight + (column.nodes.length - 1) * gap
-    const top = header + pad + (content - height) / 2
     column.x = left
     column.width = columnWidths[column.index]
     left += column.width + space
-    column.nodes.forEach((node, index) => {
+    column.nodes.forEach((node) => {
       node.x = column.x
       node.width = column.width
-      node.y = top + index * (nodeHeight + gap)
     })
+    if (column.index === 4) order(column.nodes)
+    const fallbacks = column.index === 5 ? order(column.nodes.filter((node) => node.kind === 'fallback')) : []
+    if (!fallbacks.length) {
+      stack(column.nodes, header + pad + (content - span(column.nodes.length)) / 2)
+      return
+    }
+    const rest = column.nodes.filter((node) => node.kind !== 'fallback')
+    const bottom = stack(fallbacks, header + pad)
+    groups.push({ key: 'fallbacks', title: columnTitles[3], count: fallbacks.length, x: column.x - groupPad, y: 6,
+      width: column.width + groupPad * 2, height: bottom + groupPad - 6 })
+    column.title = ''
+    if (rest.length) {
+      const top = Math.max(header + pad + (content - span(rest.length)) / 2, bottom + groupGap + header - 6)
+      const end = stack(rest, top)
+      groups.push({ key: 'internet', title: columnTitles[5], count: rest.length, x: column.x - groupPad, y: top - header + 6,
+        width: column.width + groupPad * 2, height: end - top + header - 6 + groupPad })
+    }
   })
+  const lanes = new Map()
+  const lane = (column, level) => {
+    const key = `${column.index}:${level}`
+    const used = lanes.get(key) || 0
+    lanes.set(key, used + 1)
+    return level + [0, -3, 3, -6, 6][used % 5]
+  }
+  const detour = (from, to, x1, y1, x2, y2) => {
+    const points = [[x1, y1]]
+    let level = y1
+    columns.filter((column) => column.index > from.column && column.index < to.column && column.nodes.length)
+      .forEach((column) => {
+        const nearest = corridors(column).reduce((best, item) =>
+          Math.abs(item - level) + Math.abs(item - y2) < Math.abs(best - level) + Math.abs(best - y2) ? item : best)
+        level = lane(column, nearest)
+        points.push([column.x - 8, level], [column.x + column.width + 8, level])
+      })
+    return [...points, [x2, y2]]
+  }
   const edges = graph.edges.map((edge) => {
     const from = graph.nodes.get(edge.from)
     const to = graph.nodes.get(edge.to)
-    const x1 = from.x + from.width
-    const y1 = from.y + nodeHeight / 2
-    const x2 = to.x
-    const y2 = to.y + nodeHeight / 2
-    const dx = Math.max(40, (x2 - x1) / 2)
+    const back = to.x < from.x
+    const x1 = back ? from.x : from.x + from.width
+    const x2 = back ? to.x + to.width : to.x
+    const [y1, y2] = [from.y + nodeHeight / 2, to.y + nodeHeight / 2]
+    const points = curve(x1, y1, x2, y2)
+    const waypoints = back ? [] : detour(from, to, x1, y1, x2, y2)
     const state = edgeState(from, to)
     const flowing = state !== 'off' && (to.kind === 'internet' || from.kind === 'inbound' ? from.active : to.active)
     const thickness = to.kind === 'internet' && from.active ? Math.min(7, 2.2 + Math.log10(1 + from.rate / 1024) * 1.4) : flowing ? 2.4 : 1.6
-    const [labelX, labelY] = bezier(x1, y1, x2, y2, 0.8)
-    return { ...edge, key: `${edge.from}>${edge.to}`, path: `M ${x1} ${y1} C ${x1 + dx} ${y1}, ${x2 - dx} ${y2}, ${x2} ${y2}`,
-      state, flowing, thickness, labelX, labelY }
+    const [labelX, labelY] = bezier(points, 0.8)
+    const path = waypoints.length > 2 ? route(waypoints)
+      : `M ${x1} ${y1} C ${points[1][0]} ${points[1][1]}, ${points[2][0]} ${points[2][1]}, ${x2} ${y2}`
+    return { ...edge, key: `${edge.from}>${edge.to}`, path, back, state, flowing, thickness, labelX, labelY }
   })
-  return { width, height: header + pad * 2 + content, columns, nodes: all, edges }
+  return { width, height: header + pad * 2 + content, columns, groups, nodes: all, edges }
 }
 
 export function related(graph, id) {

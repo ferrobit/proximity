@@ -115,11 +115,14 @@ A live picture of what is connected to what, from left to right:
 | Sources | *Host applications* (transparent capture), the *Proxy port* and every inbound |
 | Router | mihomo, which checks the routes |
 | Routes | routes in priority order (`#1`, `#2` …) and *Everything else* (`MATCH`) |
-| Fallbacks | fallbacks; numbered edges show the priority of their outbounds, the filled number is the outbound in use |
 | Outbounds | outbounds with the remote server, latency and rate, plus `DIRECT` and `REJECT` when used |
-| Internet | destination servers |
+| Fallbacks and Internet | two framed groups in the last column: fallbacks on top, destination servers below |
 
-An inbound whose outbound is not *Router* is connected straight to its outbound (dotted
+An edge that skips a column (a route to a fallback, an inbound straight to an outbound) runs
+through the gap between the cards of that column. A route that sends traffic to a fallback
+leads to the *Fallbacks* group; purple numbered edges
+go back from the fallback to its outbounds in priority order, the filled number is the outbound
+in use. An inbound whose outbound is not *Router* is connected straight to its outbound (dotted
 edge). The color of an item and of the edges that lead to it shows the state: green —
 good, blue — connecting, amber — warning, red — down or failed, gray — disabled or
 stopped. Moving dashes show the edges that carry traffic now; the edge from an outbound to

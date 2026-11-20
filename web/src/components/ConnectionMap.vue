@@ -5,6 +5,10 @@
       <div class="map-tools">
         <span v-for="[tone, label] in toneLegend" :key="tone" class="legend"><i class="swatch" :style="{ background: `var(--tone-${tone})` }" />{{ label }}</span>
         <span class="legend"><svg width="28" height="8" class="legend-flow" :style="palette"><path d="M 1 4 L 27 4" /></svg>traffic</span>
+        <a-tooltip title="A fallback sends traffic to the first alive outbound by the numbers 1, 2, 3; the filled number is in use">
+          <span class="legend"><svg width="34" height="16"><path class="legend-member" d="M 1 8 L 33 8" /><circle cx="17" cy="8" r="6"
+            class="legend-member-dot" /><text x="17" y="8" class="legend-member-text">1</text></svg>fallback choice</span>
+        </a-tooltip>
         <a-divider type="vertical" />
         <a-switch v-model:checked="showDisabled" size="small" /><span>Show disabled</span>
         <a-divider type="vertical" />
@@ -26,11 +30,15 @@
       @wheel="wheel" @mousedown="pan">
       <div class="map-sizer" :style="{ width: `${layout.width * zoom}px`, height: `${layout.height * zoom}px` }">
         <div class="map" :style="{ width: `${layout.width}px`, height: `${layout.height}px`, transform: `scale(${zoom})` }">
-          <div v-for="column in layout.columns" :key="column.index" class="column-title" :style="{ left: `${column.x}px`, width: `${column.width}px` }">
+          <div v-for="group in layout.groups" :key="group.key" :class="['map-group', `group-${group.key}`]"
+            :style="{ left: `${group.x}px`, top: `${group.y}px`, width: `${group.width}px`, height: `${group.height}px` }">
+            <div class="column-title group-title">{{ group.title }} <span class="column-count">{{ group.count }}</span></div>
+          </div>
+          <div v-for="column in layout.columns.filter((item) => item.title)" :key="column.index" class="column-title" :style="{ left: `${column.x}px`, width: `${column.width}px` }">
             {{ column.title }} <span class="column-count">{{ column.nodes.length }}</span>
           </div>
           <svg class="edges" :width="layout.width" :height="layout.height">
-            <g v-for="edge in layout.edges" :key="edge.key" :class="['edge', `edge-${edge.state}`, { 'edge-faded': faded(edge.key), 'edge-direct': edge.direct }]">
+            <g v-for="edge in layout.edges" :key="edge.key" :class="['edge', `edge-${edge.state}`, { 'edge-faded': faded(edge.key), 'edge-direct': edge.direct, 'edge-back': edge.back }]">
               <path class="edge-base" :d="edge.path" :stroke-width="edge.thickness" />
               <path v-if="edge.flowing" class="edge-flow" :d="edge.path" :stroke-width="edge.thickness" />
               <g v-if="edge.label" class="edge-label" :class="{ preferred: edge.preferred }">
@@ -162,7 +170,7 @@ const graph = computed(() => data.value ? buildGraph(data.value, props.overview,
 const layout = computed(() => layoutGraph(graph.value, width.value))
 const highlight = computed(() => hovered.value && graph.value.nodes.has(hovered.value) ? related(layout.value, hovered.value) : null)
 const hasIncoming = computed(() => new Set(layout.value.edges.map((edge) => edge.to)))
-const hasOutgoing = computed(() => new Set(layout.value.edges.map((edge) => edge.from)))
+const hasOutgoing = computed(() => new Set(layout.value.edges.filter((edge) => !edge.back).map((edge) => edge.from)))
 const outboundTargets = computed(() => data.value ? data.value.targets.filter((item) => item.kind === 'outbound') : [])
 
 const fitScale = computed(() => Math.max(minimumZoom, Math.min(1, width.value / layout.value.width, available.value / layout.value.height)))
@@ -398,6 +406,11 @@ onUnmounted(() => {
 .map-expanded .map-sizer { flex: none; margin: auto; }
 .column-title { position: absolute; top: 14px; text-align: center; font-size: 11px; font-weight: 600; letter-spacing: 1.2px;
   text-transform: uppercase; color: var(--text-secondary); }
+.map-group { position: absolute; box-sizing: border-box; border: 1px dashed var(--group-border); border-radius: 14px;
+  background: var(--group-surface); }
+.group-fallbacks { --group-border: rgba(146, 84, 222, 0.45); --group-surface: rgba(146, 84, 222, 0.05); }
+.group-internet { --group-border: rgba(61, 111, 216, 0.45); --group-surface: rgba(61, 111, 216, 0.05); }
+.group-title { top: 8px; left: 0; right: 0; }
 .column-count { display: inline-block; min-width: 18px; margin-left: 4px; padding: 0 5px; border-radius: 9px; font-size: 10px;
   background: var(--node-border); color: var(--text-secondary); letter-spacing: 0; }
 .edges { position: absolute; inset: 0; pointer-events: none; overflow: visible; }
@@ -411,6 +424,10 @@ onUnmounted(() => {
 .edge-warn { --edge: var(--warn); }
 .edge-bad { --edge: var(--bad); }
 .edge-off { --edge: var(--off); }
+.edge-back.edge-good { --edge: #9254de; }
+.legend-member { stroke: #9254de; stroke-width: 2; }
+.legend-member-dot { fill: #9254de; }
+.legend-member-text { font-size: 9px; font-weight: 700; fill: #fff; text-anchor: middle; dominant-baseline: central; }
 .edge-off .edge-base { stroke-dasharray: 4 5; }
 .edge-faded { opacity: .08; }
 .edge-label circle { fill: var(--node-surface); stroke: var(--edge); stroke-width: 1.4; }
